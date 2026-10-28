@@ -1,0 +1,8 @@
+node_modules/
+dist/
+coverage/
+data/
+*.sqlite
+*.osm.pbf
+.DS_Store
+.env
