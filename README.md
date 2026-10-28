@@ -372,7 +372,7 @@ npm run bench -- --index $PWD/data/index.sqlite
 ```
 
 Messung (MacBook, Node 24, 5 Runden). **Deutschland** (Geofabrik-Extrakt vom 27.10.2026, 4,9 GB
-PBF → 25,6 Mio. Einträge, gemessen mit Schema 5 ohne Grenzen: 8,5 GB Index, Import 30 min, max. 5,4 GB RAM; mit Grenzen 8,8 GB, 39 min, max. 4,2 GB RAM): **p50 2,8 ms, p95 16,5 ms,
+PBF → 25,6 Mio. Einträge, gemessen mit Schema 5 ohne Grenzen: 8,5 GB Index, Import 30 min, max. 5,4 GB RAM; mit Grenzen 8,8 GB, 39 min, max. 4,2 GB RAM; Schema 7 mit Grenzen und Schreibvarianten 9,3 GB, 28 min, max. 4,2 GB RAM, Suche p50 2,5 ms, p95 16,9 ms, max. 56 ms bei warmem Cache): **p50 2,8 ms, p95 16,5 ms,
 p99 29 ms**, max. 41–91 ms. Vorher (bis Schema 4) p95 194 ms. Am langsamsten ist die Suche mit
 Standort bei sehr häufigen Wörtern (`Am Markt 1` 41 ms, `Friedrichstraße 3` 20–90 ms). Regierungsbezirk
 Düsseldorf (217 MB PBF → 1,4 Mio. Einträge, 389 MB Index, Import 45 s), gemessen mit Schema 4: p50 2,0 ms,

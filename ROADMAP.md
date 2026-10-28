@@ -131,7 +131,7 @@ Der Container enthält die API, den Importer und `osmium-tool`; der Index liegt 
 
 ### Offene Punkte aus Phase 6
 
-- [ ] **Messungen auf dem Deutschland-Index:** Import gemessen (28.10.2026): Schema 4 30 min, max. 5,4 GB RAM, Index 8,5 GB; Schema 5 (mit Grenzen) 39 min, max. 4,2 GB RAM, Index 8,8 GB. Lasttest noch offen (bisher 17.618 Einträge: ca. 1.100 Anfragen/s ohne Cache auf einem Kern, 0 Fehler bei Updates unter Last).
+- [ ] **Messungen auf dem Deutschland-Index:** Import gemessen (28.10.2026): Schema 4 30 min, max. 5,4 GB RAM, Index 8,5 GB; Schema 5 (mit Grenzen) 39 min, max. 4,2 GB RAM, Index 8,8 GB. Schema 7 (Grenzen, Wortstatistik, Schreibvarianten) 28 min, max. 4,2 GB RAM, Index 9,3 GB; Suche p95 16,9 ms (warmer Cache; kalt nach dem Import einzelne Anfragen bis 385 ms). Lasttest noch offen (bisher 17.618 Einträge: ca. 1.100 Anfragen/s ohne Cache auf einem Kern, 0 Fehler bei Updates unter Last).
 
 ### Offene Punkte aus dem Test mit Deutschland-Daten (28.10.2026)
 
