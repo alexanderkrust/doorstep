@@ -24,6 +24,9 @@ export interface Place {
   /** `house`, `street`, `poi` oder der Wert von `place=*` (z. B. `city`). */
   type: string;
   name: string | null;
+  /** `name:de` bzw. `name:en`; ausgewählt per `lang` in der API. */
+  nameDe: string | null;
+  nameEn: string | null;
   street: string | null;
   housenumber: string | null;
   postcode: string | null;
@@ -91,7 +94,9 @@ export function featureToPlace(feature: Feature): Place | null {
   if (!osmType || typeof osmId !== 'number') return null;
 
   const name = tag(props, 'name');
-  const type = classify(props, name);
+  const nameDe = tag(props, 'name:de');
+  const nameEn = tag(props, 'name:en');
+  const type = classify(props, name ?? nameDe ?? nameEn);
   if (!type) return null;
 
   const point = representativePoint(feature.geometry);
@@ -102,10 +107,12 @@ export function featureToPlace(feature: Feature): Place | null {
     osmId,
     type,
     name,
+    nameDe,
+    nameEn,
     street: tag(props, 'addr:street'),
     housenumber: tag(props, 'addr:housenumber'),
     postcode: tag(props, 'addr:postcode') ?? tag(props, 'postal_code'),
-    city: tag(props, 'addr:city') ?? (CITY_TYPES.has(type) ? name : null),
+    city: tag(props, 'addr:city') ?? (CITY_TYPES.has(type) ? (name ?? nameDe ?? nameEn) : null),
     state: tag(props, 'addr:state'),
     country: tag(props, 'addr:country'),
     lat: point.lat,

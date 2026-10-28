@@ -63,10 +63,14 @@ export async function* exportGeoJsonSeq(input: string): AsyncGenerator<string> {
   child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
   const closed = once(child, 'close') as Promise<[number | null]>;
 
+  let completed = false;
   try {
     yield* readLines(child.stdout);
+    completed = true;
   } finally {
-    if (child.exitCode === null) child.kill();
+    // Nur bei vorzeitigem Abbruch beenden; nach dem Dateiende darf osmium sich
+    // noch regulär beenden (sonst ist der Exit-Code null und der Import scheitert).
+    if (!completed && child.exitCode === null) child.kill();
   }
 
   const [code] = await closed;

@@ -1,0 +1,89 @@
+{
+  "description": "Golden-Queries gegen test/fixtures/duesseldorf.geojsonseq. 'expect' muss auf einen Treffer unter den ersten 'top' (Default 1) passen; Textvergleiche ignorieren Groß-/Kleinschreibung. 'near' = [lat, lon, maxMeter].",
+  "queries": [
+    { "q": "Düsseldorf", "expect": { "name": "Düsseldorf", "type": "city" } },
+    { "q": "Düss", "expect": { "name": "Düsseldorf", "type": "city" } },
+    { "q": "Dusseldorf", "expect": { "name": "Düsseldorf", "type": "city" } },
+    { "q": "duesseldorf", "expect": { "name": "Düsseldorf", "type": "city" } },
+    { "q": "Düsseldorf", "lang": "en", "expect": { "name": "Dusseldorf", "type": "city" } },
+    { "q": "Neuss", "expect": { "name": "Neuss", "type": "city" } },
+    { "q": "Essen", "expect": { "name": "Essen", "type": "city" } },
+    { "q": "Duisburg", "expect": { "name": "Duisburg", "type": "city" } },
+    { "q": "Krefeld", "expect": { "name": "Krefeld", "type": "city" } },
+    { "q": "Mönchengladbach", "expect": { "name": "Mönchengladbach", "type": "city" } },
+    { "q": "Moenchengladbach", "expect": { "name": "Mönchengladbach", "type": "city" } },
+    { "q": "Wuppertal", "expect": { "name": "Wuppertal", "type": "city" } },
+    { "q": "Oberkassel", "expect": { "name": "Oberkassel", "type": "suburb" } },
+    { "q": "Bilk", "expect": { "name": "Bilk", "type": "suburb" } },
+    { "q": "Benrath", "expect": { "name": "Benrath", "type": "suburb" } },
+    { "q": "Kaiserswerth", "expect": { "name": "Kaiserswerth", "type": "suburb" } },
+    {
+      "q": "Altstadt",
+      "lat": 51.225,
+      "lon": 6.775,
+      "expect": { "name": "Altstadt" },
+      "near": [51.2259, 6.7736, 500]
+    },
+    {
+      "q": "Altstadt",
+      "lat": 51.432,
+      "lon": 6.765,
+      "expect": { "name": "Altstadt" },
+      "near": [51.435, 6.7612, 500]
+    },
+
+    { "q": "Königsallee", "expect": { "name": "Königsallee", "type": "street" } },
+    { "q": "Königsall", "expect": { "name": "Königsallee", "type": "street" } },
+    { "q": "koenigsallee", "expect": { "name": "Königsallee", "type": "street" } },
+    { "q": "Königsalleh", "top": 3, "expect": { "name": "Königsallee", "type": "street" } },
+    { "q": "Schadowstr", "expect": { "name": "Schadowstraße", "type": "street" } },
+    { "q": "Schadowstr.", "expect": { "name": "Schadowstraße", "type": "street" } },
+    { "q": "Schadowstrasse", "expect": { "name": "Schadowstraße", "type": "street" } },
+    { "q": "Graf-Adolf-Str", "expect": { "name": "Graf-Adolf-Straße", "type": "street" } },
+    { "q": "Heinrich-Heine-Allee", "expect": { "name": "Heinrich-Heine-Allee", "type": "street" } },
+    { "q": "Berliner Allee", "expect": { "name": "Berliner Allee", "type": "street" } },
+    { "q": "Bolkerstraße", "expect": { "name": "Bolkerstraße", "type": "street" } },
+    { "q": "Kölner Str", "expect": { "name": "Kölner Straße", "type": "street" } },
+    { "q": "Oberstraße", "expect": { "name": "Oberstraße", "type": "street" } },
+    {
+      "q": "Breite Straße",
+      "lat": 51.197,
+      "lon": 6.69,
+      "expect": { "name": "Breite Straße", "type": "street" },
+      "near": [51.197, 6.69, 1500]
+    },
+    {
+      "q": "Breite Straße",
+      "lat": 51.224,
+      "lon": 6.777,
+      "expect": { "name": "Breite Straße", "type": "street" },
+      "near": [51.224, 6.777, 500]
+    },
+    {
+      "q": "Kö",
+      "lat": 51.222,
+      "lon": 6.78,
+      "top": 5,
+      "expect": { "name": "Königsallee", "type": "street" },
+      "note": "Kö12, Kö-Galerie und Kö-Center enthalten 'Kö' als ganzes Wort und liegen knapp vorn; ohne Bekanntheitssignal (wikidata) ist das vertretbar."
+    },
+
+    { "q": "Königsallee 1", "expect": { "street": "Königsallee", "housenumber": "1" } },
+    { "q": "Königsallee 60d", "expect": { "street": "Königsallee", "housenumber": "60d" } },
+    { "q": "Königsallee 60 d", "expect": { "street": "Königsallee", "housenumber": "60d" } },
+    { "q": "Koenigsallee 60d", "expect": { "street": "Königsallee", "housenumber": "60d" } },
+    { "q": "Schadowstraße 11", "expect": { "street": "Schadowstraße", "housenumber": "11" } },
+    { "q": "Schadowstr. 11", "expect": { "street": "Schadowstraße", "housenumber": "11" } },
+    { "q": "Bolkerstraße 8", "expect": { "street": "Bolkerstraße", "housenumber": "8" } },
+    {
+      "q": "Königsallee 1, Düsseldorf",
+      "expect": { "street": "Königsallee", "housenumber": "1" }
+    },
+    { "q": "Königsallee 999", "expect": { "name": "Königsallee", "type": "street" } },
+    { "q": "Schadowstr. 999", "expect": { "name": "Schadowstraße", "type": "street" } },
+
+    { "q": "Hauptbahnhof", "expect": { "name": "Hauptbahnhof Düsseldorf" } },
+    { "q": "Ständehaus", "top": 3, "expect": { "name": "Ständehaus" } },
+    { "q": "Carlsplatz", "top": 3, "expect": { "name": "Carlsplatz" } }
+  ]
+}

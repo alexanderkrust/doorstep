@@ -25,8 +25,8 @@ export function buildServer(config: Config): FastifyInstance {
     methods: ['GET', 'HEAD', 'OPTIONS'],
   });
   void app.register(healthRoutes);
-  void app.register(searchRoutes, { index });
-  void app.register(reverseRoutes, { index });
+  void app.register(searchRoutes, { index, defaultLang: config.defaultLang });
+  void app.register(reverseRoutes, { index, defaultLang: config.defaultLang });
 
   return app;
 }

@@ -81,6 +81,19 @@ function checkSamples(dbPath: string): void {
     expect(counts.fts).toBe(counts.places);
     expect(counts.rtree).toBe(counts.places);
 
+    // IDs absteigend nach Wichtigkeit: FTS5 liefert Treffer in ID-Reihenfolge,
+    // die Suche bekommt mit LIMIT so zuerst die wichtigsten Kandidaten.
+    const unordered = db
+      .prepare(
+        `SELECT count(*) AS n FROM places a JOIN places b ON b.id = a.id + 1
+          WHERE b.importance > a.importance`,
+      )
+      .get() as { n: number };
+    expect(unordered.n).toBe(0);
+    expect(
+      (db.prepare('SELECT type FROM places ORDER BY id LIMIT 1').get() as { type: string }).type,
+    ).toBe('city');
+
     // Metadaten inkl. Attribution
     const meta = Object.fromEntries(
       (db.prepare('SELECT key, value FROM meta').all() as { key: string; value: string }[]).map(

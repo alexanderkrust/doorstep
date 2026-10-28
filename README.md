@@ -3,7 +3,7 @@
 Self-hosted Adress-Autosuggest-API auf Basis von OpenStreetMap.
 Ein Docker-Image, keine externen Dienste: der Index ist eine SQLite-Datei (FTS5 + R\*Tree) unter `/data`.
 
-> Status: Phase 3 (Such-API). Siehe [ROADMAP.md](ROADMAP.md).
+> Status: Phase 4 (Ranking und Qualität). Siehe [ROADMAP.md](ROADMAP.md).
 
 ## Entwicklung
 
@@ -53,11 +53,27 @@ Alle Antworten sind GeoJSON-`FeatureCollection`s und enthalten das Feld
 | ------------ | ------- | ------------------------------------------------------------------- |
 | `q`          | ja      | Suchtext, mindestens 2 Zeichen                                      |
 | `limit`      | nein    | 1–10, Default 5                                                     |
-| `lat`, `lon` | nein    | Nur gemeinsam; bei gleichem Typ werden nahe Treffer bevorzugt       |
-| `lang`       | nein    | Zweistelliger Sprachcode, Default `DEFAULT_LANG` (wirkt ab Phase 4) |
+| `lat`, `lon` | nein    | Nur gemeinsam; Treffer in der Nähe werden angehoben (Location Bias) |
+| `lang`       | nein    | Zweistelliger Sprachcode, Default `DEFAULT_LANG`                    |
 
 Das letzte Wort wird als Präfix gesucht, alle anderen exakt. Findet die Anfrage nichts, wird das
-letzte Wort um bis zu zwei Zeichen gekürzt (Tippfehler am Wortende).
+letzte Wort um bis zu zwei Zeichen gekürzt (Tippfehler am Wortende). Gibt es die gesuchte
+Hausnummer nicht, kommt die Straße zurück.
+
+**Normalisierung** (Import und Suche gleich, `src/search/normalize.ts`): Kleinschreibung,
+`ä` ↔ `ae`, `ß` ↔ `ss`, andere Akzente entfernt, `Str.` ↔ `Straße`, `60 d` → `60d`. Zusätzlich
+wird die Schreibweise ohne Umlaut-e indexiert, sodass auch `Dusseldorf` Düsseldorf findet.
+
+**Ranking** (`src/search/ranking.ts`): Aus bis zu 100 Kandidaten (bei `lat/lon` zusätzlich bis zu
+100 im Umkreis von 25 km) wird ein Score aus FTS-Relevanz (`bm25`), Übereinstimmung mit dem Namen,
+`importance` (Stadt vor Ortsteil vor Straße vor Hausnummer) und – falls angegeben – der Nähe zum
+Standort berechnet. Gleichnamige Treffer im Abstand bis 2 km (z. B. die Abschnitte einer Straße)
+werden zu einem zusammengefasst.
+
+**Sprachen:** `name:de` und `name:en` werden beim Import getrennt gespeichert und alle Varianten
+durchsucht. `lang=de|en` wählt den angezeigten Namen, sonst gilt `name`.
+
+Die Suchdauer steht im Antwort-Header `Server-Timing` (z. B. `search;dur=1.84`).
 
 ```bash
 curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
@@ -73,6 +89,24 @@ curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
 
 Ungültige Parameter liefern `400` mit einer Meldung wie `q: muss mindestens 2 Zeichen lang sein`.
 Solange noch kein Index unter `$DATA_DIR/index.sqlite` liegt, antworten beide Endpunkte mit `503`.
+Das gilt auch für einen Index mit altem Schema (vor Phase 4): dann bitte neu importieren.
+
+## Qualität und Latenz
+
+- **Golden-Queries:** `test/golden/duesseldorf.json` enthält Suchanfragen mit erwarteten
+  Top-Treffern gegen einen Ausschnitt aus Düsseldorf und Neuss. Sie laufen mit `npm test`.
+- **Benchmark:** misst die Suchdauer direkt auf einem Index (Golden-Queries plus jedes
+  Tipp-Präfix typischer Eingaben, mit und ohne Standort). Ziel: p95 unter 50 ms.
+
+```bash
+npm run bench -- --index $PWD/data/index.sqlite
+```
+
+Messung (MacBook, Node 24, Regierungsbezirk Düsseldorf: 217 MB PBF → 1,4 Mio. Einträge, 389 MB
+Index, Import 45 s): p50 2,0 ms, p95 10,1 ms, p99 16,6 ms. Auf dem Deutschland-Index ist die
+Messung noch offen. Bekannte Kosten, die mit der Datenmenge wachsen: `bm25` zählt für jedes
+Suchwort alle Dokumente (sehr häufige Wörter wie „straße“), und Präfixe über 4 Zeichen
+häufiger Wörter („stras…“) werden komplett zusammengeführt.
 
 ## Konfiguration (Umgebungsvariablen)
 

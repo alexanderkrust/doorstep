@@ -28,6 +28,8 @@ describe('featureToPlace', () => {
       osmId: 42,
       type: 'house',
       name: null,
+      nameDe: null,
+      nameEn: null,
       street: 'Königsallee',
       housenumber: '60',
       postcode: '40212',
@@ -65,6 +67,32 @@ describe('featureToPlace', () => {
       properties: { '@type': 'node', '@id': 1, place: 'city', name: 'Düsseldorf' },
     });
     expect(place).toMatchObject({ type: 'city', name: 'Düsseldorf', city: 'Düsseldorf' });
+  });
+
+  it('übernimmt name:de und name:en getrennt', () => {
+    const place = featureToPlace({
+      type: 'Feature',
+      geometry: point(6.77, 51.22),
+      properties: {
+        '@type': 'node',
+        '@id': 1,
+        place: 'city',
+        name: 'Düsseldorf',
+        'name:de': 'Düsseldorf',
+        'name:en': 'Dusseldorf',
+        'name:fr': 'Dusseldorf',
+      },
+    });
+    expect(place).toMatchObject({ name: 'Düsseldorf', nameDe: 'Düsseldorf', nameEn: 'Dusseldorf' });
+  });
+
+  it('nimmt Objekte auch nur mit name:de oder name:en auf', () => {
+    const place = featureToPlace({
+      type: 'Feature',
+      geometry: point(6.77, 51.22),
+      properties: { '@type': 'node', '@id': 1, place: 'suburb', 'name:en': 'Old Town' },
+    });
+    expect(place).toMatchObject({ type: 'suburb', name: null, nameEn: 'Old Town' });
   });
 
   it('setzt city nicht bei Stadtteilen', () => {

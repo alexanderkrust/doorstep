@@ -1,19 +1,11 @@
-/** Übersetzung einer Suchanfrage in FTS5-Queries. Reine Funktionen. */
+/** Übersetzung normalisierter Wörter (siehe `normalizeTokens`) in FTS5-Queries. Reine Funktionen. */
 
 /** Kürzer wird das letzte Token bei der Tippfehler-Toleranz nicht. */
 const MIN_TRIMMED_LENGTH = 3;
 /** So viele Zeichen werden am Ende des letzten Tokens höchstens abgeschnitten. */
 const MAX_TRIM = 2;
 
-/**
- * Zerlegt die Anfrage in Wörter (Buchstaben und Ziffern). Alles andere trennt,
- * damit keine FTS5-Syntax (Anführungszeichen, `*`, Klammern) durchrutscht.
- */
-export function tokenize(query: string): string[] {
-  return query.normalize('NFC').match(/[\p{L}\p{N}]+/gu) ?? [];
-}
-
-const quote = (token: string) => `"${token}"`;
+const quote = (token: string) => `"${token.replaceAll('"', '""')}"`;
 
 /** Letztes Token als Präfix, alle anderen exakt; alle müssen vorkommen. */
 export function buildFtsQuery(tokens: readonly string[]): string | null {
@@ -32,11 +24,22 @@ export function queryVariants(tokens: readonly string[]): string[] {
   if (first === null) return [];
   const variants = [first];
   const head = tokens.slice(0, -1);
-  // Tokens enthalten nur Buchstaben und Ziffern (NFC), Codepoints reichen also.
   const chars = Array.from(tokens[tokens.length - 1] ?? '');
   for (let trim = 1; trim <= MAX_TRIM && chars.length - trim >= MIN_TRIMMED_LENGTH; trim++) {
     const variant = buildFtsQuery([...head, chars.slice(0, -trim).join('')]);
     if (variant !== null) variants.push(variant);
   }
   return variants;
+}
+
+/** Sieht aus wie eine Hausnummer ("12", "60d", "7-9"). */
+const HOUSENUMBER = /^\d+[a-z]?$/;
+
+/**
+ * Für den Fallback auf Straßenebene: die Wörter ohne Hausnummern; `null`, wenn
+ * es keine Hausnummer gab oder sonst nichts übrig bleibt.
+ */
+export function withoutHousenumbers(tokens: readonly string[]): string[] | null {
+  const rest = tokens.filter((t) => !HOUSENUMBER.test(t));
+  return rest.length === tokens.length || rest.length === 0 ? null : rest;
 }

@@ -1,24 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFtsQuery, queryVariants, tokenize } from '../../src/search/query.js';
-
-describe('tokenize', () => {
-  it('trennt an Leerzeichen und Satzzeichen', () => {
-    expect(tokenize('  Königsallee 60d ')).toEqual(['Königsallee', '60d']);
-    expect(tokenize('Kö-Galerie, Düsseldorf')).toEqual(['Kö', 'Galerie', 'Düsseldorf']);
-  });
-
-  it('entfernt FTS5-Syntax', () => {
-    expect(tokenize('"foo" OR bar* NEAR(x)')).toEqual(['foo', 'OR', 'bar', 'NEAR', 'x']);
-  });
-
-  it('normalisiert zerlegte Umlaute (NFD) zu NFC', () => {
-    expect(tokenize('Königsallee')).toEqual(['Königsallee']);
-  });
-
-  it('liefert eine leere Liste ohne Wörter', () => {
-    expect(tokenize(' ,;!! ')).toEqual([]);
-  });
-});
+import { buildFtsQuery, queryVariants, withoutHousenumbers } from '../../src/search/query.js';
 
 describe('buildFtsQuery', () => {
   it('sucht das letzte Token als Präfix, die übrigen exakt', () => {
@@ -28,6 +9,10 @@ describe('buildFtsQuery', () => {
 
   it('setzt Operatoren als Literale in Anführungszeichen', () => {
     expect(buildFtsQuery(['foo', 'OR', 'bar'])).toBe('"foo" "OR" "bar"*');
+  });
+
+  it('maskiert Anführungszeichen', () => {
+    expect(buildFtsQuery(['a"b'])).toBe('"a""b"*');
   });
 
   it('liefert null ohne Tokens', () => {
@@ -51,5 +36,20 @@ describe('queryVariants', () => {
 
   it('liefert keine Varianten ohne Tokens', () => {
     expect(queryVariants([])).toEqual([]);
+  });
+});
+
+describe('withoutHousenumbers', () => {
+  it('entfernt Hausnummern', () => {
+    expect(withoutHousenumbers(['koenigsallee', '999'])).toEqual(['koenigsallee']);
+    expect(withoutHousenumbers(['koenigsallee', '60d', 'duesseldorf'])).toEqual([
+      'koenigsallee',
+      'duesseldorf',
+    ]);
+  });
+
+  it('liefert null ohne Hausnummer oder wenn nichts übrig bleibt', () => {
+    expect(withoutHousenumbers(['koenigsallee'])).toBeNull();
+    expect(withoutHousenumbers(['12'])).toBeNull();
   });
 });

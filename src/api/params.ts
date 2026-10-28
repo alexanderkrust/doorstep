@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { tokenize } from '../search/query.js';
+import { normalizeTokens } from '../search/normalize.js';
 
 export const MIN_QUERY_LENGTH = 2;
 export const MAX_LIMIT = 10;
@@ -47,7 +47,7 @@ const lang = single
 const query = single
   .trim()
   .min(MIN_QUERY_LENGTH, `muss mindestens ${String(MIN_QUERY_LENGTH)} Zeichen lang sein`)
-  .refine((q) => tokenize(q).length > 0, 'enthält keine suchbaren Wörter');
+  .refine((q) => normalizeTokens(q).length > 0, 'enthält keine suchbaren Wörter');
 
 export const searchParams = z
   .object({

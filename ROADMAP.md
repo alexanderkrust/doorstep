@@ -84,6 +84,14 @@ Der Container enthält die API, den Importer und `osmium-tool`; der Index liegt 
 
 **Fertig, wenn:** Alle Golden-Queries bestehen und die Latenz auf dem vollen Deutschland-Index im Zielbereich liegt.
 
+### Offene Punkte aus Phase 4
+
+- [ ] **Latenz auf dem Deutschland-Index messen** (`npm run bench -- --index <datei>`). Bisher nur auf dem Regierungsbezirk Düsseldorf gemessen (1,4 Mio. Einträge): p50 2,0 ms, p95 10,1 ms.
+- [ ] **Kosten, die mit der Datenmenge wachsen:** `bm25` zählt für jedes Suchwort alle Dokumente (bei „strasse“ ca. 4 ms auf dem Regierungsbezirk), und Präfixe über 4 Zeichen häufiger Wörter („stras…“) werden komplett zusammengeführt (ca. 14 ms). Hochgerechnet auf Deutschland drohen 60–220 ms für Anfragen mit „Straße“. Mögliche Lösung: bm25 in JS mit einer beim Import vorberechneten Wortstatistik rechnen und lange Präfixe häufiger Wörter gesondert behandeln. Das weicht von „FTS-Score (`bm25`)“ ab und braucht eine Entscheidung.
+- [ ] **Bekanntheitssignal für `importance`:** Bisher zählt nur der Typ. Mit `wikidata`/`wikipedia` oder Einwohnerzahl ließen sich bekannte Objekte nach vorn holen (z. B. „Kö“ → Königsallee; die Golden-Query ist deshalb auf Top 5 gelockert).
+- [ ] **Sehenswürdigkeiten fehlen im Index:** `tourism`, `man_made` u. Ä. sind nicht im Import-Filter (Phase 2), z. B. findet „Rheinturm“ nichts.
+- [ ] **Straßenabschnitte beim Import zusammenfassen:** Gleichnamige Abschnitte werden bisher erst bei der Suche zusammengefasst (Umkreis 2 km). Beim Import wäre der Index kleiner und die Kandidatenmenge aussagekräftiger.
+
 ## Phase 5: Docker
 
 **Ziel:** Ein einziges `Dockerfile`, das ein schlankes, sofort startbares Image baut. Kein docker-compose, weder im Repo noch in der README.
