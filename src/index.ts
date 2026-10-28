@@ -1,7 +1,9 @@
 import { buildServer } from './api/server.js';
 import { ConfigError, loadConfig } from './config/index.js';
+import { ImportArgsError, parseImportArgs } from './import/args.js';
+import { runImport } from './import/pipeline.js';
 
-const USAGE = 'Verwendung: doorstep <serve|import> [--region <url>]';
+const USAGE = 'Verwendung: doorstep <serve|import> [--region <url>] [--input <datei.osm.pbf>]';
 
 async function serve(): Promise<void> {
   const config = loadConfig();
@@ -23,17 +25,32 @@ async function serve(): Promise<void> {
   await app.listen({ host: config.host, port: config.port });
 }
 
+async function importCommand(argv: string[]): Promise<void> {
+  const config = loadConfig();
+  const args = parseImportArgs(argv, config.regionUrl);
+  const started = Date.now();
+  const result = await runImport({
+    dataDir: config.dataDir,
+    regionUrl: args.regionUrl,
+    ...(args.input ? { input: args.input } : {}),
+    log: (message) => {
+      console.log(`[import] ${message}`);
+    },
+  });
+  const seconds = ((Date.now() - started) / 1000).toFixed(1);
+  console.log(
+    `[import] Fertig in ${seconds} s: ${String(result.places)} Einträge, ${String(result.skipped)} Features übersprungen`,
+  );
+}
+
 async function main(argv: string[]): Promise<void> {
-  const [command = 'serve'] = argv;
+  const [command = 'serve', ...rest] = argv;
   switch (command) {
     case 'serve':
       await serve();
       return;
     case 'import':
-      // Wird in Phase 2 umgesetzt.
-      loadConfig();
-      console.error('Der Import ist noch nicht implementiert (Phase 2).');
-      process.exitCode = 1;
+      await importCommand(rest);
       return;
     default:
       console.error(`Unbekanntes Kommando: ${command}\n${USAGE}`);
@@ -44,6 +61,8 @@ async function main(argv: string[]): Promise<void> {
 main(process.argv.slice(2)).catch((err: unknown) => {
   if (err instanceof ConfigError) {
     console.error(err.message);
+  } else if (err instanceof ImportArgsError) {
+    console.error(`${err.message}\n${USAGE}`);
   } else {
     console.error(err);
   }

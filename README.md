@@ -3,11 +3,12 @@
 Self-hosted Adress-Autosuggest-API auf Basis von OpenStreetMap.
 Ein Docker-Image, keine externen Dienste: der Index ist eine SQLite-Datei (FTS5 + R\*Tree) unter `/data`.
 
-> Status: Phase 1 (Projekt-Setup). Siehe [ROADMAP.md](ROADMAP.md).
+> Status: Phase 2 (Import-Pipeline). Siehe [ROADMAP.md](ROADMAP.md).
 
 ## Entwicklung
 
-Voraussetzung: Node.js ≥ 22.
+Voraussetzung: Node.js ≥ 24 (eingebautes `node:sqlite` mit FTS5 und R\*Tree) und für den Import
+[`osmium-tool`](https://osmcode.org/osmium-tool/) (macOS: `brew install osmium-tool`, Debian: `apt install osmium-tool`).
 
 ```bash
 npm install
@@ -19,6 +20,26 @@ npm run ci         # lint, typecheck, test, build
 ```
 
 Healthcheck: `curl http://localhost:2322/health`
+
+## Import
+
+```bash
+DATA_DIR=$PWD/data npm run import -- --region https://download.geofabrik.de/europe/germany/bremen-latest.osm.pbf
+DATA_DIR=$PWD/data npm run import -- --input ./mein-extrakt.osm.pbf   # lokale Datei, ohne Download
+```
+
+Ohne `--region` gilt `REGION_URL`. Ablauf:
+
+1. Download nach `$DATA_DIR/extract.osm.pbf`. Abgebrochene Downloads werden fortgesetzt
+   (`extract.osm.pbf.part`), die Geofabrik-`.md5` wird geprüft. Passt eine vorhandene Datei
+   zur `.md5`, wird nicht neu geladen.
+2. `osmium tags-filter` auf Adressen, Orte (`place=*`), Straßen (`highway` mit Namen) und
+   benannte `amenity`-Objekte.
+3. `osmium export` als GeoJSON-Sequenz, die zeilenweise gelesen wird (konstanter Speicherbedarf).
+4. Aufbau von `index.next.sqlite` (Tabelle `places`, FTS5-Tabelle `places_fts` mit Präfix-Index,
+   R\*Tree `places_rtree`, Tabelle `meta`) und atomarer Austausch gegen `index.sqlite`.
+
+Richtwert: Der Bremen-Extrakt (21 MB) ergibt rund 177.000 Einträge in etwa 5 Sekunden.
 
 ## Konfiguration (Umgebungsvariablen)
 
