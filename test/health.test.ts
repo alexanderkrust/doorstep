@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildServer } from '../src/api/server.js';
 import { loadConfig } from '../src/config/index.js';
+import { buildTestServer, createFixtureIndex, type FixtureIndex } from './helpers/fixture-index.js';
 
 describe('GET /health', () => {
   let app: FastifyInstance | undefined;
@@ -33,6 +34,42 @@ describe('GET /health', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ status: 'ok' });
+  });
+
+  it('meldet, dass kein Index vorhanden ist und kein Import läuft', async () => {
+    app = buildServer(loadConfig({ LOG_LEVEL: 'silent', DATA_DIR: '/gibt/es/nicht' }));
+    const res = await app.inject({ method: 'GET', url: '/health' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ status: 'ok', index: false, importing: false });
+  });
+
+  it('meldet einen laufenden Import', async () => {
+    app = buildServer(loadConfig({ LOG_LEVEL: 'silent', DATA_DIR: '/gibt/es/nicht' }), {
+      importing: () => true,
+    });
+    const res = await app.inject({ method: 'GET', url: '/health' });
+
+    expect(res.json()).toMatchObject({ index: false, importing: true });
+  });
+
+  describe('mit Index', () => {
+    let fixture: FixtureIndex;
+
+    beforeAll(async () => {
+      fixture = await createFixtureIndex();
+    });
+
+    afterAll(async () => {
+      await fixture.cleanup();
+    });
+
+    it('meldet einen vorhandenen Index', async () => {
+      app = buildTestServer(fixture.dir);
+      const res = await app.inject({ method: 'GET', url: '/health' });
+
+      expect(res.json()).toMatchObject({ status: 'ok', index: true, importing: false });
+    });
   });
 
   it('liefert 404 für unbekannte Routen', async () => {

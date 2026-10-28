@@ -3,7 +3,34 @@
 Self-hosted Adress-Autosuggest-API auf Basis von OpenStreetMap.
 Ein Docker-Image, keine externen Dienste: der Index ist eine SQLite-Datei (FTS5 + R\*Tree) unter `/data`.
 
-> Status: Phase 4 (Ranking und Qualität). Siehe [ROADMAP.md](ROADMAP.md).
+> Status: Phase 5 (Docker). Siehe [ROADMAP.md](ROADMAP.md).
+
+## Schnellstart mit Docker
+
+```bash
+docker build -t meine-api .
+docker run -p 2322:2322 -v data:/data meine-api
+```
+
+Beim ersten Start liegt noch kein Index im Volume. Die API startet trotzdem sofort und lädt im
+Hintergrund den Extrakt aus `REGION_URL` (Default: Deutschland, rund 4,5 GB) und baut den Index.
+Bis dahin antwortet `/api` mit `503`, `/health` zeigt den Stand (`"index": false, "importing": true`).
+Danach liefert die API Vorschläge:
+
+```bash
+curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
+```
+
+Für einen schnellen Test eine kleinere Region wählen (Bremen: 21 MB, Import in Sekunden):
+
+```bash
+docker run -p 2322:2322 -v data:/data \
+  -e REGION_URL=https://download.geofabrik.de/europe/germany/bremen-latest.osm.pbf \
+  meine-api
+```
+
+Der Import läuft nur, solange das Volume keinen Index enthält. Für eine andere Region daher ein
+neues Volume nehmen oder `import --region <url>` ausführen.
 
 ## Entwicklung
 
@@ -19,7 +46,8 @@ npm run build      # TypeScript nach dist/
 npm run ci         # lint, typecheck, test, build
 ```
 
-Healthcheck: `curl http://localhost:2322/health`
+Healthcheck: `curl http://localhost:2322/health` liefert `status`, `version`, `uptime`,
+`index` (nutzbarer Index vorhanden), `importing` (Import läuft im Hintergrund) und `attribution`.
 
 ## Import
 
@@ -110,18 +138,78 @@ häufiger Wörter („stras…“) werden komplett zusammengeführt.
 
 ## Konfiguration (Umgebungsvariablen)
 
-| Variable       | Default                                                       | Beschreibung                                                 |
-| -------------- | ------------------------------------------------------------- | ------------------------------------------------------------ |
-| `REGION_URL`   | `https://download.geofabrik.de/europe/germany-latest.osm.pbf` | Geofabrik-Extrakt für den Import                             |
-| `HOST`         | `0.0.0.0`                                                     | Bind-Adresse der API                                         |
-| `PORT`         | `2322`                                                        | Port der API                                                 |
-| `DATA_DIR`     | `/data`                                                       | Verzeichnis für Extrakt und Index (absoluter Pfad)           |
-| `DEFAULT_LANG` | `de`                                                          | Standardsprache (zweistelliger Code)                         |
-| `RATE_LIMIT`   | `60`                                                          | Anfragen pro Minute und IP, `0` = aus                        |
-| `CORS_ORIGINS` | `*`                                                           | Kommagetrennte Liste erlaubter Origins                       |
-| `LOG_LEVEL`    | `info`                                                        | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent` |
+| Variable       | Default                                                       | Beschreibung                                                  |
+| -------------- | ------------------------------------------------------------- | ------------------------------------------------------------- |
+| `REGION_URL`   | `https://download.geofabrik.de/europe/germany-latest.osm.pbf` | Geofabrik-Extrakt für den Import                              |
+| `HOST`         | `0.0.0.0`                                                     | Bind-Adresse der API                                          |
+| `PORT`         | `2322`                                                        | Port der API                                                  |
+| `DATA_DIR`     | `/data`                                                       | Verzeichnis für Extrakt und Index (absoluter Pfad)            |
+| `DEFAULT_LANG` | `de`                                                          | Standardsprache (zweistelliger Code)                          |
+| `RATE_LIMIT`   | `60`                                                          | Anfragen pro Minute und IP, `0` = aus                         |
+| `CORS_ORIGINS` | `*`                                                           | Kommagetrennte Liste erlaubter Origins                        |
+| `LOG_LEVEL`    | `info`                                                        | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`  |
+| `AUTO_IMPORT`  | `false` (im Docker-Image `true`)                              | `serve` importiert im Hintergrund, falls kein Index existiert |
 
 Ungültige Werte führen beim Start zu einer Fehlermeldung mit allen betroffenen Variablen.
+
+Beispiel für den Container:
+
+```bash
+docker run -d --restart unless-stopped -p 8080:8080 -v data:/data \
+  -e PORT=8080 \
+  -e REGION_URL=https://download.geofabrik.de/europe/germany/nordrhein-westfalen-latest.osm.pbf \
+  -e CORS_ORIGINS=https://www.example.com,https://shop.example.com \
+  -e DEFAULT_LANG=en -e LOG_LEVEL=warn \
+  meine-api
+```
+
+`RATE_LIMIT` wird bereits validiert, greift aber erst ab Phase 6.
+
+## Docker
+
+Das `Dockerfile` baut in mehreren Stufen: TypeScript-Build, Produktions-Abhängigkeiten und ein
+schlankes Laufzeit-Image auf `node:24.22.1-trixie-slim` (Debian 13) mit `osmium-tool`. SQLite ist
+als `node:sqlite` in Node enthalten (mit FTS5 und R\*Tree); native Module werden nicht gebaut.
+
+- Läuft als Nutzer `node` (uid 1000), nicht als root.
+- `/data` ist ein `VOLUME` und enthält `extract.osm.pbf` und `index.sqlite`. Bei einem
+  Bind-Mount (`-v $PWD/data:/data`) muss das Verzeichnis für uid 1000 beschreibbar sein.
+- Port `2322`, `HEALTHCHECK` gegen `/health` (alle 30 s). `/health` antwortet, sobald die API
+  läuft, auch während des ersten Imports.
+- Schlägt der automatische Import fehl, beendet sich der Container mit Exit-Code 1. Mit
+  `--restart unless-stopped` startet Docker ihn neu, und der Import wird wiederholt; ein
+  abgebrochener Download wird dabei fortgesetzt.
+
+### Kommandos
+
+| Kommando                                    | Beschreibung                                                                                      |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `serve` (Standard)                          | API starten; ohne Index läuft der Import im Hintergrund (`AUTO_IMPORT`)                           |
+| `import [--region <url>] [--input <datei>]` | Index bauen (Download, Filter, Import) und atomar austauschen                                     |
+| `update`                                    | Extrakt neu laden (nur wenn die Geofabrik-MD5 sich geändert hat), Index neu bauen und austauschen |
+
+```bash
+# Import vorab, ohne die API zu starten
+docker run --rm -v data:/data meine-api import --region https://download.geofabrik.de/europe/germany/bremen-latest.osm.pbf
+
+# Update im laufenden Container
+docker exec <container> doorstep update
+docker restart <container>
+```
+
+Nach `update` nutzt eine laufende API den neuen Index erst nach einem Neustart. Das Neuladen ohne
+Neustart folgt in Phase 6.
+
+### Smoke-Test
+
+```bash
+npm run smoke
+```
+
+Baut das Image, startet es mit leerem Volume und dem Mini-Extrakt aus `test/fixtures/`
+(automatischer Import über `REGION_URL`, ausgeliefert von einem Hilfscontainer), fragt `/health`,
+`/api` und `/reverse` ab, prüft den `HEALTHCHECK`, führt `update` aus und startet neu. Braucht
+nur Docker und `curl`, keinen Internetzugriff außer für den Image-Build.
 
 ## Lizenz der Daten
 

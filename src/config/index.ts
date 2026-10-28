@@ -41,6 +41,18 @@ const envSchema = z.object({
   LOG_LEVEL: optional(
     z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   ),
+  /** `serve` startet den Import im Hintergrund, falls noch kein Index existiert. */
+  AUTO_IMPORT: optional(
+    z
+      .string()
+      .trim()
+      .toLowerCase()
+      .pipe(
+        z.enum(['true', 'false', '1', '0', 'yes', 'no'], { error: 'muss true oder false sein' }),
+      )
+      .transform((v) => v === 'true' || v === '1' || v === 'yes')
+      .default(false),
+  ),
 });
 
 export interface Config {
@@ -52,6 +64,7 @@ export interface Config {
   rateLimit: number;
   corsOrigins: string[];
   logLevel: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
+  autoImport: boolean;
 }
 
 export class ConfigError extends Error {
@@ -77,5 +90,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     rateLimit: e.RATE_LIMIT,
     corsOrigins: e.CORS_ORIGINS.length > 0 ? e.CORS_ORIGINS : ['*'],
     logLevel: e.LOG_LEVEL,
+    autoImport: e.AUTO_IMPORT,
   };
 }

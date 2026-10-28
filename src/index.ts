@@ -1,16 +1,26 @@
 import { buildServer } from './api/server.js';
 import { ConfigError, loadConfig } from './config/index.js';
 import { ImportArgsError, parseImportArgs } from './import/args.js';
+import {
+  needsAutoImport,
+  startBackgroundImport,
+  type BackgroundImport,
+} from './import/background.js';
 import { runImport } from './import/pipeline.js';
 
-const USAGE = 'Verwendung: doorstep <serve|import> [--region <url>] [--input <datei.osm.pbf>]';
+const USAGE =
+  'Verwendung: doorstep <serve|import|update> [--region <url>] [--input <datei.osm.pbf>]';
 
 async function serve(): Promise<void> {
   const config = loadConfig();
-  const app = buildServer(config);
+  let job: BackgroundImport | undefined;
+  const stopping = new AbortController();
+  const app = buildServer(config, { importing: () => job?.running ?? false });
 
   const shutdown = (signal: string) => {
     app.log.info({ signal }, 'Fahre herunter');
+    stopping.abort();
+    job?.stop();
     app.close().then(
       () => process.exit(0),
       (err: unknown) => {
@@ -23,6 +33,24 @@ async function serve(): Promise<void> {
   process.once('SIGTERM', shutdown);
 
   await app.listen({ host: config.host, port: config.port });
+
+  if (needsAutoImport(config)) {
+    app.log.info(
+      { region: config.regionUrl },
+      'Kein Index vorhanden, starte Import im Hintergrund (bis dahin antwortet /api mit 503)',
+    );
+    // Derselbe Einstieg wie dieser Prozess, nur mit dem Kommando `import`.
+    const script = process.argv[1] ?? '';
+    job = startBackgroundImport(process.execPath, [...process.execArgv, script, 'import']);
+    const ok = await job.done;
+    if (ok) {
+      app.log.info('Import fertig, der Index ist aktiv');
+    } else if (!stopping.signal.aborted) {
+      app.log.error('Import fehlgeschlagen, beende den Server');
+      await app.close();
+      process.exit(1);
+    }
+  }
 }
 
 async function importCommand(argv: string[]): Promise<void> {
@@ -51,6 +79,12 @@ async function main(argv: string[]): Promise<void> {
       return;
     case 'import':
       await importCommand(rest);
+      return;
+    case 'update':
+      // Baut index.next.sqlite und tauscht ihn atomar aus. Ein laufender Server
+      // liest den neuen Index erst nach einem Neustart (Neuladen folgt in Phase 6).
+      await importCommand(rest);
+      console.log('[update] Server neu starten, damit der neue Index aktiv wird');
       return;
     default:
       console.error(`Unbekanntes Kommando: ${command}\n${USAGE}`);

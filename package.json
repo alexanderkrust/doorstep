@@ -20,7 +20,8 @@
     "typecheck": "tsc --noEmit",
     "import": "tsx src/index.ts import",
     "bench": "tsx scripts/benchmark.ts",
-    "ci": "sh scripts/ci.sh"
+    "ci": "sh scripts/ci.sh",
+    "smoke": "sh docker/smoke-test.sh"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.1",

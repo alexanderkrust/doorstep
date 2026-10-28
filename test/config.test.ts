@@ -13,6 +13,7 @@ describe('loadConfig', () => {
       rateLimit: 60,
       corsOrigins: ['*'],
       logLevel: 'info',
+      autoImport: false,
     });
   });
 
@@ -26,6 +27,7 @@ describe('loadConfig', () => {
       RATE_LIMIT: '0',
       CORS_ORIGINS: 'https://a.example, https://b.example',
       LOG_LEVEL: 'debug',
+      AUTO_IMPORT: 'true',
     });
     expect(config).toEqual({
       regionUrl: 'https://download.geofabrik.de/europe/germany/berlin-latest.osm.pbf',
@@ -36,12 +38,24 @@ describe('loadConfig', () => {
       rateLimit: 0,
       corsOrigins: ['https://a.example', 'https://b.example'],
       logLevel: 'debug',
+      autoImport: true,
     });
   });
 
   it('behandelt leere Strings wie nicht gesetzt', () => {
     expect(loadConfig({ PORT: '', CORS_ORIGINS: '' }).port).toBe(2322);
     expect(loadConfig({ CORS_ORIGINS: '  ' }).corsOrigins).toEqual(['*']);
+  });
+
+  it.each([
+    ['true', true],
+    ['1', true],
+    ['yes', true],
+    ['false', false],
+    ['0', false],
+    ['NO', false],
+  ])('liest AUTO_IMPORT=%s als %s', (value, expected) => {
+    expect(loadConfig({ AUTO_IMPORT: value }).autoImport).toBe(expected);
   });
 
   it.each([
@@ -55,6 +69,7 @@ describe('loadConfig', () => {
     ['RATE_LIMIT', '-1'],
     ['LOG_LEVEL', 'verbose'],
     ['DATA_DIR', 'relativ/pfad'],
+    ['AUTO_IMPORT', 'vielleicht'],
   ])('lehnt ungültigen Wert %s=%s ab', (key, value) => {
     expect(() => loadConfig({ [key]: value })).toThrow(ConfigError);
   });

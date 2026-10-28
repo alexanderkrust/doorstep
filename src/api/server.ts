@@ -8,8 +8,13 @@ import { healthRoutes } from './routes/health.js';
 import { reverseRoutes } from './routes/reverse.js';
 import { searchRoutes } from './routes/search.js';
 
+export interface ServerOptions {
+  /** Läuft gerade ein Import im Hintergrund? Erscheint in `/health`. */
+  importing?: () => boolean;
+}
+
 /** Baut die Fastify-Instanz, ohne sie zu starten (testbar per inject). */
-export function buildServer(config: Config): FastifyInstance {
+export function buildServer(config: Config, options: ServerOptions = {}): FastifyInstance {
   const app = Fastify({
     logger: { level: config.logLevel },
   });
@@ -24,7 +29,7 @@ export function buildServer(config: Config): FastifyInstance {
     origin: config.corsOrigins.includes('*') ? '*' : config.corsOrigins,
     methods: ['GET', 'HEAD', 'OPTIONS'],
   });
-  void app.register(healthRoutes);
+  void app.register(healthRoutes, { index, importing: options.importing ?? (() => false) });
   void app.register(searchRoutes, { index, defaultLang: config.defaultLang });
   void app.register(reverseRoutes, { index, defaultLang: config.defaultLang });
 
