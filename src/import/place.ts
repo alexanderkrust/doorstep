@@ -228,3 +228,22 @@ export function parseGeoJsonSeqLine(line: string): Feature | null {
   if (text === '') return null;
   return JSON.parse(text) as Feature;
 }
+
+/** Land und Bundesland aus den Verwaltungsgrenzen (siehe `boundaries.ts`). */
+export interface PlaceLocation {
+  country: string | null;
+  state: string | null;
+}
+
+/**
+ * Übernimmt Land und Bundesland aus den Grenzen; sie haben Vorrang vor `addr:country`
+ * und `addr:state`. Die Tags bleiben nur, wo die Grenzen nichts hergeben. Liegt der Punkt
+ * laut Grenzen in einem anderen Land als `addr:country`, passt auch `addr:state` nicht.
+ */
+export function withLocation(place: Place, location: PlaceLocation): Place {
+  const country = location.country ?? place.country;
+  const state =
+    location.state ??
+    (location.country !== null && location.country !== place.country ? null : place.state);
+  return country === place.country && state === place.state ? place : { ...place, country, state };
+}

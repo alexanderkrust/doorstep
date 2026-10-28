@@ -214,8 +214,8 @@ so die Straße im genannten Ort vor einer Hausnummer in einem ähnlich geschrieb
 Ortsteil (`addr:suburb`, sonst `addr:hamlet`), `city` oft die Gemeinde: `Strandstraße 1
 Westerland` findet die Adresse mit `city: "Sylt"`, `district: "Westerland"`. Adressen ohne
 Straße (`addr:place`) tragen den Ortsnamen in `street`. Straßen übernehmen Ort, Ortsteil und PLZ
-von der nächsten Adresse an derselben Straße. `state` und `country` stammen nur aus
-`addr:state`/`addr:country` und fehlen in Deutschland oft (siehe Grenzen unten).
+von der nächsten Adresse an derselben Straße. `country` (ISO-Code, z. B. `DE`) und `state`
+(Bundesland, z. B. `Nordrhein-Westfalen`) kommen aus den OSM-Verwaltungsgrenzen, siehe unten.
 
 **Normalisierung** (Import und Suche gleich, `src/search/normalize.ts`): Kleinschreibung,
 `ä` ↔ `ae`, `ß` ↔ `ss`, andere Akzente entfernt, `Str.` ↔ `Straße`, `Schlosstr.` ↔
@@ -240,10 +240,22 @@ curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
 
 **Grenzen bei der Prüfung von Lieferadressen** (gemessen am Deutschland-Extrakt):
 
-- **Land und Bundesland sind nicht verlässlich.** `addr:country` fehlt bei rund 29 % der
-  Adressen, `addr:state` praktisch immer. Der Geofabrik-Extrakt enthält außerdem Adressen aus
-  den Nachbarländern (z. B. Kerkrade, Zgorzelec, Straßburg, Kreuzlingen). Ob eine Adresse in
-  Deutschland liegt, lässt sich aus der Antwort derzeit nicht sicher ablesen.
+- **Land und Bundesland kommen aus den Verwaltungsgrenzen**, nicht aus `addr:country`/`addr:state`
+  (fehlen bei 29 % bzw. fast allen Adressen, teils falsch: Riezlern und Jungholz sind oft als
+  `DE` getaggt). Der Import lädt die Grenzen (`boundary=administrative`, `admin_level=2` und `4`)
+  und ordnet jedem Eintrag, auch Straßen ohne Adressen, Land und Bundesland per Punkt-in-Polygon
+  zu. Ein Shop prüft also `country == "DE"` und bei Bedarf `state`.
+  - Der Geofabrik-Extrakt enthält Adressen aus den Nachbarländern (Kerkrade, Zgorzelec,
+    Straßburg, Kreuzlingen …), deren Grenzen aber nur angeschnitten. Liegt ein Punkt außerhalb
+    Deutschlands, bestimmt der nächste Grenzweg das Nachbarland; `state` bleibt dann leer
+    (außer das Land stimmt mit `addr:country` überein, dann gilt `addr:state`).
+  - Unsicher nur nahe einem Dreiländereck (z. B. Vaals/Aachen/Kelmis): Dort kann ein Punkt im
+    Nachbarland dem falschen Nachbarn zugeordnet werden. Deutsche Adressen sind davon nicht
+    betroffen, sie liegen in der vollständigen Fläche Deutschlands.
+  - Mit einem Extrakt, der kein Land vollständig enthält (z. B. ein Regierungsbezirk), gibt es
+    keine Flächen; dann gelten wie früher `addr:country`/`addr:state`.
+  - Am Deutschland-Extrakt geprüft: Alle Abweichungen von einem vorhandenen `addr:country` sind
+    Korrekturen; bei Adressen ohne `addr:country` passt das PLZ-Format immer zum ermittelten Land.
 - **Sonderfälle mit deutscher PLZ:** Büsingen am Hochrhein (78266, Schweizer Zollgebiet),
   Helgoland (27498, außerhalb des EU-Zollgebiets), Kleinwalsertal (87567–87569) und Jungholz
   (87491) gehören zu Österreich. Solche Regeln prüft der Shop am besten über die PLZ.
@@ -261,8 +273,8 @@ curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
 
 Ungültige Parameter liefern `400` mit einer Meldung wie `q: muss mindestens 2 Zeichen lang sein`.
 Solange noch kein Index unter `$DATA_DIR/index.sqlite` liegt, antworten beide Endpunkte mit `503`.
-Das gilt auch für einen Index mit altem Schema (aktuell Version 4, seit Ortsteil und erweiterter
-Normalisierung): dann bitte neu importieren bzw. das nächste Update abwarten.
+Das gilt auch für einen Index mit altem Schema (aktuell Version 5, seit Land und Bundesland aus
+Verwaltungsgrenzen): dann bitte neu importieren bzw. das nächste Update abwarten.
 
 ### Weitere Endpunkte
 
@@ -390,10 +402,14 @@ Ohne `--region` gilt `REGION_URL`. Ablauf:
 2. Download nach `$DATA_DIR/extract.osm.pbf`. Abgebrochene Downloads werden fortgesetzt
    (`extract.osm.pbf.part`), die Geofabrik-`.md5` wird geprüft. Passt eine vorhandene Datei
    zur `.md5`, wird nicht neu geladen.
-3. `osmium tags-filter` auf Adressen, Orte (`place=*`), Straßen (`highway` mit Namen) und
+3. Verwaltungsgrenzen laden: `osmium tags-filter` auf `admin_level=2,4`, dann Flächen und
+   Grenzwege per `osmium export`, Relationsmitglieder per `osmium cat` (OPL). Länder und
+   Bundesländer liegen danach im Speicher (Deutschland: ca. 300 MB, 30 s).
+4. `osmium tags-filter` auf Adressen, Orte (`place=*`), Straßen (`highway` mit Namen) und
    benannte `amenity`-Objekte.
-4. `osmium export` als GeoJSON-Sequenz, die zeilenweise gelesen wird (konstanter Speicherbedarf).
-5. Aufbau von `index.next.sqlite` (Tabelle `places`, FTS5-Tabelle `places_fts` mit Präfix-Index
+5. `osmium export` als GeoJSON-Sequenz, die zeilenweise gelesen wird (konstanter Speicherbedarf).
+   Jeder Eintrag bekommt beim Einfügen Land und Bundesland aus den Grenzen.
+6. Aufbau von `index.next.sqlite` (Tabelle `places`, FTS5-Tabelle `places_fts` mit Präfix-Index
    und Rasterzelle (0,25°) je Eintrag, R\*Tree `places_rtree`, Tabelle `meta`) und atomarer Austausch gegen `index.sqlite`.
 
 Richtwert: Der Bremen-Extrakt (21 MB) ergibt rund 177.000 Einträge in etwa 5 Sekunden.

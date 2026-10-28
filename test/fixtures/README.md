@@ -14,6 +14,13 @@ des Regierungsbezirks Düsseldorf. Zur Verkleinerung enthält jedes Feature nur 
 gelesenen Tags und als Geometrie den repräsentativen Punkt (`scripts/slim-fixture.ts`).
 Stand: Geofabrik-Extrakt vom 2026-10-27.
 
+`grenzen.geojsonseq` und `grenzen.opl` sind Verwaltungsgrenzen (`admin_level=2` und `4`) aus dem
+Geofabrik-Deutschland-Extrakt vom 2026-10-27, zugeschnitten auf vier Testgebiete:
+Aachen/Kerkrade/Vaals, Kleinwalsertal/Oberstdorf, Büsingen/Schaffhausen und die Mosel
+(Schengen–Wasserbillig). Flächen (nur Deutschland und Bundesländer sind im Extrakt vollständig)
+sind auf die Gebiete beschnitten, Grenzwege und Relationen auf die dort liegenden Wege reduziert
+(`scripts/boundary-fixture.ts`).
+
 Daten: © OpenStreetMap contributors, verfügbar unter der
 [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/).
 
@@ -41,4 +48,14 @@ osmium tags-filter merged.pbf nwr/addr:housenumber nwr/addr:street nwr/place w/h
 osmium export filtered.pbf -f geojsonseq --attributes=type,id -x print_record_separator=false \
   -o full.geojsonseq
 npx tsx scripts/slim-fixture.ts full.geojsonseq test/fixtures/duesseldorf.geojsonseq
+```
+
+### `grenzen.geojsonseq`, `grenzen.opl`
+
+```bash
+osmium tags-filter germany-latest.osm.pbf r/admin_level=2,4 -o admin.pbf
+osmium export admin.pbf -f geojsonseq --geometry-types=polygon,linestring --keep-untagged \
+  --attributes=type,id -x print_record_separator=false -o grenzen-voll.geojsonseq
+osmium cat admin.pbf -t relation -f opl,add_metadata=false -o relationen.opl
+npx tsx scripts/boundary-fixture.ts grenzen-voll.geojsonseq relationen.opl test/fixtures/grenzen
 ```

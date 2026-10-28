@@ -3,14 +3,15 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { ATTRIBUTION } from '../api/attribution.js';
 import { boundingBox, distanceKm, gridCell } from '../search/geo.js';
 import { housenumberText, indexText } from '../search/normalize.js';
-import type { Place } from './place.js';
+import { withLocation, type Place, type PlaceLocation } from './place.js';
 
 /**
  * 2: name_de/name_en, normalisierter Volltextindex, IDs nach Wichtigkeit (Phase 4).
  * 3: Rasterzellen für die Umkreissuche.
  * 4: Ortsteil (`district`), "St." = "Sankt", "sss" → "ss", Hausnummer "12 a" auch als "12a".
+ * 5: Land und Bundesland aus Verwaltungsgrenzen statt nur aus `addr:country`/`addr:state`.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 const PLACE_COLUMNS = `osm_type, osm_id, type, name, name_de, name_en, street, housenumber,
   postcode, city, district, state, country, lat, lon, importance`;
@@ -90,6 +91,11 @@ const DEFAULT_INDEX_BATCH_SIZE = 250_000;
 export interface IndexWriterOptions {
   /** Zeilen je Statement beim Aufbau von FTS und R*Tree; kleiner nur für Tests. */
   indexBatchSize?: number;
+  /**
+   * Land und Bundesland eines Punkts aus den Verwaltungsgrenzen (`BoundaryIndex.locate`).
+   * Ohne: Werte aus `addr:country`/`addr:state`.
+   */
+  locate?: (lat: number, lon: number) => PlaceLocation;
 }
 
 /**
@@ -116,11 +122,13 @@ export class IndexWriter {
   private readonly insert: StatementSync;
   private readonly stagingPath: string;
   private readonly indexBatchSize: number;
+  private readonly locate: ((lat: number, lon: number) => PlaceLocation) | undefined;
   private pending = 0;
   private count = 0;
 
   constructor(path: string, options: IndexWriterOptions = {}) {
     this.indexBatchSize = options.indexBatchSize ?? DEFAULT_INDEX_BATCH_SIZE;
+    this.locate = options.locate;
     this.stagingPath = `${path}.staging`;
     rmSync(this.stagingPath, { force: true });
     this.db = new DatabaseSync(path);
@@ -148,7 +156,10 @@ export class IndexWriter {
     this.db.exec('BEGIN');
   }
 
-  add(place: Place): void {
+  add(input: Place): void {
+    // Beim Einfügen statt in einem eigenen Durchlauf über alle Zeilen: Die Grenzen liegen
+    // im Speicher, und so gibt es kein zusätzliches UPDATE über 25 Mio. Zeilen.
+    const place = this.locate ? withLocation(input, this.locate(input.lat, input.lon)) : input;
     const result = this.insert.run(
       place.osmType,
       place.osmId,

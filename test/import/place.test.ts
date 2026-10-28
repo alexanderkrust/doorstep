@@ -4,6 +4,8 @@ import {
   importanceFor,
   parseGeoJsonSeqLine,
   representativePoint,
+  withLocation,
+  type Place,
 } from '../../src/import/place.js';
 
 const point = (lon: number, lat: number) => ({ type: 'Point' as const, coordinates: [lon, lat] });
@@ -257,5 +259,51 @@ describe('parseGeoJsonSeqLine', () => {
       { type: 'Feature', geometry: null, properties: {} },
     );
     expect(parseGeoJsonSeqLine('   ')).toBeNull();
+  });
+});
+
+describe('withLocation', () => {
+  const base: Place = {
+    osmType: 'N',
+    osmId: 1,
+    type: 'house',
+    name: null,
+    nameDe: null,
+    nameEn: null,
+    street: 'Nieuwstraat',
+    housenumber: '60',
+    postcode: null,
+    city: 'Kerkrade',
+    district: null,
+    state: 'Nordrhein-Westfalen',
+    country: 'DE',
+    lat: 50.85,
+    lon: 6.07,
+    importance: 0.3,
+  };
+
+  it('Grenzen haben Vorrang vor addr:country und addr:state', () => {
+    expect(withLocation(base, { country: 'DE', state: 'Bayern' })).toMatchObject({
+      country: 'DE',
+      state: 'Bayern',
+    });
+  });
+
+  it('anderes Land laut Grenze verwirft auch addr:state', () => {
+    expect(withLocation(base, { country: 'NL', state: null })).toMatchObject({
+      country: 'NL',
+      state: null,
+    });
+  });
+
+  it('gleiches Land ohne Bundeslandfläche behält addr:state', () => {
+    expect(withLocation(base, { country: 'DE', state: null })).toMatchObject({
+      country: 'DE',
+      state: 'Nordrhein-Westfalen',
+    });
+  });
+
+  it('ohne Ergebnis bleiben die Tags', () => {
+    expect(withLocation(base, { country: null, state: null })).toBe(base);
   });
 });

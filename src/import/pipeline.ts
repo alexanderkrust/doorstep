@@ -5,7 +5,14 @@ import { downloadExtract, type DownloadProgress } from './download.js';
 import { IndexWriter } from './index-writer.js';
 import { acquireLock } from './lock.js';
 import { readLines } from './lines.js';
-import { exportGeoJsonSeq, filterExtract } from './osmium.js';
+import { BoundaryIndex } from './boundaries.js';
+import {
+  exportBoundaryGeoJsonSeq,
+  exportGeoJsonSeq,
+  exportRelationsOpl,
+  filterBoundaries,
+  filterExtract,
+} from './osmium.js';
 import { featureToPlace, parseGeoJsonSeqLine } from './place.js';
 
 export const EXTRACT_FILE = 'extract.osm.pbf';
@@ -40,12 +47,16 @@ async function writeIndex(
   openLines: () => AsyncIterable<string>,
   output: string,
   meta: Record<string, string>,
+  boundaries?: BoundaryIndex,
 ): Promise<ImportResult> {
   await mkdir(dirname(output), { recursive: true });
   const tmp = nextPath(output);
   await rm(tmp, { force: true });
 
-  const writer = new IndexWriter(tmp);
+  const writer = new IndexWriter(
+    tmp,
+    boundaries ? { locate: (lat, lon) => boundaries.locate(lat, lon) } : {},
+  );
   let features = 0;
   let skipped = 0;
   try {
@@ -58,7 +69,7 @@ async function writeIndex(
       if (place) writer.add(place);
       else skipped++;
     }
-    const places = writer.finish(meta);
+    const places = writer.finish(boundaries ? { ...meta, ...boundaryMeta(boundaries) } : meta);
     await rename(tmp, output);
     return { features, places, skipped };
   } catch (err) {
@@ -68,10 +79,54 @@ async function writeIndex(
   }
 }
 
+function boundaryMeta(boundaries: BoundaryIndex): Record<string, string> {
+  const { countries, states } = boundaries.summary;
+  return { boundary_countries: countries.join(','), boundary_states: String(states) };
+}
+
+export interface GeoJsonSeqImportOptions {
+  /** Grenzen für Land und Bundesland; ohne gelten `addr:country`/`addr:state`. */
+  boundaries?: BoundaryIndex;
+}
+
 /** Importiert eine fertige GeoJSON-Sequenz (Ausgabe von `osmium export`). */
-export async function importFromGeoJsonSeq(input: string, output: string): Promise<ImportResult> {
+export async function importFromGeoJsonSeq(
+  input: string,
+  output: string,
+  options: GeoJsonSeqImportOptions = {},
+): Promise<ImportResult> {
   const openLines = () => readLines(createReadStream(input));
-  return writeIndex(openLines, output, { source: input });
+  return writeIndex(openLines, output, { source: input }, options.boundaries);
+}
+
+/**
+ * Lädt Grenzen aus fertigen osmium-Ausgaben: GeoJSON-Sequenz (Flächen und Linien) und
+ * OPL der Relationen. Für Tests und Fixtures ohne osmium.
+ */
+export async function loadBoundaryFiles(geojsonseq: string, opl: string): Promise<BoundaryIndex> {
+  return BoundaryIndex.load(
+    () => readLines(createReadStream(geojsonseq)),
+    readLines(createReadStream(opl)),
+    parseGeoJsonSeqLine,
+  );
+}
+
+/** Filtert die Verwaltungsgrenzen aus einer PBF-Datei und lädt sie. */
+export async function loadBoundariesFromPbf(
+  input: string,
+  workDir: string,
+): Promise<BoundaryIndex> {
+  const filtered = join(workDir, 'boundaries.osm.pbf');
+  try {
+    await filterBoundaries(input, filtered);
+    return await BoundaryIndex.load(
+      () => exportBoundaryGeoJsonSeq(filtered),
+      exportRelationsOpl(filtered),
+      parseGeoJsonSeqLine,
+    );
+  } finally {
+    await rm(filtered, { force: true });
+  }
 }
 
 export interface PbfImportOptions {
@@ -93,12 +148,28 @@ export async function importFromPbf(
   const filtered = join(workDir, 'filtered.osm.pbf');
 
   try {
+    log('Lade Verwaltungsgrenzen (admin_level 2 und 4)');
+    const boundaries = await loadBoundariesFromPbf(input, workDir);
+    const { countries, states, borderSegments } = boundaries.summary;
+    log(
+      `Grenzen: Länder ${countries.join(', ') || 'keine'}, ${String(states)} Bundesländer, ` +
+        `${String(borderSegments)} Abschnitte zu Nachbarländern`,
+    );
     log(`Filtere ${input} mit osmium tags-filter`);
     await filterExtract(input, filtered);
     log('Exportiere und importiere Features');
-    return await writeIndex(() => exportGeoJsonSeq(filtered), output, {
-      source: options.source ?? input,
-    });
+    const result = await writeIndex(
+      () => exportGeoJsonSeq(filtered),
+      output,
+      { source: options.source ?? input },
+      boundaries,
+    );
+    const { inside, border, unknown } = boundaries.stats;
+    log(
+      `Land per Grenze: ${String(inside)} innerhalb, ${String(border)} über Nachbargrenze, ` +
+        `${String(unknown)} ohne (addr:country bleibt)`,
+    );
+    return result;
   } finally {
     await rm(filtered, { force: true });
   }
