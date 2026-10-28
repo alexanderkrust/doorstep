@@ -9,6 +9,10 @@ import { SearchIndex } from '../../src/search/search-index.js';
 /** Mehr gleichnamige, wichtigere Treffer, als die Suche früher vorab durchsah (20.000). */
 const FAR_STREETS = 25_000;
 const HERE = { lat: 52.52, lon: 13.405 };
+/** Knapp nördlich der Rastergrenze bei 52,5° (Zellen g570… und g569…). */
+const AT_CELL_BORDER = { lat: 52.501, lon: 13.405 };
+/** In Polnähe deckt der Umkreis zu viele Rasterzellen ab; dann wird ohne Zellen gesucht. */
+const NEAR_POLE = { lat: 89.9, lon: 0 };
 
 function place(overrides: Partial<Place> & Pick<Place, 'osmId' | 'type' | 'lat' | 'lon'>): Place {
   return {
@@ -61,6 +65,32 @@ beforeAll(async () => {
       lon: HERE.lon,
     }),
   );
+  // … eine jenseits der Rastergrenze …
+  writer.add(
+    place({
+      osmType: 'N',
+      osmId: 2,
+      type: 'house',
+      street: 'Hauptstraße',
+      housenumber: '7',
+      postcode: '10179',
+      city: 'Berlin',
+      lat: 52.499,
+      lon: HERE.lon,
+    }),
+  );
+  // … und eine in Polnähe.
+  writer.add(
+    place({
+      osmType: 'N',
+      osmId: 3,
+      type: 'house',
+      street: 'Hauptstraße',
+      housenumber: '9',
+      lat: NEAR_POLE.lat,
+      lon: NEAR_POLE.lon,
+    }),
+  );
   writer.finish({});
   index = new SearchIndex(path);
 }, 60_000);
@@ -79,5 +109,20 @@ describe('Location Bias auf großen Indizes', () => {
   it('findet sie auch mit angefangener Hausnummer', () => {
     const rows = index.search({ q: 'Hauptstraße 3', limit: 5, ...HERE }) ?? [];
     expect(rows[0]).toMatchObject({ type: 'house', housenumber: '3' });
+  });
+
+  it('findet nahe Adressen in der Nachbarzelle des Rasters', () => {
+    const rows = index.search({ q: 'Hauptstr', limit: 5, ...AT_CELL_BORDER }) ?? [];
+    expect(rows[0]).toMatchObject({ type: 'house', housenumber: '7' });
+  });
+
+  it('findet nahe Adressen auch dort, wo der Umkreis zu viele Zellen hätte', () => {
+    const rows = index.search({ q: 'Hauptstr', limit: 5, ...NEAR_POLE }) ?? [];
+    expect(rows[0]).toMatchObject({ type: 'house', housenumber: '9' });
+  });
+
+  it('lässt Suchwörter nicht auf die Rasterzellen passen', () => {
+    expect(index.search({ q: 'g570', limit: 5, ...HERE })).toEqual([]);
+    expect(index.search({ q: 'g5', limit: 5 })).toEqual([]);
   });
 });

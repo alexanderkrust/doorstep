@@ -1,12 +1,12 @@
 import { rmSync } from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { ATTRIBUTION } from '../api/attribution.js';
-import { boundingBox, distanceKm } from '../search/geo.js';
+import { boundingBox, distanceKm, gridCell } from '../search/geo.js';
 import { indexText } from '../search/normalize.js';
 import type { Place } from './place.js';
 
 /** 2: name_de/name_en, normalisierter Volltextindex, IDs nach Wichtigkeit (Phase 4). */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const PLACE_COLUMNS = `osm_type, osm_id, type, name, name_de, name_en, street, housenumber,
   postcode, city, state, country, lat, lon, importance`;
@@ -59,8 +59,9 @@ CREATE TABLE places (
 -- Ohne eigenen Inhalt (contentless): angezeigt wird immer die Zeile aus places.
 -- Spalte name enthält name, name:de und name:en. Treffer kommen in rowid-Reihenfolge,
 -- also nach Wichtigkeit. Präfix 1 für einstellige Hausnummern ("Hauptstraße 1").
+-- Spalte cell: Rasterzelle des Punkts (src/search/geo.ts) für die Umkreissuche.
 CREATE VIRTUAL TABLE places_fts USING fts5(
-  name, street, housenumber, postcode, city,
+  name, street, housenumber, postcode, city, cell,
   content = '',
   prefix = '1 2 3 4',
   tokenize = 'unicode61 remove_diacritics 2'
@@ -118,6 +119,9 @@ export class IndexWriter {
     this.db.function('index_text', { varargs: true, deterministic: true }, (...values) =>
       indexText(values.map((v) => (typeof v === 'string' ? v : null))),
     );
+    this.db.function('grid_cell', { deterministic: true }, (lat, lon) =>
+      gridCell(Number(lat), Number(lon)),
+    );
     this.db.exec('BEGIN');
   }
 
@@ -159,9 +163,9 @@ export class IndexWriter {
     rmSync(this.stagingPath, { force: true });
     this.assignStreetAddresses();
     this.db.exec(`
-      INSERT INTO places_fts (rowid, name, street, housenumber, postcode, city)
+      INSERT INTO places_fts (rowid, name, street, housenumber, postcode, city, cell)
         SELECT id, index_text(name, name_de, name_en), index_text(street),
-               index_text(housenumber), postcode, index_text(city)
+               index_text(housenumber), postcode, index_text(city), grid_cell(lat, lon)
           FROM places;
       INSERT INTO places_fts(places_fts) VALUES ('optimize');
       INSERT INTO places_rtree (id, min_lat, max_lat, min_lon, max_lon)
@@ -189,15 +193,25 @@ export class IndexWriter {
    * Straßen sind in den Ergebnissen unterscheidbar.
    */
   private assignStreetAddresses(): void {
+    this.db.exec('BEGIN');
+    try {
+      this.assignStreetAddressesInTransaction();
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  private assignStreetAddressesInTransaction(): void {
     // Nur für diesen Schritt: Adressen einer Straße in einem Breitenband finden.
     this.db.exec(`
-      BEGIN;
       CREATE INDEX places_street_lat ON places (street, lat)
         WHERE street IS NOT NULL AND (city IS NOT NULL OR postcode IS NOT NULL);
       CREATE TEMP TABLE street_address (id INTEGER PRIMARY KEY, city TEXT, postcode TEXT);
     `);
     const streets = this.db.prepare(`
-      SELECT id, name, lat, lon FROM places
+      SELECT id, name, city, postcode, lat, lon FROM places
        WHERE type = 'street' AND name IS NOT NULL AND (city IS NULL OR postcode IS NULL)`);
     const addresses = this.db.prepare(`
       SELECT city, postcode, lat, lon FROM places INDEXED BY places_street_lat
@@ -208,7 +222,10 @@ export class IndexWriter {
     );
 
     for (const row of streets.iterate()) {
-      const street = row as { id: number; name: string; lat: number; lon: number };
+      const street = row as unknown as AddressRow & { id: number; name: string };
+      // Nur suchen, was der Straße noch fehlt.
+      const needsCity = street.city === null;
+      const needsPostcode = street.postcode === null;
       let city: AddressRow | null = null;
       let postcode: AddressRow | null = null;
       let cityKm = Infinity;
@@ -224,10 +241,12 @@ export class IndexWriter {
         ) as unknown as AddressRow[];
         for (const address of found) {
           const km = distanceKm(street.lat, street.lon, address.lat, address.lon);
-          if (address.city !== null && km < cityKm) [city, cityKm] = [address, km];
-          if (address.postcode !== null && km < postcodeKm) [postcode, postcodeKm] = [address, km];
+          if (needsCity && address.city !== null && km < cityKm) [city, cityKm] = [address, km];
+          if (needsPostcode && address.postcode !== null && km < postcodeKm) {
+            [postcode, postcodeKm] = [address, km];
+          }
         }
-        if (city && postcode) break;
+        if ((!needsCity || city) && (!needsPostcode || postcode)) break;
       }
       if (city || postcode) save.run(street.id, city?.city ?? null, postcode?.postcode ?? null);
     }
@@ -239,7 +258,6 @@ export class IndexWriter {
        WHERE places.id = a.id;
       DROP TABLE temp.street_address;
       DROP INDEX places_street_lat;
-      COMMIT;
     `);
   }
 

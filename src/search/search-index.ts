@@ -1,9 +1,9 @@
 import { existsSync, statSync } from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { SCHEMA_VERSION } from '../import/index-writer.js';
-import { boundingBox, distanceKm } from './geo.js';
+import { boundingBox, distanceKm, gridCellsInBox } from './geo.js';
 import { nameForms, normalizeTokens } from './normalize.js';
-import { queryVariants, withoutHousenumbers } from './query.js';
+import { inTextColumns, queryVariants, withinCells, withoutHousenumbers } from './query.js';
 import { dedupeNearby, rank, type Candidate } from './ranking.js';
 
 export { distanceKm };
@@ -53,8 +53,8 @@ type RankedRow = CandidateRow & Candidate;
 const COLUMNS = `p.osm_type, p.osm_id, p.type, p.name, p.name_de, p.name_en, p.street,
   p.housenumber, p.postcode, p.city, p.state, p.country, p.lat, p.lon`;
 
-/** Spaltengewichte für bm25: name, street, housenumber, postcode, city. */
-const BM25 = 'bm25(places_fts, 4.0, 2.0, 1.0, 1.0, 1.0)';
+/** Spaltengewichte für bm25: name, street, housenumber, postcode, city, cell. */
+const BM25 = 'bm25(places_fts, 4.0, 2.0, 1.0, 1.0, 1.0, 0.0)';
 /**
  * So viele Kandidaten gehen je Abfrage ins Ranking. Die IDs sind nach Wichtigkeit
  * vergeben und FTS5 liefert in ID-Reihenfolge: Die ersten Treffer sind also die
@@ -63,6 +63,13 @@ const BM25 = 'bm25(places_fts, 4.0, 2.0, 1.0, 1.0, 1.0)';
 const CANDIDATES = 200;
 /** Umkreis für die zusätzlichen Kandidaten bei gesetztem Standort. */
 const LOCAL_RADIUS_KM = 25;
+/** Mehr Rasterzellen (nur in Polnähe) machen die Anfrage teurer als eine Prüfung aller Treffer. */
+const MAX_LOCAL_CELLS = 64;
+/**
+ * Ab so vielen globalen Kandidaten im Umkreis wird ohne Rasterzellen gesucht: Bei
+ * 10 von 200 sind 200 nahe Treffer nach etwa 4.000 geprüften erreicht.
+ */
+const LOCAL_DENSE_HITS = 10;
 /** Gleichnamige Treffer (z. B. Abschnitte einer Straße) in diesem Abstand werden zusammengefasst. */
 const DEDUPE_RADIUS_KM = 2;
 
@@ -144,9 +151,9 @@ function openIndexFile(path: string): OpenIndex {
         FROM (SELECT rowid AS id, ${BM25} AS bm25 FROM places_fts
                WHERE places_fts MATCH ? LIMIT ${String(CANDIDATES)}) f
         JOIN places p ON p.id = f.id`),
-      // Alle Treffer werden auf den Umkreis geprüft, nicht nur die wichtigsten: Nahe
-      // Adressen haben die niedrigste Wichtigkeit und stehen in FTS-Reihenfolge ganz
-      // hinten. bm25 wird nur für die Treffer im Umkreis berechnet.
+      // Alle Treffer im Umkreis, nicht nur die wichtigsten: Nahe Adressen haben die
+      // niedrigste Wichtigkeit und stehen in FTS-Reihenfolge ganz hinten. Die Anfrage
+      // enthält die Rasterzellen der Box, FTS5 verschneidet dann die Trefferlisten.
       searchLocal: db.prepare(`SELECT p.id, ${COLUMNS}, p.importance, ${BM25} AS bm25
         FROM places_fts JOIN places p ON p.id = places_fts.rowid
         WHERE places_fts MATCH ?
@@ -240,14 +247,15 @@ export class SearchIndex {
     const { lat, lon } = options;
     const hasLocation = lat !== undefined && lon !== undefined;
     for (const match of queryVariants(tokens)) {
-      const rows = (this.current?.search.all(match) ?? []) as unknown as CandidateRow[];
-      if (hasLocation) {
+      const rows = (this.current?.search.all(inTextColumns(match)) ??
+        []) as unknown as CandidateRow[];
+      // Weniger als CANDIDATES Treffer: Alle sind schon dabei, auch die nahen.
+      if (hasLocation && rows.length >= CANDIDATES) {
         // Treffer in der Nähe, die es global nicht unter die ersten Kandidaten schaffen.
-        const box = boundingBox(lat, lon, LOCAL_RADIUS_KM);
-        const local = (this.current?.searchLocal.all(match, ...box) ??
-          []) as unknown as CandidateRow[];
         const seen = new Set(rows.map((r) => r.id));
-        for (const row of local) if (!seen.has(row.id)) rows.push(row);
+        for (const row of this.localCandidates(match, lat, lon, rows)) {
+          if (!seen.has(row.id)) rows.push(row);
+        }
       }
       if (rows.length === 0) continue;
 
@@ -259,6 +267,31 @@ export class SearchIndex {
       return dedupeNearby(rank(candidates, tokens), dedupeKey, DEDUPE_RADIUS_KM);
     }
     return [];
+  }
+
+  /**
+   * Die wichtigsten Treffer im Umkreis. Über die Rasterzellen der Box muss FTS5 nur
+   * Treffer in der Nähe liefern; die Dauer hängt so von der Dichte im Umkreis ab,
+   * nicht von der Zahl der Treffer im ganzen Index. Liegen schon unter den globalen
+   * Kandidaten viele im Umkreis, sind die nahen Treffer auch ohne Zellen schnell
+   * gefunden, und das Zählen der Zellen für bm25 entfällt. Beide Wege liefern
+   * dieselben Zeilen.
+   */
+  private localCandidates(
+    match: string,
+    lat: number,
+    lon: number,
+    globalRows: readonly CandidateRow[],
+  ): CandidateRow[] {
+    const box = boundingBox(lat, lon, LOCAL_RADIUS_KM);
+    const [minLat, maxLat, minLon, maxLon] = box;
+    const inBox = globalRows.filter(
+      (r) => r.lat >= minLat && r.lat <= maxLat && r.lon >= minLon && r.lon <= maxLon,
+    ).length;
+    const cells = gridCellsInBox(box);
+    const useCells = inBox < LOCAL_DENSE_HITS && cells.length <= MAX_LOCAL_CELLS;
+    const query = useCells ? withinCells(match, cells) : inTextColumns(match);
+    return (this.current?.searchLocal.all(query, ...box) ?? []) as unknown as CandidateRow[];
   }
 
   /** Nächste Objekte zum Punkt über den R*Tree; `null`, wenn kein Index vorhanden ist. */

@@ -211,7 +211,7 @@ Hausnummer nicht, kommt die Straße zurück.
 wird die Schreibweise ohne Umlaut-e indexiert, sodass auch `Dusseldorf` Düsseldorf findet.
 
 **Ranking** (`src/search/ranking.ts`): Aus bis zu 200 Kandidaten (bei `lat/lon` zusätzlich bis zu
-200 im Umkreis von 25 km) wird ein Score aus FTS-Relevanz (`bm25`), Übereinstimmung mit dem Namen,
+200 im Umkreis von 25 km, gefunden über eine Rasterzelle je Eintrag im FTS-Index) wird ein Score aus FTS-Relevanz (`bm25`), Übereinstimmung mit dem Namen,
 `importance` (Stadt vor Ortsteil vor Straße vor Hausnummer) und – falls angegeben – der Nähe zum
 Standort berechnet. Gleichnamige Treffer im Abstand bis 2 km (z. B. die Abschnitte einer Straße)
 werden zu einem zusammengefasst.
@@ -236,7 +236,8 @@ curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
 
 Ungültige Parameter liefern `400` mit einer Meldung wie `q: muss mindestens 2 Zeichen lang sein`.
 Solange noch kein Index unter `$DATA_DIR/index.sqlite` liegt, antworten beide Endpunkte mit `503`.
-Das gilt auch für einen Index mit altem Schema (vor Phase 4): dann bitte neu importieren.
+Das gilt auch für einen Index mit altem Schema (aktuell Version 3, seit der Rasterzelle für die
+Umkreissuche): dann bitte neu importieren bzw. das nächste Update abwarten.
 
 ### Weitere Endpunkte
 
@@ -364,8 +365,8 @@ Ohne `--region` gilt `REGION_URL`. Ablauf:
 3. `osmium tags-filter` auf Adressen, Orte (`place=*`), Straßen (`highway` mit Namen) und
    benannte `amenity`-Objekte.
 4. `osmium export` als GeoJSON-Sequenz, die zeilenweise gelesen wird (konstanter Speicherbedarf).
-5. Aufbau von `index.next.sqlite` (Tabelle `places`, FTS5-Tabelle `places_fts` mit Präfix-Index,
-   R\*Tree `places_rtree`, Tabelle `meta`) und atomarer Austausch gegen `index.sqlite`.
+5. Aufbau von `index.next.sqlite` (Tabelle `places`, FTS5-Tabelle `places_fts` mit Präfix-Index
+   und Rasterzelle (0,25°) je Eintrag, R\*Tree `places_rtree`, Tabelle `meta`) und atomarer Austausch gegen `index.sqlite`.
 
 Richtwert: Der Bremen-Extrakt (21 MB) ergibt rund 177.000 Einträge in etwa 5 Sekunden.
 

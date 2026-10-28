@@ -1,5 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { buildFtsQuery, queryVariants, withoutHousenumbers } from '../../src/search/query.js';
+import {
+  buildFtsQuery,
+  inTextColumns,
+  queryVariants,
+  withinCells,
+  withoutHousenumbers,
+} from '../../src/search/query.js';
+
+describe('inTextColumns', () => {
+  it('beschränkt die Anfrage auf die Textspalten (nicht auf die Rasterzelle)', () => {
+    expect(inTextColumns('"g5"*')).toBe('{name street housenumber postcode city} : ("g5"*)');
+  });
+});
+
+describe('withinCells', () => {
+  it('verlangt zusätzlich eine der Rasterzellen', () => {
+    expect(withinCells('"ha"*', ['g570x773', 'g570x774'])).toBe(
+      '{name street housenumber postcode city} : ("ha"*) AND cell : ("g570x773" OR "g570x774")',
+    );
+  });
+});
 
 describe('buildFtsQuery', () => {
   it('sucht das letzte Token als Präfix, die übrigen exakt', () => {

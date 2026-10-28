@@ -20,6 +20,19 @@ function isHousenumberPrefix(token: string): boolean {
   return HOUSENUMBER.test(token) && token.replace(/\D/g, '').length < MIN_POSTCODE_PREFIX;
 }
 
+/** Spalten mit Text aus OSM; die Spalte `cell` (Rasterzelle) gehört nicht dazu. */
+const TEXT_COLUMNS = '{name street housenumber postcode city}';
+
+/** Beschränkt eine Anfrage auf die Textspalten, damit Suchwörter nie Rasterzellen treffen. */
+export function inTextColumns(match: string): string {
+  return `${TEXT_COLUMNS} : (${match})`;
+}
+
+/** Wie `inTextColumns`, zusätzlich muss der Treffer in einer der Rasterzellen liegen. */
+export function withinCells(match: string, cells: readonly string[]): string {
+  return `${inTextColumns(match)} AND cell : (${cells.map(quote).join(' OR ')})`;
+}
+
 /** Letztes Token als Präfix, alle anderen exakt; alle müssen vorkommen. */
 export function buildFtsQuery(tokens: readonly string[]): string | null {
   if (tokens.length === 0) return null;
