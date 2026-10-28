@@ -86,7 +86,7 @@ Der Container enthält die API, den Importer und `osmium-tool`; der Index liegt 
 
 ### Offene Punkte aus Phase 4
 
-- [ ] **Latenz auf dem Deutschland-Index messen** (`npm run bench -- --index <datei>`). Bisher nur auf dem Regierungsbezirk Düsseldorf gemessen (1,4 Mio. Einträge): p50 2,0 ms, p95 10,1 ms.
+- [ ] **Latenz auf dem Deutschland-Index senken.** Gemessen am 28.10.2026 (25,6 Mio. Einträge, Schema 4): p50 22 ms, p95 194 ms, p99 548 ms, Ziel p95 < 50 ms. Am langsamsten: häufige Straßennamen, vor allem mit Standort („Breite Straße“ 960 ms, „Am Markt 1“ 610 ms, „Graf-Adolf-Str“ 490 ms). Ursachen siehe nächster Punkt.
 - [ ] **Kosten, die mit der Datenmenge wachsen:** `bm25` zählt für jedes Suchwort alle Dokumente (bei „strasse“ ca. 4 ms auf dem Regierungsbezirk), und Präfixe über 4 Zeichen häufiger Wörter („stras…“) werden komplett zusammengeführt (ca. 14 ms). Hochgerechnet auf Deutschland drohen 60–220 ms für Anfragen mit „Straße“. Mögliche Lösung: bm25 in JS mit einer beim Import vorberechneten Wortstatistik rechnen und lange Präfixe häufiger Wörter gesondert behandeln. Das weicht von „FTS-Score (`bm25`)“ ab und braucht eine Entscheidung.
 - [ ] **Bekanntheitssignal für `importance`:** Bisher zählt nur der Typ. Mit `wikidata`/`wikipedia` oder Einwohnerzahl ließen sich bekannte Objekte nach vorn holen (z. B. „Kö“ → Königsallee; die Golden-Query ist deshalb auf Top 5 gelockert).
 - [ ] **Sehenswürdigkeiten fehlen im Index:** `tourism`, `man_made` u. Ä. sind nicht im Import-Filter (Phase 2), z. B. findet „Rheinturm“ nichts.
@@ -129,7 +129,14 @@ Der Container enthält die API, den Importer und `osmium-tool`; der Index liegt 
 
 ### Offene Punkte aus Phase 6
 
-- [ ] **Messungen auf dem Deutschland-Index:** Lasttest und Speicher-/Plattenbedarf sind nur auf Testindizes gemessen (17.618 Einträge: ca. 1.100 Anfragen/s ohne Cache auf einem Kern, 0 Fehler bei Updates unter Last). Die README-Angaben für Deutschland (ca. 8 GB Index, mind. 30 GB Platte, 4–8 GB RAM beim Import) sind Hochrechnungen.
+- [ ] **Messungen auf dem Deutschland-Index:** Import gemessen (28.10.2026): 30 min, max. 5,4 GB RAM, Index 8,5 GB. Lasttest noch offen (bisher 17.618 Einträge: ca. 1.100 Anfragen/s ohne Cache auf einem Kern, 0 Fehler bei Updates unter Last).
+
+### Offene Punkte aus dem Test mit Deutschland-Daten (28.10.2026)
+
+Behoben: Ortsteile (`addr:suburb`/`addr:hamlet` → `district`, 4,8 Mio. Adressen), Adressen ohne Straße (`addr:place`, 226.000), „Schlosstr“ = „Schloßstraße“, „St.“ = „Sankt“, „Hauptstraße12“, Hausnummer „12 a“ = „12a“ (71.000), „Frankfurt a.M.“, Straße im genannten Ort vor Tippfehler-Treffer in anderem Ort, Heap-Überlauf beim Aufbau des FTS-Index (Import auf Deutschland brach mit Schema 3 ab).
+
+- [ ] **Land und Bundesland für Lieferprüfungen:** `addr:country` fehlt bei 29 % der Adressen, `addr:state` fast immer. Der Extrakt enthält Adressen aus allen Nachbarländern (ca. 28.000 mit fremdem `addr:country`, dazu viele ohne). Lösung: Grenzen (`boundary=administrative`, `admin_level=2` und `4`) beim Import laden und jedem Eintrag Land und Bundesland per Punkt-in-Polygon zuweisen. Löst auch „Ort für Straßen ohne Adressen“.
+- [ ] **Schreibvarianten:** Getrennt geschrieben („Friedrich Straße“), anders verbunden („Konrad-Adenauerstraße“) und Tippfehler mitten im Wort werden nicht gefunden.
 - [ ] **Browser- und CDN-Cache nach Updates:** Antworten tragen `Cache-Control: max-age=3600`. Nach einem Update können Clients bis zu einer Stunde alte Vorschläge sehen. Akzeptabel bei täglichen Updates, sonst `max-age` per ENV steuerbar machen.
 - [ ] **Update ohne neue Daten:** `update` baut den Index auch dann neu, wenn sich der Extrakt (MD5) nicht geändert hat. Ließe sich überspringen, um Rechenzeit zu sparen.
 - [ ] **`/metrics` ist öffentlich:** Schutz bisher nur über den Reverse-Proxy. Bei Bedarf eigene Variable (z. B. `METRICS_TOKEN`).

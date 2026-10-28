@@ -5,6 +5,7 @@ import {
   queryVariants,
   withinCells,
   withoutHousenumbers,
+  withoutSingleLetters,
 } from '../../src/search/query.js';
 
 describe('inTextColumns', () => {
@@ -90,5 +91,24 @@ describe('withoutHousenumbers', () => {
   it('liefert null ohne Hausnummer oder wenn nichts übrig bleibt', () => {
     expect(withoutHousenumbers(['koenigsallee'])).toBeNull();
     expect(withoutHousenumbers(['12'])).toBeNull();
+  });
+});
+
+describe('withoutSingleLetters', () => {
+  it('lässt einzelne Buchstaben aus Abkürzungen weg ("Frankfurt a.M.")', () => {
+    expect(withoutSingleLetters(['zeil', '106', 'frankfurt', 'a', 'm'])).toEqual([
+      'zeil',
+      '106',
+      'frankfurt',
+    ]);
+  });
+
+  it('behält einstellige Hausnummern', () => {
+    expect(withoutSingleLetters(['hauptstrasse', '1', 'a'])).toEqual(['hauptstrasse', '1']);
+  });
+
+  it('liefert null, wenn nichts wegfällt oder nichts übrig bleibt', () => {
+    expect(withoutSingleLetters(['hauptstrasse', '1'])).toBeNull();
+    expect(withoutSingleLetters(['a', 'b'])).toBeNull();
   });
 });

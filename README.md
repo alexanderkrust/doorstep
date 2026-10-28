@@ -202,12 +202,25 @@ Alle Antworten sind GeoJSON-`FeatureCollection`s und enthalten das Feld
 | `lang`       | nein    | Zweistelliger Sprachcode, Default `DEFAULT_LANG`                    |
 | `api_key`    | nein    | API-Key (alternativ Header `X-API-Key`)                             |
 
-Das letzte Wort wird als Präfix gesucht, alle anderen exakt. Findet die Anfrage nichts, wird das
-letzte Wort um bis zu zwei Zeichen gekürzt (Tippfehler am Wortende). Gibt es die gesuchte
-Hausnummer nicht, kommt die Straße zurück.
+Das letzte Wort wird als Präfix gesucht, alle anderen exakt. Findet die Anfrage nichts, wird
+der Reihe nach versucht: ohne einzelne Buchstaben (`Frankfurt a.M.`, `Mülheim a.d. Ruhr`), die
+Straße ohne Hausnummer (gibt es die Hausnummer nicht, kommt die Straße zurück) und erst dann das
+letzte Wort um bis zu zwei Zeichen gekürzt (Tippfehler am Wortende). Fehlt eine Hausnummer, kommt
+so die Straße im genannten Ort vor einer Hausnummer in einem ähnlich geschriebenen Ort
+(`… 1 Bonn` liefert nicht `… 1 Bönen`).
+
+**Felder je Treffer:** `name`, `street`, `housenumber`, `postcode`, `city`, `district`, `state`,
+`country`, `osm_id`, `osm_type`, `type`; fehlende Werte werden weggelassen. `district` ist der
+Ortsteil (`addr:suburb`, sonst `addr:hamlet`), `city` oft die Gemeinde: `Strandstraße 1
+Westerland` findet die Adresse mit `city: "Sylt"`, `district: "Westerland"`. Adressen ohne
+Straße (`addr:place`) tragen den Ortsnamen in `street`. Straßen übernehmen Ort, Ortsteil und PLZ
+von der nächsten Adresse an derselben Straße. `state` und `country` stammen nur aus
+`addr:state`/`addr:country` und fehlen in Deutschland oft (siehe Grenzen unten).
 
 **Normalisierung** (Import und Suche gleich, `src/search/normalize.ts`): Kleinschreibung,
-`ä` ↔ `ae`, `ß` ↔ `ss`, andere Akzente entfernt, `Str.` ↔ `Straße`, `60 d` → `60d`. Zusätzlich
+`ä` ↔ `ae`, `ß` ↔ `ss`, andere Akzente entfernt, `Str.` ↔ `Straße`, `Schlosstr.` ↔
+`Schloßstraße`, `St.` ↔ `Sankt`, `60 d` und `60d` gleichwertig, `Hauptstraße12` →
+`Hauptstraße 12`. Zusätzlich
 wird die Schreibweise ohne Umlaut-e indexiert, sodass auch `Dusseldorf` Düsseldorf findet.
 
 **Ranking** (`src/search/ranking.ts`): Aus bis zu 200 Kandidaten (bei `lat/lon` zusätzlich bis zu
@@ -225,6 +238,18 @@ Die Suchdauer steht im Antwort-Header `Server-Timing` (z. B. `search;dur=1.84`).
 curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
 ```
 
+**Grenzen bei der Prüfung von Lieferadressen** (gemessen am Deutschland-Extrakt):
+
+- **Land und Bundesland sind nicht verlässlich.** `addr:country` fehlt bei rund 29 % der
+  Adressen, `addr:state` praktisch immer. Der Geofabrik-Extrakt enthält außerdem Adressen aus
+  den Nachbarländern (z. B. Kerkrade, Zgorzelec, Straßburg, Kreuzlingen). Ob eine Adresse in
+  Deutschland liegt, lässt sich aus der Antwort derzeit nicht sicher ablesen.
+- **Sonderfälle mit deutscher PLZ:** Büsingen am Hochrhein (78266, Schweizer Zollgebiet),
+  Helgoland (27498, außerhalb des EU-Zollgebiets), Kleinwalsertal (87567–87569) und Jungholz
+  (87491) gehören zu Österreich. Solche Regeln prüft der Shop am besten über die PLZ.
+- **Getrennte oder anders verbundene Schreibweisen** (`Friedrich Straße`,
+  `Konrad-Adenauerstraße`) und Tippfehler mitten im Wort werden nicht erkannt.
+
 ### `GET /reverse` – nächstes Objekt zu einem Punkt
 
 | Parameter    | Pflicht | Beschreibung                            |
@@ -236,8 +261,8 @@ curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
 
 Ungültige Parameter liefern `400` mit einer Meldung wie `q: muss mindestens 2 Zeichen lang sein`.
 Solange noch kein Index unter `$DATA_DIR/index.sqlite` liegt, antworten beide Endpunkte mit `503`.
-Das gilt auch für einen Index mit altem Schema (aktuell Version 3, seit der Rasterzelle für die
-Umkreissuche): dann bitte neu importieren bzw. das nächste Update abwarten.
+Das gilt auch für einen Index mit altem Schema (aktuell Version 4, seit Ortsteil und erweiterter
+Normalisierung): dann bitte neu importieren bzw. das nächste Update abwarten.
 
 ### Weitere Endpunkte
 
@@ -330,8 +355,11 @@ npm run bench -- --index $PWD/data/index.sqlite
 ```
 
 Messung (MacBook, Node 24, Regierungsbezirk Düsseldorf: 217 MB PBF → 1,4 Mio. Einträge, 389 MB
-Index, Import 45 s): p50 2,0 ms, p95 10,1 ms, p99 16,6 ms. Auf dem Deutschland-Index ist die
-Messung noch offen. Bekannte Kosten, die mit der Datenmenge wachsen: `bm25` zählt für jedes
+Index, Import 45 s): p50 2,0 ms, p95 10,1 ms, p99 16,6 ms. **Deutschland** (Geofabrik-Extrakt
+vom 27.10.2026, 4,9 GB PBF → 25,6 Mio. Einträge, 8,5 GB Index, Import 30 min, max. 5,4 GB RAM):
+p50 22 ms, **p95 194 ms**, p99 548 ms – das Ziel von 50 ms ist noch nicht erreicht. Am
+langsamsten sind häufige Straßennamen, besonders mit Standort (`Breite Straße`, `Am Markt 1`,
+`Hauptstraße 1`: 250–960 ms). Bekannte Kosten, die mit der Datenmenge wachsen: `bm25` zählt für jedes
 Suchwort alle Dokumente (sehr häufige Wörter wie „straße“), und Präfixe über 4 Zeichen
 häufiger Wörter („stras…“) werden komplett zusammengeführt.
 

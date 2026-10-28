@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { indexText, normalizeTokens, normalizeWord } from '../../src/search/normalize.js';
+import {
+  housenumberText,
+  indexText,
+  nameForms,
+  normalizeTokens,
+  normalizeWord,
+} from '../../src/search/normalize.js';
 
 describe('normalizeWord', () => {
   it('schreibt klein und ersetzt Umlaute und ß', () => {
@@ -30,6 +36,13 @@ describe('normalizeWord', () => {
     // Nur am Wortende: "Strand" bleibt
     expect(normalizeWord('Strand')).toBe('strand');
   });
+
+  it('behandelt "Schlosstr" wie "Schloßstraße" (drei s werden zu zwei)', () => {
+    expect(normalizeWord('Schlosstr')).toBe(normalizeWord('Schloßstraße'));
+    expect(normalizeWord('Schlossstrasse')).toBe(normalizeWord('Schloßstraße'));
+    // Angefangene Eingabe bleibt ein Präfix des Namens
+    expect(normalizeWord('Schloßstraße').startsWith(normalizeWord('Schlossst'))).toBe(true);
+  });
 });
 
 describe('normalizeTokens', () => {
@@ -48,6 +61,24 @@ describe('normalizeTokens', () => {
     ]);
     // Zwei Buchstaben sind keine Ergänzung
     expect(normalizeTokens('Ring 5 ab')).toEqual(['ring', '5', 'ab']);
+  });
+
+  it('trennt eine ohne Leerzeichen angehängte Hausnummer ab', () => {
+    expect(normalizeTokens('friedrichstraße43 berlin')).toEqual([
+      'friedrichstrasse',
+      '43',
+      'berlin',
+    ]);
+    expect(normalizeTokens('Hauptstr12a')).toEqual(['hauptstrasse', '12a']);
+    // Kurze Bezeichnungen wie Autobahnen bleiben zusammen
+    expect(normalizeTokens('A7')).toEqual(['a7']);
+  });
+
+  it('schreibt "St." vor einem weiteren Wort als "Sankt" aus', () => {
+    expect(normalizeTokens('St. Augustin')).toEqual(['sankt', 'augustin']);
+    expect(normalizeTokens('Sankt Augustin')).toEqual(['sankt', 'augustin']);
+    // Als letztes Wort ist "st" ein angefangenes Wort ("Stuttgart")
+    expect(normalizeTokens('St')).toEqual(['st']);
   });
 
   it('lässt keine FTS5-Syntax durch', () => {
@@ -74,5 +105,29 @@ describe('indexText', () => {
       'dusseldorf',
     ]);
     expect(indexText([null, undefined])).toBe('');
+  });
+});
+
+describe('indexText und nameForms', () => {
+  it('indexiert "St." als "Sankt"', () => {
+    expect(indexText(['St. Pauli']).split(' ')).toContain('sankt');
+    expect(nameForms('St. Ingbert')).toContain('sankt ingbert');
+  });
+});
+
+describe('housenumberText', () => {
+  it('indexiert "12 a" auch als "12a", damit beide Schreibweisen passen', () => {
+    expect(housenumberText('12 a').split(' ')).toContain('12a');
+    expect(housenumberText('12 A').split(' ')).toContain('12a');
+    expect(housenumberText('12a').split(' ')).toContain('12a');
+  });
+
+  it('lässt Bereiche und Listen als einzelne Nummern suchbar', () => {
+    expect(housenumberText('12-14').split(' ')).toEqual(expect.arrayContaining(['12', '14']));
+    expect(housenumberText('12;14').split(' ')).toEqual(expect.arrayContaining(['12', '14']));
+  });
+
+  it('liefert einen leeren Text ohne Hausnummer', () => {
+    expect(housenumberText(null)).toBe('');
   });
 });

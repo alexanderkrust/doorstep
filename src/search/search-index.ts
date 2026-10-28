@@ -3,7 +3,13 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { SCHEMA_VERSION } from '../import/index-writer.js';
 import { boundingBox, distanceKm, gridCellsInBox } from './geo.js';
 import { nameForms, normalizeTokens } from './normalize.js';
-import { inTextColumns, queryVariants, withinCells, withoutHousenumbers } from './query.js';
+import {
+  inTextColumns,
+  queryVariants,
+  withinCells,
+  withoutHousenumbers,
+  withoutSingleLetters,
+} from './query.js';
 import { dedupeNearby, rank, type Candidate } from './ranking.js';
 
 export { distanceKm };
@@ -20,6 +26,7 @@ export interface PlaceRow {
   housenumber: string | null;
   postcode: string | null;
   city: string | null;
+  district: string | null;
   state: string | null;
   country: string | null;
   lat: number;
@@ -51,7 +58,7 @@ interface CandidateRow extends PlaceRow {
 type RankedRow = CandidateRow & Candidate;
 
 const COLUMNS = `p.osm_type, p.osm_id, p.type, p.name, p.name_de, p.name_en, p.street,
-  p.housenumber, p.postcode, p.city, p.state, p.country, p.lat, p.lon`;
+  p.housenumber, p.postcode, p.city, p.district, p.state, p.country, p.lat, p.lon`;
 
 /** Spaltengewichte für bm25: name, street, housenumber, postcode, city, cell. */
 const BM25 = 'bm25(places_fts, 4.0, 2.0, 1.0, 1.0, 1.0, 0.0)';
@@ -227,26 +234,53 @@ export class SearchIndex {
     return this.current !== null;
   }
 
-  /** Autosuggest; `null`, wenn kein Index vorhanden ist. */
+  /**
+   * Autosuggest; `null`, wenn kein Index vorhanden ist.
+   *
+   * Reihenfolge, die erste mit Treffern gewinnt:
+   * 1. die Anfrage wie eingegeben, sonst ohne einzelne Buchstaben ("Frankfurt a.M."),
+   *    jeweils mit Hausnummer und sonst auf Straßenebene (Hausnummer fehlt in OSM);
+   * 2. dasselbe mit Tippfehler-Toleranz am letzten Wort.
+   * Die Straße im genannten Ort geht so vor einer Hausnummer in einem ähnlich
+   * geschriebenen Ort ("… 1 Bonn" findet nicht "… 1 Bönen").
+   */
   search(options: SearchOptions): PlaceRow[] | null {
     if (!this.open()) return null;
     const tokens = normalizeTokens(options.q);
-    const hits = this.rankedSearch(tokens, options);
-    if (hits.length > 0) return hits.slice(0, options.limit);
+    const tokenSets = [tokens];
+    const withoutLetters = withoutSingleLetters(tokens);
+    if (withoutLetters) tokenSets.push(withoutLetters);
 
-    // Hausnummer fehlt in OSM: Treffer auf Straßenebene zurückgeben.
-    const streetTokens = withoutHousenumbers(tokens);
-    if (!streetTokens) return [];
-    return this.rankedSearch(streetTokens, options)
-      .filter((row) => row.type !== 'house')
-      .slice(0, options.limit);
+    for (const typos of [false, true]) {
+      for (const set of tokenSets) {
+        const hits = this.rankedSearch(set, options, typos);
+        if (hits.length > 0) return hits.slice(0, options.limit);
+
+        const streetTokens = withoutHousenumbers(set);
+        if (!streetTokens) continue;
+        const streets = this.rankedSearch(streetTokens, options, typos).filter(
+          (row) => row.type !== 'house',
+        );
+        if (streets.length > 0) return streets.slice(0, options.limit);
+      }
+    }
+    return [];
   }
 
-  /** Erste Query-Variante mit Treffern, gerankt. */
-  private rankedSearch(tokens: readonly string[], options: SearchOptions): RankedRow[] {
+  /**
+   * Erste Query-Variante mit Treffern, gerankt. Ohne `typos` nur die Anfrage selbst,
+   * mit `typos` nur die Varianten mit gekürztem letztem Wort.
+   */
+  private rankedSearch(
+    tokens: readonly string[],
+    options: SearchOptions,
+    typos: boolean,
+  ): RankedRow[] {
     const { lat, lon } = options;
     const hasLocation = lat !== undefined && lon !== undefined;
-    for (const match of queryVariants(tokens)) {
+    const [exact, ...trimmed] = queryVariants(tokens);
+    const variants = typos ? trimmed : exact === undefined ? [] : [exact];
+    for (const match of variants) {
       const rows = (this.current?.search.all(inTextColumns(match)) ??
         []) as unknown as CandidateRow[];
       // Weniger als CANDIDATES Treffer: Alle sind schon dabei, auch die nahen.

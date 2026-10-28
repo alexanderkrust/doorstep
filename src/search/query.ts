@@ -70,3 +70,15 @@ export function withoutHousenumbers(tokens: readonly string[]): string[] | null 
   const rest = tokens.filter((t) => !HOUSENUMBER.test(t));
   return rest.length === tokens.length || rest.length === 0 ? null : rest;
 }
+
+/** Ein einzelner Buchstabe, keine Ziffer. */
+const SINGLE_LETTER = /^\p{L}$/u;
+
+/**
+ * Für Abkürzungen wie "Frankfurt a.M." oder "Mülheim a.d. Ruhr": die Wörter ohne
+ * einzelne Buchstaben; `null`, wenn keiner wegfällt oder sonst nichts übrig bleibt.
+ */
+export function withoutSingleLetters(tokens: readonly string[]): string[] | null {
+  const rest = tokens.filter((t) => !SINGLE_LETTER.test(t));
+  return rest.length === tokens.length || rest.length === 0 ? null : rest;
+}

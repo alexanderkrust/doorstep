@@ -31,6 +31,8 @@ export interface Place {
   housenumber: string | null;
   postcode: string | null;
   city: string | null;
+  /** Ortsteil (`addr:suburb`, sonst `addr:hamlet`); `city` ist oft die Gemeinde. */
+  district: string | null;
   state: string | null;
   country: string | null;
   lat: number;
@@ -109,10 +111,12 @@ export function featureToPlace(feature: Feature): Place | null {
     name,
     nameDe,
     nameEn,
-    street: tag(props, 'addr:street'),
+    // Adressen ohne Straße (meist kleine Orte) tragen den Ortsnamen in addr:place.
+    street: tag(props, 'addr:street') ?? tag(props, 'addr:place'),
     housenumber: tag(props, 'addr:housenumber'),
     postcode: tag(props, 'addr:postcode') ?? tag(props, 'postal_code'),
     city: tag(props, 'addr:city') ?? (CITY_TYPES.has(type) ? (name ?? nameDe ?? nameEn) : null),
+    district: tag(props, 'addr:suburb') ?? tag(props, 'addr:hamlet'),
     state: tag(props, 'addr:state'),
     country: tag(props, 'addr:country'),
     lat: point.lat,

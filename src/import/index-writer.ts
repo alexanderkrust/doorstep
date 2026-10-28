@@ -2,14 +2,18 @@ import { rmSync } from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { ATTRIBUTION } from '../api/attribution.js';
 import { boundingBox, distanceKm, gridCell } from '../search/geo.js';
-import { indexText } from '../search/normalize.js';
+import { housenumberText, indexText } from '../search/normalize.js';
 import type { Place } from './place.js';
 
-/** 2: name_de/name_en, normalisierter Volltextindex, IDs nach Wichtigkeit (Phase 4). */
-export const SCHEMA_VERSION = 3;
+/**
+ * 2: name_de/name_en, normalisierter Volltextindex, IDs nach Wichtigkeit (Phase 4).
+ * 3: Rasterzellen für die Umkreissuche.
+ * 4: Ortsteil (`district`), "St." = "Sankt", "sss" → "ss", Hausnummer "12 a" auch als "12a".
+ */
+export const SCHEMA_VERSION = 4;
 
 const PLACE_COLUMNS = `osm_type, osm_id, type, name, name_de, name_en, street, housenumber,
-  postcode, city, state, country, lat, lon, importance`;
+  postcode, city, district, state, country, lat, lon, importance`;
 
 /** Zwischentabelle in einer eigenen Datei; am Ende sortiert nach places kopiert. */
 const STAGING_SCHEMA = `
@@ -24,6 +28,7 @@ CREATE TABLE staging.places (
   housenumber TEXT,
   postcode    TEXT,
   city        TEXT,
+  district    TEXT,
   state       TEXT,
   country     TEXT,
   lat         REAL    NOT NULL,
@@ -47,6 +52,7 @@ CREATE TABLE places (
   housenumber TEXT,
   postcode    TEXT,
   city        TEXT,
+  district    TEXT,
   state       TEXT,
   country     TEXT,
   lat         REAL    NOT NULL,
@@ -57,7 +63,7 @@ CREATE TABLE places (
 
 -- Volltextindex mit normalisiertem Text (siehe src/search/normalize.ts), rowid = places.id.
 -- Ohne eigenen Inhalt (contentless): angezeigt wird immer die Zeile aus places.
--- Spalte name enthält name, name:de und name:en. Treffer kommen in rowid-Reihenfolge,
+-- Spalte name enthält name, name:de und name:en, Spalte city auch den Ortsteil. Treffer kommen in rowid-Reihenfolge,
 -- also nach Wichtigkeit. Präfix 1 für einstellige Hausnummern ("Hauptstraße 1").
 -- Spalte cell: Rasterzelle des Punkts (src/search/geo.ts) für die Umkreissuche.
 CREATE VIRTUAL TABLE places_fts USING fts5(
@@ -74,6 +80,17 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `;
 
 const BATCH_SIZE = 10_000;
+/**
+ * FTS und R*Tree werden in Blöcken dieser Größe aufgebaut. Node gibt den Speicher
+ * der JS-Funktionen (index_text, …) erst nach dem Ende eines Statements frei; in
+ * einem einzigen Statement über ganz Deutschland (25 Mio. Zeilen) läuft der Heap voll.
+ */
+const DEFAULT_INDEX_BATCH_SIZE = 250_000;
+
+export interface IndexWriterOptions {
+  /** Zeilen je Statement beim Aufbau von FTS und R*Tree; kleiner nur für Tests. */
+  indexBatchSize?: number;
+}
 
 /**
  * Umkreise, in denen für eine Straße nach Adressen an derselben Straße gesucht
@@ -84,6 +101,7 @@ const STREET_ADDRESS_RADII_KM = [0.5, 2];
 
 interface AddressRow {
   city: string | null;
+  district: string | null;
   postcode: string | null;
   lat: number;
   lon: number;
@@ -97,10 +115,12 @@ export class IndexWriter {
   private readonly db: DatabaseSync;
   private readonly insert: StatementSync;
   private readonly stagingPath: string;
+  private readonly indexBatchSize: number;
   private pending = 0;
   private count = 0;
 
-  constructor(path: string) {
+  constructor(path: string, options: IndexWriterOptions = {}) {
+    this.indexBatchSize = options.indexBatchSize ?? DEFAULT_INDEX_BATCH_SIZE;
     this.stagingPath = `${path}.staging`;
     rmSync(this.stagingPath, { force: true });
     this.db = new DatabaseSync(path);
@@ -114,10 +134,13 @@ export class IndexWriter {
     // und als Fläche) werden ignoriert; der erste Eintrag gewinnt.
     this.insert = this.db.prepare(`
       INSERT OR IGNORE INTO staging.places (${PLACE_COLUMNS})
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     // Normalisierung in JS, damit Import und Suche dieselbe Funktion nutzen.
     this.db.function('index_text', { varargs: true, deterministic: true }, (...values) =>
       indexText(values.map((v) => (typeof v === 'string' ? v : null))),
+    );
+    this.db.function('housenumber_text', { deterministic: true }, (value) =>
+      housenumberText(typeof value === 'string' ? value : null),
     );
     this.db.function('grid_cell', { deterministic: true }, (lat, lon) =>
       gridCell(Number(lat), Number(lon)),
@@ -137,6 +160,7 @@ export class IndexWriter {
       place.housenumber,
       place.postcode,
       place.city,
+      place.district,
       place.state,
       place.country,
       place.lat,
@@ -162,15 +186,7 @@ export class IndexWriter {
     `);
     rmSync(this.stagingPath, { force: true });
     this.assignStreetAddresses();
-    this.db.exec(`
-      INSERT INTO places_fts (rowid, name, street, housenumber, postcode, city, cell)
-        SELECT id, index_text(name, name_de, name_en), index_text(street),
-               index_text(housenumber), postcode, index_text(city), grid_cell(lat, lon)
-          FROM places;
-      INSERT INTO places_fts(places_fts) VALUES ('optimize');
-      INSERT INTO places_rtree (id, min_lat, max_lat, min_lon, max_lon)
-        SELECT id, lat, lat, lon, lon FROM places;
-    `);
+    this.buildSearchIndexes();
     const setMeta = this.db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
     const entries: Record<string, string> = {
       schema_version: String(SCHEMA_VERSION),
@@ -186,10 +202,32 @@ export class IndexWriter {
     return this.count;
   }
 
+  /** Füllt FTS und R*Tree blockweise nach id (siehe `DEFAULT_INDEX_BATCH_SIZE`). */
+  private buildSearchIndexes(): void {
+    const fts = this.db.prepare(`
+      INSERT INTO places_fts (rowid, name, street, housenumber, postcode, city, cell)
+        SELECT id, index_text(name, name_de, name_en), index_text(street),
+               housenumber_text(housenumber), postcode, index_text(city, district),
+               grid_cell(lat, lon)
+          FROM places WHERE id > ? AND id <= ?`);
+    const rtree = this.db.prepare(`
+      INSERT INTO places_rtree (id, min_lat, max_lat, min_lon, max_lon)
+        SELECT id, lat, lat, lon, lon FROM places WHERE id > ? AND id <= ?`);
+    const { maxId } = this.db.prepare('SELECT coalesce(max(id), 0) AS maxId FROM places').get() as {
+      maxId: number;
+    };
+    this.db.exec('BEGIN');
+    for (let from = 0; from < maxId; from += this.indexBatchSize) {
+      fts.run(from, from + this.indexBatchSize);
+      rtree.run(from, from + this.indexBatchSize);
+    }
+    this.db.exec(`COMMIT; INSERT INTO places_fts(places_fts) VALUES ('optimize');`);
+  }
+
   /**
    * Straßen tragen in OSM selten `addr:city` oder `addr:postcode`. Sie übernehmen
-   * Ort und PLZ von der nächsten Adresse, deren `addr:street` dem Straßennamen
-   * entspricht. So lässt sich "Hauptstraße Musterstadt" finden, und gleichnamige
+   * Ort, Ortsteil und PLZ von der nächsten Adresse, deren `addr:street` dem
+   * Straßennamen entspricht. So lässt sich "Hauptstraße Musterstadt" finden, und gleichnamige
    * Straßen sind in den Ergebnissen unterscheidbar.
    */
   private assignStreetAddresses(): void {
@@ -208,17 +246,18 @@ export class IndexWriter {
     this.db.exec(`
       CREATE INDEX places_street_lat ON places (street, lat)
         WHERE street IS NOT NULL AND (city IS NOT NULL OR postcode IS NOT NULL);
-      CREATE TEMP TABLE street_address (id INTEGER PRIMARY KEY, city TEXT, postcode TEXT);
+      CREATE TEMP TABLE street_address (
+        id INTEGER PRIMARY KEY, city TEXT, district TEXT, postcode TEXT);
     `);
     const streets = this.db.prepare(`
-      SELECT id, name, city, postcode, lat, lon FROM places
+      SELECT id, name, city, district, postcode, lat, lon FROM places
        WHERE type = 'street' AND name IS NOT NULL AND (city IS NULL OR postcode IS NULL)`);
     const addresses = this.db.prepare(`
-      SELECT city, postcode, lat, lon FROM places INDEXED BY places_street_lat
+      SELECT city, district, postcode, lat, lon FROM places INDEXED BY places_street_lat
        WHERE street = ? AND (city IS NOT NULL OR postcode IS NOT NULL)
          AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?`);
     const save = this.db.prepare(
-      'INSERT INTO temp.street_address (id, city, postcode) VALUES (?, ?, ?)',
+      'INSERT INTO temp.street_address (id, city, district, postcode) VALUES (?, ?, ?, ?)',
     );
 
     for (const row of streets.iterate()) {
@@ -226,9 +265,13 @@ export class IndexWriter {
       // Nur suchen, was der Straße noch fehlt.
       const needsCity = street.city === null;
       const needsPostcode = street.postcode === null;
+      // Ortsteile gibt es nicht überall: Sie werden mitgenommen, aber nicht eigens gesucht.
+      const needsDistrict = street.district === null;
       let city: AddressRow | null = null;
+      let district: AddressRow | null = null;
       let postcode: AddressRow | null = null;
       let cityKm = Infinity;
+      let districtKm = Infinity;
       let postcodeKm = Infinity;
       for (const radiusKm of STREET_ADDRESS_RADII_KM) {
         const [minLat, maxLat, minLon, maxLon] = boundingBox(street.lat, street.lon, radiusKm);
@@ -242,18 +285,30 @@ export class IndexWriter {
         for (const address of found) {
           const km = distanceKm(street.lat, street.lon, address.lat, address.lon);
           if (needsCity && address.city !== null && km < cityKm) [city, cityKm] = [address, km];
+          if (needsDistrict && address.district !== null && km < districtKm) {
+            [district, districtKm] = [address, km];
+          }
           if (needsPostcode && address.postcode !== null && km < postcodeKm) {
             [postcode, postcodeKm] = [address, km];
           }
         }
         if ((!needsCity || city) && (!needsPostcode || postcode)) break;
       }
-      if (city || postcode) save.run(street.id, city?.city ?? null, postcode?.postcode ?? null);
+      if (city || district || postcode) {
+        save.run(
+          street.id,
+          city?.city ?? null,
+          district?.district ?? null,
+          postcode?.postcode ?? null,
+        );
+      }
     }
 
     this.db.exec(`
       UPDATE places
-         SET city = coalesce(places.city, a.city), postcode = coalesce(places.postcode, a.postcode)
+         SET city = coalesce(places.city, a.city),
+             district = coalesce(places.district, a.district),
+             postcode = coalesce(places.postcode, a.postcode)
         FROM temp.street_address a
        WHERE places.id = a.id;
       DROP TABLE temp.street_address;

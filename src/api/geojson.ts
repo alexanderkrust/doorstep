@@ -20,6 +20,7 @@ const PROPERTY_KEYS = [
   'street',
   'postcode',
   'city',
+  'district',
   'state',
   'country',
 ] as const;

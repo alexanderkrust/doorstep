@@ -34,6 +34,7 @@ describe('featureToPlace', () => {
       housenumber: '60',
       postcode: '40212',
       city: 'Düsseldorf',
+      district: null,
       state: null,
       country: 'DE',
       lat: 51.22,
@@ -67,6 +68,34 @@ describe('featureToPlace', () => {
       properties: { '@type': 'node', '@id': 1, place: 'city', name: 'Düsseldorf' },
     });
     expect(place).toMatchObject({ type: 'city', name: 'Düsseldorf', city: 'Düsseldorf' });
+  });
+
+  it('nimmt addr:place als Straße, wenn eine Adresse keine addr:street hat', () => {
+    const house = (props: Record<string, unknown>) =>
+      featureToPlace({
+        type: 'Feature',
+        geometry: point(10.2, 47.4),
+        properties: { '@type': 'node', '@id': 3, 'addr:housenumber': '16', ...props },
+      });
+    expect(house({ 'addr:place': 'Oberdorf' })).toMatchObject({ street: 'Oberdorf' });
+    expect(house({ 'addr:place': 'Oberdorf', 'addr:street': 'Dorfstraße' })).toMatchObject({
+      street: 'Dorfstraße',
+    });
+  });
+
+  it('übernimmt den Ortsteil aus addr:suburb, sonst aus addr:hamlet', () => {
+    const house = (props: Record<string, unknown>) =>
+      featureToPlace({
+        type: 'Feature',
+        geometry: point(8.3, 54.9),
+        properties: { '@type': 'node', '@id': 4, 'addr:housenumber': '1', ...props },
+      });
+    expect(house({ 'addr:city': 'Sylt', 'addr:suburb': 'Westerland' })).toMatchObject({
+      city: 'Sylt',
+      district: 'Westerland',
+    });
+    expect(house({ 'addr:hamlet': 'Kleinweiler' })).toMatchObject({ district: 'Kleinweiler' });
+    expect(house({})).toMatchObject({ district: null });
   });
 
   it('übernimmt name:de und name:en getrennt', () => {
