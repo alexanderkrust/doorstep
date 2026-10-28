@@ -368,7 +368,7 @@ npm run bench -- --index $PWD/data/index.sqlite
 
 Messung (MacBook, Node 24, Regierungsbezirk Düsseldorf: 217 MB PBF → 1,4 Mio. Einträge, 389 MB
 Index, Import 45 s): p50 2,0 ms, p95 10,1 ms, p99 16,6 ms. **Deutschland** (Geofabrik-Extrakt
-vom 27.10.2026, 4,9 GB PBF → 25,6 Mio. Einträge, 8,5 GB Index, Import 30 min, max. 5,4 GB RAM):
+vom 27.10.2026, 4,9 GB PBF → 25,6 Mio. Einträge, 8,8 GB Index, Import 39 min mit Grenzen (Schema 5; vorher 30 min), max. 4,2 GB RAM):
 p50 22 ms, **p95 194 ms**, p99 548 ms – das Ziel von 50 ms ist noch nicht erreicht. Am
 langsamsten sind häufige Straßennamen, besonders mit Standort (`Breite Straße`, `Am Markt 1`,
 `Hauptstraße 1`: 250–960 ms). Bekannte Kosten, die mit der Datenmenge wachsen: `bm25` zählt für jedes
