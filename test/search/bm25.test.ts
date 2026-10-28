@@ -92,9 +92,14 @@ describe('TermStats', () => {
     expect(stats.docs('breite')).toBe(3);
     expect(stats.docs('unbekannt')).toBe(0);
     // Präfixe bis 4 Zeichen aus der vorberechneten Tabelle, längere aus den Wörtern.
-    expect(stats.prefixDocs('brei')).toBe(4);
-    expect(stats.prefixDocs('breite')).toBe(4);
-    expect(stats.completions('breite').map((c) => c.term)).toEqual(['breite', 'breitenbach']);
+    // "Breite Straße" steht auch als "breitestrasse" im Index (3 Dokumente), siehe indexText.
+    expect(stats.prefixDocs('brei')).toBe(7);
+    expect(stats.prefixDocs('breite')).toBe(7);
+    expect(stats.completions('breite').map((c) => c.term)).toEqual([
+      'breite',
+      'breitenbach',
+      'breitestrasse',
+    ]);
   });
 
   it('enthält keine Rasterzellen', () => {

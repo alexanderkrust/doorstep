@@ -19,7 +19,8 @@ const STR_SUFFIX = /str$/;
  */
 const TRIPLE_S = /s{3,}/g;
 
-function fold(word: string, umlaut: (char: string) => string): string {
+/** Wie `fold`, aber ohne das Kürzen von "sss": Dort ist die Wortgrenze noch zu sehen. */
+function foldKeepingS(word: string, umlaut: (char: string) => string): string {
   return word
     .normalize('NFC')
     .toLowerCase()
@@ -27,8 +28,11 @@ function fold(word: string, umlaut: (char: string) => string): string {
     .normalize('NFD')
     .replace(COMBINING, '')
     .replace(/[łđøæœı]/g, (c) => SPECIAL[c] ?? c)
-    .replace(STR_SUFFIX, 'strasse')
-    .replace(TRIPLE_S, 'ss');
+    .replace(STR_SUFFIX, 'strasse');
+}
+
+function fold(word: string, umlaut: (char: string) => string): string {
+  return foldKeepingS(word, umlaut).replace(TRIPLE_S, 'ss');
 }
 
 /** "St." als eigenes Wort ist in Orts- und Straßennamen die Abkürzung für "Sankt". */
@@ -41,15 +45,24 @@ function canonicalWord(word: string, fold: (word: string) => string): string {
   return folded === SANKT_SHORT ? SANKT : folded;
 }
 
+const withUmlautE = (c: string) => UMLAUTS[c] ?? c;
+const withoutUmlautE = (c: string) => (c === 'ß' ? 'ss' : c);
+
 /** Kleinschreibung, ä → ae, ß → ss, andere Akzente entfernt, "…str" → "…strasse". */
 export function normalizeWord(word: string): string {
-  return fold(word, (c) => UMLAUTS[c] ?? c);
+  return fold(word, withUmlautE);
 }
 
-/** Wie `normalizeWord`, aber ä → a (Schreibweise ohne Umlaut, z. B. "Dusseldorf"). */
-function foldWithoutUmlautE(word: string): string {
-  return fold(word, (c) => (c === 'ß' ? 'ss' : c));
+/** Eine Schreibweise für Index und Namen: mit Umlaut-e ("duesseldorf") oder ohne ("dusseldorf"). */
+interface Folding {
+  word: (word: string) => string;
+  keepingS: (word: string) => string;
 }
+
+const FOLDINGS: readonly Folding[] = [
+  { word: normalizeWord, keepingS: (w) => foldKeepingS(w, withUmlautE) },
+  { word: (w) => fold(w, withoutUmlautE), keepingS: (w) => foldKeepingS(w, withoutUmlautE) },
+];
 
 /** Wörter aus Buchstaben und Ziffern; alles andere trennt (auch FTS5-Syntax). */
 function words(text: string): string[] {
@@ -95,6 +108,37 @@ export function normalizeTokens(query: string): string[] {
 }
 
 /**
+ * Speichert die Ergebnisse einer Funktion je Text. Straße und Ort wiederholen sich
+ * unter den Kandidaten einer Anfrage und beim Import ständig. Wird geleert, wenn er voll ist.
+ */
+function memoize<T>(fn: (value: string) => T, maxSize = 10_000): (value: string) => T {
+  const results = new Map<string, T>();
+  return (value) => {
+    let result = results.get(value);
+    if (result === undefined) {
+      if (results.size >= maxSize) results.clear();
+      result = fn(value);
+      results.set(value, result);
+    }
+    return result;
+  };
+}
+
+/** Wörter eines Werts für den Volltextindex, in beiden Schreibweisen und mit Varianten. */
+const indexWords = memoize((value: string): readonly string[] => {
+  const out = new Set<string>();
+  const parts = words(value);
+  for (const folding of FOLDINGS) {
+    const folded = parts.map((p) => canonicalWord(p, folding.word));
+    for (const word of folded) out.add(word);
+    for (const form of compoundVariants(parts, folded, folding)) {
+      for (const word of form) out.add(word);
+    }
+  }
+  return [...out];
+});
+
+/**
  * Text für eine Spalte des Volltextindex: alle Werte normalisiert, dazu die
  * Schreibweise ohne Umlaut-e ("dusseldorf"), damit auch sie gefunden wird.
  */
@@ -102,12 +146,63 @@ export function indexText(values: readonly (string | null | undefined)[]): strin
   const out = new Set<string>();
   for (const value of values) {
     if (!value) continue;
-    for (const word of words(value)) {
-      out.add(canonicalWord(word, normalizeWord));
-      out.add(canonicalWord(word, foldWithoutUmlautE));
-    }
+    for (const word of indexWords(value)) out.add(word);
   }
   return [...out].join(' ');
+}
+
+/**
+ * Grundwörter, die in Straßennamen mal angehängt ("Friedrichstraße"), mal
+ * getrennt ("Friedrich Straße", "Konrad-Adenauer-Straße") stehen.
+ */
+const STREET_SUFFIXES = ['strasse', 'allee', 'platz', 'gasse', 'damm', 'ring', 'weg'];
+/**
+ * So lang muss der Wortanfang mindestens sein: beim Abtrennen ("Ostring" bleibt)
+ * und beim Anhängen ("Am Ring" wird nicht zu "amring").
+ */
+const MIN_STEM_LENGTH = 4;
+
+/**
+ * Andere Schreibweisen eines Namens: mit abgetrenntem Grundwort
+ * ("friedrichstrasse" → "friedrich strasse") und mit angehängtem
+ * ("adenauer strasse" → "adenauerstrasse"). Leer, wenn es keine gibt.
+ * `parts` sind die Wörter vor, `folded` nach der Normalisierung.
+ */
+function compoundVariants(
+  parts: readonly string[],
+  folded: readonly string[],
+  folding: Folding,
+): string[][] {
+  const split: string[] = [];
+  const joined: string[] = [];
+  let changedSplit = false;
+  let changedJoin = false;
+  for (const [i, word] of folded.entries()) {
+    // Vor dem Kürzen von "sss" trennen: "schlossstrasse" → "schloss", aber "rathausstrasse" → "rathaus".
+    const long = folding.keepingS(parts[i] ?? '');
+    const suffix = STREET_SUFFIXES.find(
+      (s) => long.endsWith(s) && long.length - s.length >= MIN_STEM_LENGTH,
+    );
+    if (suffix) {
+      split.push(long.slice(0, -suffix.length).replace(TRIPLE_S, 'ss'), suffix);
+      changedSplit = true;
+    } else {
+      split.push(word);
+    }
+    const previous = folded[i - 1];
+    if (
+      STREET_SUFFIXES.includes(word) &&
+      previous !== undefined &&
+      previous.length >= MIN_STEM_LENGTH &&
+      /\p{L}$/u.test(previous)
+    ) {
+      joined[joined.length - 1] = (previous + word).replace(TRIPLE_S, 'ss');
+      changedJoin = true;
+    } else {
+      joined.push(word);
+    }
+  }
+  return [...(changedSplit ? [split] : []), ...(changedJoin ? [joined] : [])];
 }
 
 /** Ziffern mit einzelnem Buchstaben, auch mit Leerzeichen dazwischen ("12 a"). */
@@ -128,13 +223,18 @@ export function housenumberText(value: string | null | undefined): string {
 }
 
 /** Normalisierte Formen eines Namens für den Namensvergleich im Ranking. */
-export function nameForms(value: string | null | undefined): string[] {
-  if (!value) return [];
+const nameFormsOf = memoize((value: string): readonly string[] => {
   const parts = words(value);
-  const forms = new Set([
-    parts.map((p) => canonicalWord(p, normalizeWord)).join(' '),
-    parts.map((p) => canonicalWord(p, foldWithoutUmlautE)).join(' '),
-  ]);
+  const forms = new Set<string>();
+  for (const folding of FOLDINGS) {
+    const folded = parts.map((p) => canonicalWord(p, folding.word));
+    forms.add(folded.join(' '));
+    for (const variant of compoundVariants(parts, folded, folding)) forms.add(variant.join(' '));
+  }
   forms.delete('');
   return [...forms];
+});
+
+export function nameForms(value: string | null | undefined): readonly string[] {
+  return value ? nameFormsOf(value) : [];
 }

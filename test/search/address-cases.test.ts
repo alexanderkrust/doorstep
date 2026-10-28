@@ -182,3 +182,40 @@ describe('Aufbau des Suchindex in Blöcken', () => {
     }
   });
 });
+
+describe('Schreibvarianten von Straßennamen', () => {
+  let variantsDir: string;
+  let variants: SearchIndex;
+
+  beforeAll(async () => {
+    variantsDir = await mkdtemp(join(tmpdir(), 'doorstep-variants-'));
+    const path = join(variantsDir, 'index.sqlite');
+    const writer = new IndexWriter(path);
+    for (const feature of [
+      node(52.5069, 13.3907, addr('Friedrichstraße', '43', '10969', 'Berlin')),
+      node(52.458, 13.5009, addr('Friedrich-List-Straße', '43', '12487', 'Berlin')),
+      node(50.7, 7.1, addr('Konrad-Adenauer-Straße', '1', '53604', 'Bad Honnef')),
+    ]) {
+      const place = featureToPlace(feature);
+      if (place) writer.add(place);
+    }
+    writer.finish({});
+    variants = new SearchIndex(path);
+  });
+
+  afterAll(async () => {
+    variants.close();
+    await rm(variantsDir, { recursive: true, force: true });
+  });
+
+  const top = (q: string) => variants.search({ q, limit: 5 })?.[0];
+
+  it('findet "Friedrich Straße" als Friedrichstraße, nicht als Friedrich-List-Straße', () => {
+    expect(top('Friedrich Straße 43 Berlin')).toMatchObject({ street: 'Friedrichstraße' });
+  });
+
+  it('findet "Konrad-Adenauerstraße" als Konrad-Adenauer-Straße', () => {
+    expect(top('Konrad-Adenauerstraße 1')).toMatchObject({ street: 'Konrad-Adenauer-Straße' });
+    expect(top('Konrad Adenauerstr 1 Bad Honnef')).toMatchObject({ postcode: '53604' });
+  });
+});

@@ -222,6 +222,9 @@ von der nächsten Adresse an derselben Straße. `country` (ISO-Code, z. B. `DE`)
 `Schloßstraße`, `St.` ↔ `Sankt`, `60 d` und `60d` gleichwertig, `Hauptstraße12` →
 `Hauptstraße 12`. Zusätzlich
 wird die Schreibweise ohne Umlaut-e indexiert, sodass auch `Dusseldorf` Düsseldorf findet.
+Namen mit den Grundwörtern `Straße`, `Allee`, `Platz`, `Gasse`, `Damm`, `Ring` und `Weg` werden
+außerdem getrennt und zusammengeschrieben indexiert: `Friedrich Straße` findet die Friedrichstraße,
+`Konrad-Adenauerstraße` die Konrad-Adenauer-Straße.
 
 **Ranking** (`src/search/ranking.ts`): Aus bis zu 200 Kandidaten (bei `lat/lon` zusätzlich bis zu
 200 im Umkreis von 25 km, gefunden über eine Rasterzelle je Eintrag im FTS-Index) wird ein Score aus FTS-Relevanz (`bm25`), Übereinstimmung mit dem Namen,
@@ -259,8 +262,8 @@ curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
 - **Sonderfälle mit deutscher PLZ:** Büsingen am Hochrhein (78266, Schweizer Zollgebiet),
   Helgoland (27498, außerhalb des EU-Zollgebiets), Kleinwalsertal (87567–87569) und Jungholz
   (87491) gehören zu Österreich. Solche Regeln prüft der Shop am besten über die PLZ.
-- **Getrennte oder anders verbundene Schreibweisen** (`Friedrich Straße`,
-  `Konrad-Adenauerstraße`) und Tippfehler mitten im Wort werden nicht erkannt.
+- **Tippfehler mitten im Wort** (`Friedrichstrase`, `Kastanineallee`) werden nicht erkannt, nur am
+  Wortende.
 
 ### `GET /reverse` – nächstes Objekt zu einem Punkt
 
@@ -273,9 +276,10 @@ curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
 
 Ungültige Parameter liefern `400` mit einer Meldung wie `q: muss mindestens 2 Zeichen lang sein`.
 Solange noch kein Index unter `$DATA_DIR/index.sqlite` liegt, antworten beide Endpunkte mit `503`.
-Das gilt auch für einen Index mit altem Schema (aktuell Version 6, seit der Wortstatistik für
-bm25; Version 5 brachte Land und Bundesland aus Verwaltungsgrenzen): dann bitte neu importieren
-bzw. das nächste Update abwarten.
+Das gilt auch für einen Index mit altem Schema (aktuell Version 7, seit getrennt und
+zusammengeschriebenen Straßennamen; Version 6 brachte die Wortstatistik für bm25, Version 5 Land
+und Bundesland aus Verwaltungsgrenzen): dann bitte neu importieren bzw. das nächste Update
+abwarten.
 
 ### Weitere Endpunkte
 

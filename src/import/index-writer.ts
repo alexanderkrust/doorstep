@@ -12,8 +12,9 @@ import { withLocation, type Place, type PlaceLocation } from './place.js';
  * 5: Land und Bundesland aus Verwaltungsgrenzen statt nur aus `addr:country`/`addr:state`.
  * 6: Wortstatistik (`terms`, `prefixes`, Meta `fts_tokens`) für bm25 in JS und die
  *    Zerlegung langer Präfixe (src/search/bm25.ts, `expandPrefix`).
+ * 7: Straßennamen auch getrennt und zusammengeschrieben ("Friedrich Straße", "Adenauerstraße").
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 const PLACE_COLUMNS = `osm_type, osm_id, type, name, name_de, name_en, street, housenumber,
   postcode, city, district, state, country, lat, lon, importance`;

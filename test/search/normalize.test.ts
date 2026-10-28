@@ -92,7 +92,7 @@ describe('normalizeTokens', () => {
 
 describe('indexText', () => {
   it('liefert normalisierte Wörter für den Volltextindex', () => {
-    expect(indexText(['Graf-Adolf-Str.'])).toBe('graf adolf strasse');
+    expect(indexText(['Graf-Adolf-Str.'])).toBe('graf adolf strasse adolfstrasse');
   });
 
   it('ergänzt die Schreibweise ohne Umlaut-e (Dusseldorf → Düsseldorf)', () => {
@@ -129,5 +129,52 @@ describe('housenumberText', () => {
 
   it('liefert einen leeren Text ohne Hausnummer', () => {
     expect(housenumberText(null)).toBe('');
+  });
+});
+
+describe('zusammen- und getrennt geschriebene Straßennamen', () => {
+  const words = (text: string) => indexText([text]).split(' ');
+
+  it('indexiert "Friedrichstraße" auch getrennt', () => {
+    expect(words('Friedrichstraße')).toEqual(expect.arrayContaining(['friedrich', 'strasse']));
+    expect(words('Lindenweg')).toEqual(expect.arrayContaining(['linden', 'weg']));
+  });
+
+  it('indexiert "Konrad-Adenauer-Straße" auch zusammengeschrieben', () => {
+    expect(words('Konrad-Adenauer-Straße')).toContain('adenauerstrasse');
+    expect(words('Friedrich Straße')).toContain('friedrichstrasse');
+  });
+
+  it('behält bei "Schloßstraße" das Doppel-s im getrennten Wort', () => {
+    expect(words('Schloßstraße')).toEqual(expect.arrayContaining(['schloss', 'strasse']));
+    expect(words('Schloss Straße')).toContain(normalizeWord('Schloßstraße'));
+  });
+
+  it('hängt kein s an, wenn der Wortanfang selbst auf s endet', () => {
+    for (const [name, stem] of [
+      ['Rathausstraße', 'rathaus'],
+      ['Kreisstraße', 'kreis'],
+      ['Bahnhofsstraße', 'bahnhofs'],
+      ['Gaußstraße', 'gauss'],
+    ] as const) {
+      expect(words(name)).toEqual(expect.arrayContaining([stem, 'strasse']));
+      expect(words(name)).not.toContain(`${stem}s`);
+    }
+  });
+
+  it('hängt Grundwörter nicht an kurze Wörter an ("Am Ring")', () => {
+    expect(words('Am Ring')).not.toContain('amring');
+    expect(words('An der Allee')).not.toContain('derallee');
+  });
+
+  it('trennt keine zu kurzen Wortanfänge und keine Zahlen', () => {
+    expect(words('Ring')).toEqual(['ring']);
+    expect(words('Ostring')).not.toContain('os');
+    expect(words('A 1 Weg')).not.toContain('1weg');
+  });
+
+  it('vergleicht im Ranking auch die getrennte Form', () => {
+    expect(nameForms('Friedrichstraße')).toContain('friedrich strasse');
+    expect(nameForms('Konrad-Adenauer-Straße')).toContain('konrad adenauerstrasse');
   });
 });
