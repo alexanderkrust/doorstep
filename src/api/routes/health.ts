@@ -26,6 +26,7 @@ export const healthRoutes: FastifyPluginAsync<HealthRoutesOptions> = async (
   app.get(
     '/health',
     {
+      config: { rateLimit: false },
       schema: {
         response: {
           200: {
@@ -38,19 +39,25 @@ export const healthRoutes: FastifyPluginAsync<HealthRoutesOptions> = async (
               index: { type: 'boolean' },
               importing: { type: 'boolean' },
               attribution: { type: 'string' },
+              importedAt: { type: 'string' },
             },
           },
         },
       },
     },
-    () => ({
-      status: 'ok' as const,
-      version: VERSION,
-      uptime: process.uptime(),
-      index: indexAvailable(index),
-      importing: importing(),
-      attribution: ATTRIBUTION,
-    }),
+    () => {
+      const available = indexAvailable(index);
+      const importedAt = available ? index.meta()?.['imported_at'] : undefined;
+      return {
+        status: 'ok' as const,
+        version: VERSION,
+        uptime: process.uptime(),
+        index: available,
+        importing: importing(),
+        attribution: ATTRIBUTION,
+        ...(importedAt ? { importedAt } : {}),
+      };
+    },
   );
   await Promise.resolve();
 };

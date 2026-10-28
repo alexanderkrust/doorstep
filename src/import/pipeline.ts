@@ -3,6 +3,7 @@ import { mkdir, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { downloadExtract, type DownloadProgress } from './download.js';
 import { IndexWriter } from './index-writer.js';
+import { acquireLock } from './lock.js';
 import { readLines } from './lines.js';
 import { exportGeoJsonSeq, filterExtract } from './osmium.js';
 import { featureToPlace, parseGeoJsonSeqLine } from './place.js';
@@ -10,6 +11,8 @@ import { featureToPlace, parseGeoJsonSeqLine } from './place.js';
 export const EXTRACT_FILE = 'extract.osm.pbf';
 export const INDEX_FILE = 'index.sqlite';
 export const NEXT_INDEX_FILE = 'index.next.sqlite';
+/** Sperrt `dataDir`, solange ein Import oder Update läuft. */
+export const LOCK_FILE = 'import.lock';
 
 export interface ImportResult {
   /** Anzahl der gelesenen Features. */
@@ -116,8 +119,21 @@ function formatProgress({ received, total }: DownloadProgress): string {
     : `${mb(received)} MB`;
 }
 
-/** Kompletter Import: Download (falls nötig), Filter, Export, Index unter `dataDir`. */
+/**
+ * Kompletter Import: Download (falls nötig), Filter, Export, Index unter `dataDir`.
+ * Wirft `LockError`, wenn dort bereits ein Import läuft.
+ */
 export async function runImport(options: RunImportOptions): Promise<ImportResult> {
+  await mkdir(options.dataDir, { recursive: true });
+  const release = await acquireLock(join(options.dataDir, LOCK_FILE));
+  try {
+    return await runLockedImport(options);
+  } finally {
+    await release();
+  }
+}
+
+async function runLockedImport(options: RunImportOptions): Promise<ImportResult> {
   const log = options.log ?? (() => undefined);
   let input = options.input;
   let source = input;

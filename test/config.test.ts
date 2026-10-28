@@ -14,6 +14,12 @@ describe('loadConfig', () => {
       corsOrigins: ['*'],
       logLevel: 'info',
       autoImport: false,
+      rateLimitEnabled: true,
+      apiKeys: [],
+      apiKeyRateLimit: 600,
+      trustProxy: false,
+      cacheSize: 10_000,
+      updateCron: null,
     });
   });
 
@@ -28,6 +34,12 @@ describe('loadConfig', () => {
       CORS_ORIGINS: 'https://a.example, https://b.example',
       LOG_LEVEL: 'debug',
       AUTO_IMPORT: 'true',
+      RATE_LIMIT_ENABLED: 'false',
+      API_KEYS: 'abc123, def456 ,',
+      RATE_LIMIT_API_KEY: '1000',
+      TRUST_PROXY: 'true',
+      CACHE_SIZE: '0',
+      UPDATE_CRON: ' 0 3 * * * ',
     });
     expect(config).toEqual({
       regionUrl: 'https://download.geofabrik.de/europe/germany/berlin-latest.osm.pbf',
@@ -39,12 +51,26 @@ describe('loadConfig', () => {
       corsOrigins: ['https://a.example', 'https://b.example'],
       logLevel: 'debug',
       autoImport: true,
+      rateLimitEnabled: false,
+      apiKeys: ['abc123', 'def456'],
+      apiKeyRateLimit: 1000,
+      trustProxy: true,
+      cacheSize: 0,
+      updateCron: '0 3 * * *',
     });
   });
 
   it('behandelt leere Strings wie nicht gesetzt', () => {
     expect(loadConfig({ PORT: '', CORS_ORIGINS: '' }).port).toBe(2322);
     expect(loadConfig({ CORS_ORIGINS: '  ' }).corsOrigins).toEqual(['*']);
+  });
+
+  it.each([
+    ['RATE_LIMIT_ENABLED', 'rateLimitEnabled'],
+    ['TRUST_PROXY', 'trustProxy'],
+  ] as const)('liest %s als Schalter', (key, field) => {
+    expect(loadConfig({ [key]: 'yes' })[field]).toBe(true);
+    expect(loadConfig({ [key]: '0' })[field]).toBe(false);
   });
 
   it.each([
@@ -70,6 +96,13 @@ describe('loadConfig', () => {
     ['LOG_LEVEL', 'verbose'],
     ['DATA_DIR', 'relativ/pfad'],
     ['AUTO_IMPORT', 'vielleicht'],
+    ['RATE_LIMIT_ENABLED', 'an'],
+    ['RATE_LIMIT_API_KEY', '0'],
+    ['TRUST_PROXY', 'ja'],
+    ['CACHE_SIZE', '-5'],
+    ['UPDATE_CRON', 'täglich'],
+    ['UPDATE_CRON', '60 3 * * *'],
+    ['UPDATE_CRON', '0 3 * *'],
   ])('lehnt ungültigen Wert %s=%s ab', (key, value) => {
     expect(() => loadConfig({ [key]: value })).toThrow(ConfigError);
   });

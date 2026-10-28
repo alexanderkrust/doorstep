@@ -80,6 +80,7 @@ docker run -d --name "$FILES" --network "$NET" \
 echo "==> docker run -p $PORT:2322 -v $VOLUME:/data $IMAGE"
 docker run -d --name "$API" --network "$NET" -p "$PORT:2322" -v "$VOLUME:/data" \
   -e REGION_URL="http://$FILES:8080/koenigsallee.osm.pbf" \
+  -e API_KEYS=smoke-key -e RATE_LIMIT_API_KEY=1000000 -e RATE_LIMIT=60 \
   --health-interval=2s --health-start-period=5s \
   "$IMAGE" >/dev/null
 
@@ -103,8 +104,44 @@ echo "==> HEALTHCHECK"
 wait_for 30 sh -c "[ \"\$(docker inspect -f '{{.State.Health.Status}}' $API)\" = healthy ]" ||
   fail "Container wird nicht healthy"
 
-echo "==> update im laufenden Container"
+echo "==> GET /metrics"
+curl -fsS "$BASE/metrics" | grep -q '^doorstep_index_available 1$' || fail "/metrics ohne Index-Status"
+
+echo "==> update im laufenden Container, währenddessen ständig Anfragen"
+TMP=$(mktemp -d)
+IMPORTED_BEFORE=$(curl -fsS "$BASE/health" | sed -n 's/.*"importedAt":"\([^"]*\)".*/\1/p')
+(
+  while [ ! -f "$TMP/stop" ]; do
+    curl -fsS -o /dev/null -H 'X-API-Key: smoke-key' "$BASE/api?q=K%C3%B6nigsall" ||
+      echo fail >>"$TMP/failures"
+    echo ok >>"$TMP/requests"
+  done
+) &
+LOOP=$!
 docker exec "$API" doorstep update >/dev/null || fail "update fehlgeschlagen"
+wait_for 15 sh -c "curl -fsS '$BASE/metrics' | grep -q '^doorstep_index_reloads_total 1$'" ||
+  fail "Neuer Index wurde ohne Neustart nicht geladen"
+touch "$TMP/stop"
+wait "$LOOP"
+REQUESTS=$(wc -l <"$TMP/requests" | tr -d ' ')
+FAILURES=$(cat "$TMP/failures" 2>/dev/null | wc -l | tr -d ' ')
+rm -rf "$TMP"
+IMPORTED_AFTER=$(curl -fsS "$BASE/health" | sed -n 's/.*"importedAt":"\([^"]*\)".*/\1/p')
+echo "    $REQUESTS Anfragen während des Updates, $FAILURES fehlgeschlagen"
+echo "    importedAt: $IMPORTED_BEFORE -> $IMPORTED_AFTER"
+[ "$FAILURES" = 0 ] || fail "$FAILURES Anfragen während des Updates fehlgeschlagen"
+[ "$IMPORTED_BEFORE" != "$IMPORTED_AFTER" ] || fail "importedAt hat sich nicht geändert"
+
+echo "==> Rate-Limit ohne API-Key (RATE_LIMIT=60)"
+LIMITED=0
+i=0
+while [ "$i" -lt 70 ]; do
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api?q=K%C3%B6nigsall")
+  [ "$CODE" = 429 ] && LIMITED=$((LIMITED + 1))
+  i=$((i + 1))
+done
+[ "$LIMITED" -gt 0 ] || fail "Kein 429 nach 70 Anfragen"
+echo "    $LIMITED von 70 Anfragen mit 429 abgewiesen"
 
 echo "==> Neustart nutzt den vorhandenen Index (kein erneuter Import)"
 docker restart "$API" >/dev/null

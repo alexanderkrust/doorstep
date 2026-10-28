@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { SCHEMA_VERSION } from '../import/index-writer.js';
 import { distanceKm } from './geo.js';
@@ -97,15 +97,86 @@ export class IndexUnavailableError extends Error {
   override name = 'IndexUnavailableError';
 }
 
+/** Identität einer Datei: Ein atomarer Tausch per rename liefert eine neue Inode. */
+function fileIdentity(path: string): string | null {
+  try {
+    const s = statSync(path);
+    return `${String(s.dev)}:${String(s.ino)}:${String(s.size)}:${String(s.mtimeMs)}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Eine geöffnete Indexdatei mit vorbereiteten Abfragen. */
+interface OpenIndex {
+  db: DatabaseSync;
+  identity: string | null;
+  meta: Record<string, string>;
+  search: StatementSync;
+  searchLocal: StatementSync;
+  box: StatementSync;
+}
+
+/** Öffnet und prüft eine Indexdatei. Wirft `IndexUnavailableError` bei falschem Schema. */
+function openIndexFile(path: string): OpenIndex {
+  // Identität vor dem Öffnen lesen: Wird die Datei dazwischen getauscht,
+  // fällt das beim nächsten Vergleich auf und sie wird erneut geladen.
+  const identity = fileIdentity(path);
+  let db: DatabaseSync;
+  try {
+    db = new DatabaseSync(path, { readOnly: true });
+  } catch (err) {
+    throw new IndexUnavailableError(`Index ${path} lässt sich nicht öffnen: ${String(err)}`);
+  }
+  try {
+    let meta: Record<string, string>;
+    try {
+      const rows = db.prepare('SELECT key, value FROM meta').all() as unknown as {
+        key: string;
+        value: string;
+      }[];
+      meta = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    } catch (err) {
+      throw new IndexUnavailableError(`Index ${path} ist nicht lesbar: ${String(err)}`);
+    }
+    const version = meta['schema_version'];
+    if (version !== String(SCHEMA_VERSION)) {
+      throw new IndexUnavailableError(
+        `Index hat Schema-Version ${version ?? 'unbekannt'}, erwartet wird ${String(SCHEMA_VERSION)}. ` +
+          'Bitte neu importieren.',
+      );
+    }
+    const matches = (limit: number) => `SELECT p.id, ${COLUMNS}, p.importance, f.bm25
+      FROM (SELECT rowid AS id, ${BM25} AS bm25 FROM places_fts
+             WHERE places_fts MATCH ? LIMIT ${String(limit)}) f
+      JOIN places p ON p.id = f.id`;
+    return {
+      db,
+      identity,
+      meta,
+      search: db.prepare(matches(CANDIDATES)),
+      searchLocal: db.prepare(`${matches(LOCAL_SCAN)}
+        WHERE p.lat BETWEEN ? AND ? AND p.lon BETWEEN ? AND ?
+        LIMIT ${String(CANDIDATES)}`),
+      box: db.prepare(`SELECT ${COLUMNS} FROM places_rtree r JOIN places p ON p.id = r.id
+        WHERE r.max_lat >= ? AND r.min_lat <= ? AND r.max_lon >= ? AND r.min_lon <= ?`),
+    };
+  } catch (err) {
+    db.close();
+    throw err;
+  }
+}
+
 /**
  * Lesender Zugriff auf `index.sqlite`. Die Datei wird beim ersten Zugriff
  * geöffnet, damit die API auch startet, bevor ein Import gelaufen ist.
+ *
+ * Updates ersetzen die Datei per atomarem rename. Die geöffnete alte Datei
+ * bleibt bis zum Neuladen lesbar (unter Unix lebt sie, solange sie offen ist);
+ * `reloadIfChanged()` wechselt dann ohne Unterbrechung auf die neue.
  */
 export class SearchIndex {
-  private db: DatabaseSync | null = null;
-  private searchStmt: StatementSync | null = null;
-  private searchLocalStmt: StatementSync | null = null;
-  private boxStmt: StatementSync | null = null;
+  private current: OpenIndex | null = null;
 
   constructor(readonly path: string) {}
 
@@ -114,40 +185,45 @@ export class SearchIndex {
    * Wirft `IndexUnavailableError`, wenn die Datei ein anderes Schema hat.
    */
   open(): boolean {
-    if (this.db) return true;
+    if (this.current) return true;
     if (!existsSync(this.path)) return false;
-    const db = new DatabaseSync(this.path, { readOnly: true });
-    try {
-      const version = (
-        db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
-          { value: string } | undefined
-      )?.value;
-      if (version !== String(SCHEMA_VERSION)) {
-        throw new IndexUnavailableError(
-          `Index hat Schema-Version ${version ?? 'unbekannt'}, erwartet wird ${String(SCHEMA_VERSION)}. ` +
-            'Bitte neu importieren.',
-        );
-      }
-      const matches = (limit: number) => `SELECT p.id, ${COLUMNS}, p.importance, f.bm25
-        FROM (SELECT rowid AS id, ${BM25} AS bm25 FROM places_fts
-               WHERE places_fts MATCH ? LIMIT ${String(limit)}) f
-        JOIN places p ON p.id = f.id`;
-      this.searchStmt = db.prepare(matches(CANDIDATES));
-      this.searchLocalStmt = db.prepare(`${matches(LOCAL_SCAN)}
-        WHERE p.lat BETWEEN ? AND ? AND p.lon BETWEEN ? AND ?
-        LIMIT ${String(CANDIDATES)}`);
-      this.boxStmt = db.prepare(`SELECT ${COLUMNS} FROM places_rtree r JOIN places p ON p.id = r.id
-        WHERE r.max_lat >= ? AND r.min_lat <= ? AND r.max_lon >= ? AND r.min_lon <= ?`);
-    } catch (err) {
-      db.close();
-      throw err;
-    }
-    this.db = db;
+    this.current = openIndexFile(this.path);
     return true;
   }
 
+  /**
+   * Lädt den Index neu, wenn unter `path` inzwischen eine andere Datei liegt.
+   * Liefert `true` nach einem Wechsel. Ist die neue Datei unbrauchbar, bleibt der
+   * alte Index aktiv und es wird `IndexUnavailableError` geworfen. Ist noch kein
+   * Index geöffnet, passiert nichts (das übernimmt der nächste Zugriff).
+   */
+  reloadIfChanged(): boolean {
+    const old = this.current;
+    if (!old) return false;
+    const identity = fileIdentity(this.path);
+    if (identity === null || identity === old.identity) return false;
+
+    let next: OpenIndex;
+    try {
+      next = openIndexFile(this.path);
+    } catch (err) {
+      // Nicht bei jedem Aufruf erneut versuchen, erst wenn sich die Datei wieder ändert.
+      old.identity = identity;
+      throw err;
+    }
+    // Abfragen laufen synchron: Zwischen diesen Zeilen kann keine Anfrage dazwischenkommen.
+    this.current = next;
+    old.db.close();
+    return true;
+  }
+
+  /** Metadaten des geöffneten Index (`places`, `imported_at`, `source`, …); sonst `null`. */
+  meta(): Readonly<Record<string, string>> | null {
+    return this.current?.meta ?? null;
+  }
+
   get isOpen(): boolean {
-    return this.db !== null;
+    return this.current !== null;
   }
 
   /** Autosuggest; `null`, wenn kein Index vorhanden ist. */
@@ -170,11 +246,12 @@ export class SearchIndex {
     const { lat, lon } = options;
     const hasLocation = lat !== undefined && lon !== undefined;
     for (const match of queryVariants(tokens)) {
-      const rows = (this.searchStmt?.all(match) ?? []) as unknown as CandidateRow[];
+      const rows = (this.current?.search.all(match) ?? []) as unknown as CandidateRow[];
       if (hasLocation) {
         // Treffer in der Nähe, die es global nicht unter die ersten Kandidaten schaffen.
         const box = boundingBox(lat, lon, LOCAL_RADIUS_KM);
-        const local = (this.searchLocalStmt?.all(match, ...box) ?? []) as unknown as CandidateRow[];
+        const local = (this.current?.searchLocal.all(match, ...box) ??
+          []) as unknown as CandidateRow[];
         const seen = new Set(rows.map((r) => r.id));
         for (const row of local) if (!seen.has(row.id)) rows.push(row);
       }
@@ -196,7 +273,7 @@ export class SearchIndex {
     const { lat, lon, limit, radiusKm } = options;
     let radius = Math.min(REVERSE_START_RADIUS_KM, radiusKm);
     for (;;) {
-      const candidates = (this.boxStmt?.all(...boundingBox(lat, lon, radius)) ??
+      const candidates = (this.current?.box.all(...boundingBox(lat, lon, radius)) ??
         []) as unknown as PlaceRow[];
       // Nur Treffer innerhalb des Kreises sind sicher die nächsten.
       const inCircle = candidates
@@ -211,11 +288,8 @@ export class SearchIndex {
   }
 
   close(): void {
-    this.db?.close();
-    this.db = null;
-    this.searchStmt = null;
-    this.searchLocalStmt = null;
-    this.boxStmt = null;
+    this.current?.db.close();
+    this.current = null;
   }
 }
 

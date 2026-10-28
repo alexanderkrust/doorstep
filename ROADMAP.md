@@ -113,7 +113,7 @@ Der Container enthält die API, den Importer und `osmium-tool`; der Index liegt 
 
 - [ ] Update-Kommando: baut `index.next.sqlite` neben dem laufenden Index und tauscht beide per atomarem `rename` aus
 - [ ] Die API öffnet den Index nach dem Tausch neu, ohne Neustart (Signal oder interner Zeitplan per `UPDATE_CRON`)
-- [ ] Rate-Limiting pro IP, optional pro API-Key (`@fastify/rate-limit`)
+- [ ] Rate-Limiting pro IP, optional pro API-Key (`@fastify/rate-limit`), steuerbar über ENV ob aktiv oder nicht
 - [ ] In-Memory-Cache (LRU) für häufige kurze Prefix-Queries
 - [ ] Strukturierte Logs und ein `/metrics`-Endpoint im Prometheus-Format
 - [ ] Attribution: Antworten und README nennen "© OpenStreetMap contributors" (ODbL)
@@ -121,3 +121,11 @@ Der Container enthält die API, den Importer und `osmium-tool`; der Index liegt 
 - [ ] Lasttest (z. B. mit `autocannon`) und dokumentierte Ergebnisse
 
 **Fertig, wenn:** Ein Update läuft im Betrieb durch, ohne dass währenddessen Anfragen fehlschlagen, und die README reicht für eine Installation ohne Rückfragen.
+
+### Offene Punkte aus Phase 6
+
+- [ ] **Messungen auf dem Deutschland-Index:** Lasttest und Speicher-/Plattenbedarf sind nur auf Testindizes gemessen (17.618 Einträge: ca. 1.100 Anfragen/s ohne Cache auf einem Kern, 0 Fehler bei Updates unter Last). Die README-Angaben für Deutschland (ca. 8 GB Index, mind. 30 GB Platte, 4–8 GB RAM beim Import) sind Hochrechnungen.
+- [ ] **Browser- und CDN-Cache nach Updates:** Antworten tragen `Cache-Control: max-age=3600`. Nach einem Update können Clients bis zu einer Stunde alte Vorschläge sehen. Akzeptabel bei täglichen Updates, sonst `max-age` per ENV steuerbar machen.
+- [ ] **Update ohne neue Daten:** `update` baut den Index auch dann neu, wenn sich der Extrakt (MD5) nicht geändert hat. Ließe sich überspringen, um Rechenzeit zu sparen.
+- [ ] **`/metrics` ist öffentlich:** Schutz bisher nur über den Reverse-Proxy. Bei Bedarf eigene Variable (z. B. `METRICS_TOKEN`).
+- [ ] **Docker-Smoke-Test nicht in `npm run ci`:** braucht Docker und läuft deshalb separat (`npm run smoke`).

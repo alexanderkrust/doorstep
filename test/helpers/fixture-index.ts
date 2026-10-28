@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { buildServer } from '../../src/api/server.js';
+import { buildServer, type ServerOptions } from '../../src/api/server.js';
 import { loadConfig } from '../../src/config/index.js';
 import { importFromGeoJsonSeq, INDEX_FILE } from '../../src/import/pipeline.js';
 
@@ -22,9 +22,19 @@ export async function createFixtureIndex(): Promise<FixtureIndex> {
   return { dir, path, cleanup: () => rm(dir, { recursive: true, force: true }) };
 }
 
-/** Server gegen ein DATA_DIR, ohne Logausgabe. */
-export function buildTestServer(dataDir: string, env: NodeJS.ProcessEnv = {}): FastifyInstance {
-  return buildServer(loadConfig({ LOG_LEVEL: 'silent', DATA_DIR: dataDir, ...env }));
+/**
+ * Server gegen ein DATA_DIR, ohne Logausgabe. Rate-Limiting ist aus, solange
+ * `env` es nicht einschaltet; Tests schicken viele Anfragen von derselben IP.
+ */
+export function buildTestServer(
+  dataDir: string,
+  env: NodeJS.ProcessEnv = {},
+  options: ServerOptions = {},
+): FastifyInstance {
+  return buildServer(
+    loadConfig({ LOG_LEVEL: 'silent', DATA_DIR: dataDir, RATE_LIMIT_ENABLED: 'false', ...env }),
+    options,
+  );
 }
 
 export interface PointFeature {

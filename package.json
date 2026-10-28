@@ -20,17 +20,21 @@
     "typecheck": "tsc --noEmit",
     "import": "tsx src/index.ts import",
     "bench": "tsx scripts/benchmark.ts",
+    "loadtest": "tsx scripts/loadtest.ts",
     "ci": "sh scripts/ci.sh",
     "smoke": "sh docker/smoke-test.sh"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.1",
+    "@fastify/rate-limit": "^10.3.0",
     "fastify": "^5.12.7",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/autocannon": "^7.12.7",
     "@types/node": "^26.6.5",
+    "autocannon": "^8.0.0",
     "eslint": "^10.13.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.13.0",
