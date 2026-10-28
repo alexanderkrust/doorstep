@@ -3,7 +3,7 @@ import { buildFtsQuery, queryVariants, withoutHousenumbers } from '../../src/sea
 
 describe('buildFtsQuery', () => {
   it('sucht das letzte Token als Präfix, die übrigen exakt', () => {
-    expect(buildFtsQuery(['Königsallee', '60'])).toBe('"Königsallee" "60"*');
+    expect(buildFtsQuery(['Königsallee', 'Düss'])).toBe('"Königsallee" "Düss"*');
     expect(buildFtsQuery(['Königsall'])).toBe('"Königsall"*');
   });
 
@@ -17,6 +17,21 @@ describe('buildFtsQuery', () => {
 
   it('liefert null ohne Tokens', () => {
     expect(buildFtsQuery([])).toBeNull();
+  });
+
+  it('sucht eine angefangene Hausnummer nicht in der Postleitzahl', () => {
+    // "4"* passte sonst auf jede Adresse mit PLZ 4xxxx.
+    expect(buildFtsQuery(['koenigsallee', '4'])).toBe('"koenigsallee" - {postcode} : "4"*');
+    expect(buildFtsQuery(['koenigsallee', '60d'])).toBe('"koenigsallee" - {postcode} : "60d"*');
+  });
+
+  it('lässt ab vier Ziffern auch die Postleitzahl zu', () => {
+    expect(buildFtsQuery(['4021'])).toBe('"4021"*');
+    expect(buildFtsQuery(['40212'])).toBe('"40212"*');
+  });
+
+  it('schränkt nur das letzte Token ein', () => {
+    expect(buildFtsQuery(['4', 'koenigsallee'])).toBe('"4" "koenigsallee"*');
   });
 });
 
@@ -32,6 +47,10 @@ describe('queryVariants', () => {
   it('kürzt nicht unter drei Zeichen', () => {
     expect(queryVariants(['Kö', 'abcd'])).toEqual(['"Kö" "abcd"*', '"Kö" "abc"*']);
     expect(queryVariants(['abc'])).toEqual(['"abc"*']);
+  });
+
+  it('kürzt keine Zahlen (Tippfehler-Toleranz gilt nur für Wörter)', () => {
+    expect(queryVariants(['hauptstrasse', '1234'])).toEqual(['"hauptstrasse" "1234"*']);
   });
 
   it('liefert keine Varianten ohne Tokens', () => {

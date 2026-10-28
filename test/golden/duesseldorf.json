@@ -81,6 +81,15 @@
     },
     { "q": "Königsallee 999", "expect": { "name": "Königsallee", "type": "street" } },
     { "q": "Schadowstr. 999", "expect": { "name": "Schadowstraße", "type": "street" } },
+    {
+      "q": "Kasernenstraße 4",
+      "expect": { "street": "Kasernenstraße" },
+      "note": "Eine Kasernenstraße 4 gibt es nicht; erwartet werden Adressen 4x, nicht die Straße über ihre PLZ 40213."
+    },
+    {
+      "q": "Kasernenstraße Düsseldorf",
+      "expect": { "name": "Kasernenstraße", "type": "street", "city": "Düsseldorf" }
+    },
 
     { "q": "Hauptbahnhof", "expect": { "name": "Hauptbahnhof Düsseldorf" } },
     { "q": "Ständehaus", "top": 3, "expect": { "name": "Ständehaus" } },

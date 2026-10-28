@@ -122,6 +122,11 @@ Der Container enthält die API, den Importer und `osmium-tool`; der Index liegt 
 
 **Fertig, wenn:** Ein Update läuft im Betrieb durch, ohne dass währenddessen Anfragen fehlschlagen, und die README reicht für eine Installation ohne Rückfragen.
 
+### Offene Punkte aus dem Code-Review (28.10.2026)
+
+- [ ] **Standort-Suche bei sehr häufigen Wörtern:** Mit `lat`/`lon` prüft die Suche jetzt alle Treffer auf den Umkreis (vorher nur die ersten 20.000, dadurch fehlten nahe Adressen). Synthetisch gemessen mit 1 Mio. gleichnamigen Straßen: ca. 120 ms für „Hauptstr“, 80 ms für „Ha“. Auf dem Deutschland-Index messen; falls zu langsam, die Kandidaten vom R\*Tree aus suchen (kleiner Umkreis zuerst, dann erweitern).
+- [ ] **Ort für Straßen ohne Adressen:** Straßen übernehmen Ort und PLZ von der nächsten Adresse an derselben Straße (im Düsseldorf-Test 87 % bzw. 90 %). Straßen ganz ohne Hausnummern bleiben ohne Ort; dafür bräuchte es Verwaltungsgrenzen (`boundary=administrative`).
+
 ### Offene Punkte aus Phase 6
 
 - [ ] **Messungen auf dem Deutschland-Index:** Lasttest und Speicher-/Plattenbedarf sind nur auf Testindizes gemessen (17.618 Einträge: ca. 1.100 Anfragen/s ohne Cache auf einem Kern, 0 Fehler bei Updates unter Last). Die README-Angaben für Deutschland (ca. 8 GB Index, mind. 30 GB Platte, 4–8 GB RAM beim Import) sind Hochrechnungen.

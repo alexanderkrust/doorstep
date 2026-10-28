@@ -1,7 +1,7 @@
 import { existsSync, statSync } from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { SCHEMA_VERSION } from '../import/index-writer.js';
-import { distanceKm } from './geo.js';
+import { boundingBox, distanceKm } from './geo.js';
 import { nameForms, normalizeTokens } from './normalize.js';
 import { queryVariants, withoutHousenumbers } from './query.js';
 import { dedupeNearby, rank, type Candidate } from './ranking.js';
@@ -61,8 +61,6 @@ const BM25 = 'bm25(places_fts, 4.0, 2.0, 1.0, 1.0, 1.0)';
  * wichtigsten, ohne dass alle Treffer bewertet werden müssen.
  */
 const CANDIDATES = 200;
-/** So viele Treffer werden bei gesetztem Standort höchstens nach nahen durchsucht. */
-const LOCAL_SCAN = 20_000;
 /** Umkreis für die zusätzlichen Kandidaten bei gesetztem Standort. */
 const LOCAL_RADIUS_KM = 25;
 /** Gleichnamige Treffer (z. B. Abschnitte einer Straße) in diesem Abstand werden zusammengefasst. */
@@ -74,16 +72,8 @@ const dedupeKey = (row: PlaceRow) =>
     .map((v) => v?.toLowerCase() ?? '')
     .join('|');
 
-const KM_PER_DEGREE_LAT = 111.32;
 /** Startradius der Umkreissuche; wird verdoppelt, bis genug Treffer da sind. */
 const REVERSE_START_RADIUS_KM = 0.05;
-
-/** Box, die einen Kreis um den Punkt sicher enthält: [minLat, maxLat, minLon, maxLon]. */
-function boundingBox(lat: number, lon: number, radiusKm: number): [number, number, number, number] {
-  const dLat = radiusKm / KM_PER_DEGREE_LAT;
-  const dLon = Math.min(180, radiusKm / (KM_PER_DEGREE_LAT * Math.max(0.01, cosDeg(lat))));
-  return [lat - dLat, lat + dLat, lon - dLon, lon + dLon];
-}
 
 /** Namen, mit denen die Anfrage im Ranking verglichen wird. */
 function candidateNames(row: PlaceRow): string[] {
@@ -146,17 +136,21 @@ function openIndexFile(path: string): OpenIndex {
           'Bitte neu importieren.',
       );
     }
-    const matches = (limit: number) => `SELECT p.id, ${COLUMNS}, p.importance, f.bm25
-      FROM (SELECT rowid AS id, ${BM25} AS bm25 FROM places_fts
-             WHERE places_fts MATCH ? LIMIT ${String(limit)}) f
-      JOIN places p ON p.id = f.id`;
     return {
       db,
       identity,
       meta,
-      search: db.prepare(matches(CANDIDATES)),
-      searchLocal: db.prepare(`${matches(LOCAL_SCAN)}
-        WHERE p.lat BETWEEN ? AND ? AND p.lon BETWEEN ? AND ?
+      search: db.prepare(`SELECT p.id, ${COLUMNS}, p.importance, f.bm25
+        FROM (SELECT rowid AS id, ${BM25} AS bm25 FROM places_fts
+               WHERE places_fts MATCH ? LIMIT ${String(CANDIDATES)}) f
+        JOIN places p ON p.id = f.id`),
+      // Alle Treffer werden auf den Umkreis geprüft, nicht nur die wichtigsten: Nahe
+      // Adressen haben die niedrigste Wichtigkeit und stehen in FTS-Reihenfolge ganz
+      // hinten. bm25 wird nur für die Treffer im Umkreis berechnet.
+      searchLocal: db.prepare(`SELECT p.id, ${COLUMNS}, p.importance, ${BM25} AS bm25
+        FROM places_fts JOIN places p ON p.id = places_fts.rowid
+        WHERE places_fts MATCH ?
+          AND p.lat BETWEEN ? AND ? AND p.lon BETWEEN ? AND ?
         LIMIT ${String(CANDIDATES)}`),
       box: db.prepare(`SELECT ${COLUMNS} FROM places_rtree r JOIN places p ON p.id = r.id
         WHERE r.max_lat >= ? AND r.min_lat <= ? AND r.max_lon >= ? AND r.min_lon <= ?`),
@@ -291,8 +285,4 @@ export class SearchIndex {
     this.current?.db.close();
     this.current = null;
   }
-}
-
-function cosDeg(deg: number): number {
-  return Math.cos((deg * Math.PI) / 180);
 }

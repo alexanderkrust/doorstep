@@ -1,6 +1,7 @@
 import { rmSync } from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { ATTRIBUTION } from '../api/attribution.js';
+import { boundingBox, distanceKm } from '../search/geo.js';
 import { indexText } from '../search/normalize.js';
 import type { Place } from './place.js';
 
@@ -74,6 +75,20 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 const BATCH_SIZE = 10_000;
 
 /**
+ * Umkreise, in denen für eine Straße nach Adressen an derselben Straße gesucht
+ * wird. Der Punkt einer Straße liegt in der Mitte des Abschnitts; lange Abschnitte
+ * haben ihre Hausnummern oft weiter entfernt.
+ */
+const STREET_ADDRESS_RADII_KM = [0.5, 2];
+
+interface AddressRow {
+  city: string | null;
+  postcode: string | null;
+  lat: number;
+  lon: number;
+}
+
+/**
  * Schreibt einen neuen Index. Zeilen landen erst in einer Zwischendatei, am Ende
  * werden sie nach Wichtigkeit sortiert übernommen und FTS und R*Tree aufgebaut.
  */
@@ -142,6 +157,7 @@ export class IndexWriter {
       DETACH DATABASE staging;
     `);
     rmSync(this.stagingPath, { force: true });
+    this.assignStreetAddresses();
     this.db.exec(`
       INSERT INTO places_fts (rowid, name, street, housenumber, postcode, city)
         SELECT id, index_text(name, name_de, name_en), index_text(street),
@@ -164,6 +180,67 @@ export class IndexWriter {
     this.db.exec('ANALYZE; PRAGMA journal_mode = DELETE;');
     this.db.close();
     return this.count;
+  }
+
+  /**
+   * Straßen tragen in OSM selten `addr:city` oder `addr:postcode`. Sie übernehmen
+   * Ort und PLZ von der nächsten Adresse, deren `addr:street` dem Straßennamen
+   * entspricht. So lässt sich "Hauptstraße Musterstadt" finden, und gleichnamige
+   * Straßen sind in den Ergebnissen unterscheidbar.
+   */
+  private assignStreetAddresses(): void {
+    // Nur für diesen Schritt: Adressen einer Straße in einem Breitenband finden.
+    this.db.exec(`
+      BEGIN;
+      CREATE INDEX places_street_lat ON places (street, lat)
+        WHERE street IS NOT NULL AND (city IS NOT NULL OR postcode IS NOT NULL);
+      CREATE TEMP TABLE street_address (id INTEGER PRIMARY KEY, city TEXT, postcode TEXT);
+    `);
+    const streets = this.db.prepare(`
+      SELECT id, name, lat, lon FROM places
+       WHERE type = 'street' AND name IS NOT NULL AND (city IS NULL OR postcode IS NULL)`);
+    const addresses = this.db.prepare(`
+      SELECT city, postcode, lat, lon FROM places INDEXED BY places_street_lat
+       WHERE street = ? AND (city IS NOT NULL OR postcode IS NOT NULL)
+         AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?`);
+    const save = this.db.prepare(
+      'INSERT INTO temp.street_address (id, city, postcode) VALUES (?, ?, ?)',
+    );
+
+    for (const row of streets.iterate()) {
+      const street = row as { id: number; name: string; lat: number; lon: number };
+      let city: AddressRow | null = null;
+      let postcode: AddressRow | null = null;
+      let cityKm = Infinity;
+      let postcodeKm = Infinity;
+      for (const radiusKm of STREET_ADDRESS_RADII_KM) {
+        const [minLat, maxLat, minLon, maxLon] = boundingBox(street.lat, street.lon, radiusKm);
+        const found = addresses.all(
+          street.name,
+          minLat,
+          maxLat,
+          minLon,
+          maxLon,
+        ) as unknown as AddressRow[];
+        for (const address of found) {
+          const km = distanceKm(street.lat, street.lon, address.lat, address.lon);
+          if (address.city !== null && km < cityKm) [city, cityKm] = [address, km];
+          if (address.postcode !== null && km < postcodeKm) [postcode, postcodeKm] = [address, km];
+        }
+        if (city && postcode) break;
+      }
+      if (city || postcode) save.run(street.id, city?.city ?? null, postcode?.postcode ?? null);
+    }
+
+    this.db.exec(`
+      UPDATE places
+         SET city = coalesce(places.city, a.city), postcode = coalesce(places.postcode, a.postcode)
+        FROM temp.street_address a
+       WHERE places.id = a.id;
+      DROP TABLE temp.street_address;
+      DROP INDEX places_street_lat;
+      COMMIT;
+    `);
   }
 
   /** Bricht ab und löscht die Zwischendatei; die Indexdatei räumt der Aufrufer auf. */

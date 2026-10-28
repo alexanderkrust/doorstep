@@ -39,6 +39,15 @@ function checkSamples(dbPath: string): void {
     const streets = fts('name:Königsallee').filter((r) => r.type === 'street');
     expect(streets.length).toBeGreaterThan(0);
 
+    // Straßen bekommen Ort und PLZ von der nächsten Adresse an derselben Straße
+    for (const street of streets.filter((s) => s.name === 'Königsallee')) {
+      expect(street).toMatchObject({
+        city: 'Düsseldorf',
+        postcode: expect.stringMatching(/^402/) as unknown,
+      });
+    }
+    expect(fts('name:Königsallee AND city:Düsseldorf').some((r) => r.type === 'street')).toBe(true);
+
     // Adresse mit Hausnummer
     const house = fts('street:Königsallee AND housenumber:"60d"');
     expect(house[0]).toMatchObject({ postcode: '40212', city: 'Düsseldorf' });

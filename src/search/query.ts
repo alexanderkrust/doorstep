@@ -7,12 +7,26 @@ const MAX_TRIM = 2;
 
 const quote = (token: string) => `"${token.replaceAll('"', '""')}"`;
 
+/** Sieht aus wie eine Hausnummer ("12", "60d"). */
+const HOUSENUMBER = /^\d+[a-z]?$/;
+/** Ab so vielen Ziffern kann ein angefangenes Token auch eine Postleitzahl sein. */
+const MIN_POSTCODE_PREFIX = 4;
+
+/**
+ * Eine angefangene Hausnummer ("4") soll nicht als Präfix der Postleitzahl
+ * passen (40213), sonst trifft sie jede Adresse im PLZ-Gebiet.
+ */
+function isHousenumberPrefix(token: string): boolean {
+  return HOUSENUMBER.test(token) && token.replace(/\D/g, '').length < MIN_POSTCODE_PREFIX;
+}
+
 /** Letztes Token als Präfix, alle anderen exakt; alle müssen vorkommen. */
 export function buildFtsQuery(tokens: readonly string[]): string | null {
   if (tokens.length === 0) return null;
   const head = tokens.slice(0, -1).map(quote);
   const last = tokens[tokens.length - 1] ?? '';
-  return [...head, `${quote(last)}*`].join(' ');
+  const prefix = `${quote(last)}*`;
+  return [...head, isHousenumberPrefix(last) ? `- {postcode} : ${prefix}` : prefix].join(' ');
 }
 
 /**
@@ -24,16 +38,16 @@ export function queryVariants(tokens: readonly string[]): string[] {
   if (first === null) return [];
   const variants = [first];
   const head = tokens.slice(0, -1);
-  const chars = Array.from(tokens[tokens.length - 1] ?? '');
+  const last = tokens[tokens.length - 1] ?? '';
+  // Zahlen werden nicht gekürzt: "1234" → "123"* wäre kein Tippfehler, sondern eine andere Nummer.
+  if (/^\d/.test(last)) return variants;
+  const chars = Array.from(last);
   for (let trim = 1; trim <= MAX_TRIM && chars.length - trim >= MIN_TRIMMED_LENGTH; trim++) {
     const variant = buildFtsQuery([...head, chars.slice(0, -trim).join('')]);
     if (variant !== null) variants.push(variant);
   }
   return variants;
 }
-
-/** Sieht aus wie eine Hausnummer ("12", "60d", "7-9"). */
-const HOUSENUMBER = /^\d+[a-z]?$/;
 
 /**
  * Für den Fallback auf Straßenebene: die Wörter ohne Hausnummern; `null`, wenn
