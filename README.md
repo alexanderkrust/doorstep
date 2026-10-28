@@ -358,7 +358,20 @@ So lesen: Die API bearbeitet Anfragen auf einem Kern nacheinander. Bei 50 gleich
 Verbindungen ist die Latenz daher vor allem Wartezeit; eine einzelne Suche dauert ohne Cache
 im Mittel unter 1 ms (siehe `Server-Timing`). Der Cache-Anteil liegt bei nur 234 verschiedenen
 Anfragen höher als im echten Betrieb. In beiden Update-Szenarien schlug keine einzige von
-132.549 bzw. 155.411 Anfragen fehl. Messungen auf dem Deutschland-Index stehen noch aus.
+132.549 bzw. 155.411 Anfragen fehl.
+
+**Deutschland-Index** (Schema 7, 25,6 Mio. Einträge, 9,3 GB, sonst wie oben, warmer Page-Cache):
+
+| Szenario                                   | Anfragen/s | p50    | p90    | p99    | Fehler |
+| ------------------------------------------ | ---------- | ------ | ------ | ------ | ------ |
+| Ohne Cache (`CACHE_SIZE=0`), ohne Standort | 411        | 81 ms  | 258 ms | 584 ms | 0      |
+| Ohne Cache, mit Standort                   | 221        | 169 ms | 429 ms | 927 ms | 0      |
+| Mit Cache, mit Standort                    | 545        | 24 ms  | 265 ms | 757 ms | 0      |
+
+Eine Suche dauert hier im Mittel 2,4 ms ohne und 4,5 ms mit Standort; bei 50 Verbindungen
+warten die Anfragen vor allem aufeinander. Der Cache hilft wenig, weil er nur Anfragen bis
+10 Zeichen aufnimmt, die teuren sind aber die langen mit Standort. Für mehr Durchsatz siehe
+ROADMAP („Durchsatz auf großen Indizes“).
 
 ## Qualität und Latenz der Suche
 
