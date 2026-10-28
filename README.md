@@ -261,8 +261,8 @@ curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
 
 Ungültige Parameter liefern `400` mit einer Meldung wie `q: muss mindestens 2 Zeichen lang sein`.
 Solange noch kein Index unter `$DATA_DIR/index.sqlite` liegt, antworten beide Endpunkte mit `503`.
-Das gilt auch für einen Index mit altem Schema (aktuell Version 4, seit Ortsteil und erweiterter
-Normalisierung): dann bitte neu importieren bzw. das nächste Update abwarten.
+Das gilt auch für einen Index mit altem Schema (aktuell Version 5, seit der Wortstatistik für
+bm25): dann bitte neu importieren bzw. das nächste Update abwarten.
 
 ### Weitere Endpunkte
 
@@ -354,14 +354,20 @@ Anfragen höher als im echten Betrieb. In beiden Update-Szenarien schlug keine e
 npm run bench -- --index $PWD/data/index.sqlite
 ```
 
-Messung (MacBook, Node 24, Regierungsbezirk Düsseldorf: 217 MB PBF → 1,4 Mio. Einträge, 389 MB
-Index, Import 45 s): p50 2,0 ms, p95 10,1 ms, p99 16,6 ms. **Deutschland** (Geofabrik-Extrakt
-vom 27.10.2026, 4,9 GB PBF → 25,6 Mio. Einträge, 8,5 GB Index, Import 30 min, max. 5,4 GB RAM):
-p50 22 ms, **p95 194 ms**, p99 548 ms – das Ziel von 50 ms ist noch nicht erreicht. Am
-langsamsten sind häufige Straßennamen, besonders mit Standort (`Breite Straße`, `Am Markt 1`,
-`Hauptstraße 1`: 250–960 ms). Bekannte Kosten, die mit der Datenmenge wachsen: `bm25` zählt für jedes
-Suchwort alle Dokumente (sehr häufige Wörter wie „straße“), und Präfixe über 4 Zeichen
-häufiger Wörter („stras…“) werden komplett zusammengeführt.
+Messung (MacBook, Node 24, 5 Runden). **Deutschland** (Geofabrik-Extrakt vom 27.10.2026, 4,9 GB
+PBF → 25,6 Mio. Einträge, 8,5 GB Index, Import 30 min, max. 5,4 GB RAM): **p50 2,8 ms, p95 16,5 ms,
+p99 29 ms**, max. 41–91 ms. Vorher (bis Schema 4) p95 194 ms. Am langsamsten ist die Suche mit
+Standort bei sehr häufigen Wörtern (`Am Markt 1` 41 ms, `Friedrichstraße 3` 20–90 ms). Regierungsbezirk
+Düsseldorf (217 MB PBF → 1,4 Mio. Einträge, 389 MB Index, Import 45 s), gemessen mit Schema 4: p50 2,0 ms,
+p95 10,1 ms, p99 16,6 ms.
+
+Was die Suche schnell hält: Die Trefferliste in FTS5 ist nach Wichtigkeit sortiert, und je Anfrage
+werden nur die ersten 200 Kandidaten gelesen. `bm25` rechnet in JS mit einer beim Import
+vorberechneten Wortstatistik (Tabellen `terms` und `prefixes`), statt bei jeder Anfrage alle
+Dokumente jedes Suchworts zu zählen. Lange Präfixe mit einem sehr häufigen Wort („stras…“ →
+„strasse“) werden in das exakte Wort und längere Teilpräfixe zerlegt, weil FTS5 Präfixe über
+4 Zeichen sonst vorab komplett zusammenführt. Die Standort-Suche liest über die Rasterzellen nur
+Treffer im Umkreis.
 
 ## Entwicklung
 

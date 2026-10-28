@@ -9,8 +9,10 @@ import type { Place } from './place.js';
  * 2: name_de/name_en, normalisierter Volltextindex, IDs nach Wichtigkeit (Phase 4).
  * 3: Rasterzellen für die Umkreissuche.
  * 4: Ortsteil (`district`), "St." = "Sankt", "sss" → "ss", Hausnummer "12 a" auch als "12a".
+ * 5: Wortstatistik (`terms`, `prefixes`, Meta `fts_tokens`) für bm25 in JS und die
+ *    Zerlegung langer Präfixe (src/search/bm25.ts, `expandPrefix`).
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 const PLACE_COLUMNS = `osm_type, osm_id, type, name, name_de, name_en, street, housenumber,
   postcode, city, district, state, country, lat, lon, importance`;
@@ -75,6 +77,11 @@ CREATE VIRTUAL TABLE places_fts USING fts5(
 
 -- Punkte als entartete Rechtecke; id = places.id.
 CREATE VIRTUAL TABLE places_rtree USING rtree(id, min_lat, max_lat, min_lon, max_lon);
+
+-- Wortstatistik des Volltextindex ohne Rasterzellen: Dokumente je Wort und je
+-- Präfix bis 4 Zeichen (Summe über die Wörter). Ersetzt das Zählen in bm25().
+CREATE TABLE terms (term TEXT PRIMARY KEY, docs INTEGER NOT NULL) WITHOUT ROWID;
+CREATE TABLE prefixes (prefix TEXT PRIMARY KEY, docs INTEGER NOT NULL) WITHOUT ROWID;
 
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `;
@@ -187,6 +194,7 @@ export class IndexWriter {
     rmSync(this.stagingPath, { force: true });
     this.assignStreetAddresses();
     this.buildSearchIndexes();
+    const ftsTokens = this.buildTermStats();
     const setMeta = this.db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
     const entries: Record<string, string> = {
       schema_version: String(SCHEMA_VERSION),
@@ -194,6 +202,7 @@ export class IndexWriter {
       license: 'ODbL-1.0',
       imported_at: new Date().toISOString(),
       places: String(this.count),
+      fts_tokens: String(ftsTokens),
       ...meta,
     };
     for (const [key, value] of Object.entries(entries)) setMeta.run(key, value);
@@ -222,6 +231,35 @@ export class IndexWriter {
       rtree.run(from, from + this.indexBatchSize);
     }
     this.db.exec(`COMMIT; INSERT INTO places_fts(places_fts) VALUES ('optimize');`);
+  }
+
+  /**
+   * Füllt `terms` und `prefixes` aus dem fertigen Volltextindex. Liefert die Zahl
+   * aller Wörter im Index (mit Rasterzellen), für die mittlere Dokumentlänge in bm25.
+   */
+  private buildTermStats(): number {
+    this.db.exec(`
+      CREATE VIRTUAL TABLE temp.fts_vocab USING fts5vocab(main, places_fts, row);
+      CREATE TEMP TABLE vocab AS SELECT term, doc, cnt FROM temp.fts_vocab;
+      DROP TABLE temp.fts_vocab;
+      BEGIN;
+      INSERT INTO terms (term, docs)
+        SELECT term, doc FROM temp.vocab WHERE term NOT GLOB 'g[0-9]*x[0-9]*';
+      INSERT INTO prefixes (prefix, docs)
+        SELECT prefix, sum(docs) FROM (
+          SELECT substr(term, 1, n.len) AS prefix, docs
+            FROM terms, (SELECT 1 AS len UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4) n
+           WHERE length(term) >= n.len)
+         GROUP BY prefix;
+      COMMIT;
+    `);
+    const { tokens } = this.db
+      .prepare('SELECT coalesce(sum(cnt), 0) AS tokens FROM temp.vocab')
+      .get() as {
+      tokens: number;
+    };
+    this.db.exec('DROP TABLE temp.vocab');
+    return tokens;
   }
 
   /**

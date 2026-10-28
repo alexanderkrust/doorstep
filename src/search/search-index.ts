@@ -1,16 +1,21 @@
 import { existsSync, statSync } from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { SCHEMA_VERSION } from '../import/index-writer.js';
+import { bm25, ftsColumns, idf } from './bm25.js';
 import { boundingBox, distanceKm, gridCellsInBox } from './geo.js';
 import { nameForms, normalizeTokens } from './normalize.js';
 import {
+  buildFtsQuery,
+  expandPrefix,
   inTextColumns,
-  queryVariants,
+  phrasesFor,
+  tokenVariants,
   withinCells,
   withoutHousenumbers,
   withoutSingleLetters,
 } from './query.js';
 import { dedupeNearby, rank, type Candidate } from './ranking.js';
+import { charLength, MAX_INDEXED_PREFIX, TermStats } from './term-stats.js';
 
 export { distanceKm };
 
@@ -52,16 +57,23 @@ export interface ReverseOptions {
 interface CandidateRow extends PlaceRow {
   id: number;
   importance: number;
-  bm25: number;
 }
 
 type RankedRow = CandidateRow & Candidate;
 
+export interface SearchIndexOptions {
+  /** Präfixe mit mehr Dokumenten werden zerlegt (siehe `expandPrefix`); kleiner nur für Tests. */
+  expandPrefixDocs?: number;
+}
+
 const COLUMNS = `p.osm_type, p.osm_id, p.type, p.name, p.name_de, p.name_en, p.street,
   p.housenumber, p.postcode, p.city, p.district, p.state, p.country, p.lat, p.lon`;
 
-/** Spaltengewichte für bm25: name, street, housenumber, postcode, city, cell. */
-const BM25 = 'bm25(places_fts, 4.0, 2.0, 1.0, 1.0, 1.0, 0.0)';
+/**
+ * Ab so vielen Dokumenten wird ein Präfix über 4 Zeichen zerlegt. FTS5 braucht
+ * zum Zusammenführen etwa 30 ns je Dokument: 50.000 Dokumente kosten so etwa 1,5 ms.
+ */
+const EXPAND_PREFIX_DOCS = 50_000;
 /**
  * So viele Kandidaten gehen je Abfrage ins Ranking. Die IDs sind nach Wichtigkeit
  * vergeben und FTS5 liefert in ID-Reihenfolge: Die ersten Treffer sind also die
@@ -116,6 +128,7 @@ interface OpenIndex {
   db: DatabaseSync;
   identity: string | null;
   meta: Record<string, string>;
+  stats: TermStats;
   search: StatementSync;
   searchLocal: StatementSync;
   box: StatementSync;
@@ -154,14 +167,16 @@ function openIndexFile(path: string): OpenIndex {
       db,
       identity,
       meta,
-      search: db.prepare(`SELECT p.id, ${COLUMNS}, p.importance, f.bm25
-        FROM (SELECT rowid AS id, ${BM25} AS bm25 FROM places_fts
+      stats: TermStats.open(db),
+      // Ohne bm25(): Das zählt für jedes Suchwort alle Dokumente; bm25 kommt aus JS.
+      search: db.prepare(`SELECT p.id, ${COLUMNS}, p.importance
+        FROM (SELECT rowid AS id FROM places_fts
                WHERE places_fts MATCH ? LIMIT ${String(CANDIDATES)}) f
         JOIN places p ON p.id = f.id`),
       // Alle Treffer im Umkreis, nicht nur die wichtigsten: Nahe Adressen haben die
       // niedrigste Wichtigkeit und stehen in FTS-Reihenfolge ganz hinten. Die Anfrage
       // enthält die Rasterzellen der Box, FTS5 verschneidet dann die Trefferlisten.
-      searchLocal: db.prepare(`SELECT p.id, ${COLUMNS}, p.importance, ${BM25} AS bm25
+      searchLocal: db.prepare(`SELECT p.id, ${COLUMNS}, p.importance
         FROM places_fts JOIN places p ON p.id = places_fts.rowid
         WHERE places_fts MATCH ?
           AND p.lat BETWEEN ? AND ? AND p.lon BETWEEN ? AND ?
@@ -185,8 +200,14 @@ function openIndexFile(path: string): OpenIndex {
  */
 export class SearchIndex {
   private current: OpenIndex | null = null;
+  private readonly expandPrefixDocs: number;
 
-  constructor(readonly path: string) {}
+  constructor(
+    readonly path: string,
+    options: SearchIndexOptions = {},
+  ) {
+    this.expandPrefixDocs = options.expandPrefixDocs ?? EXPAND_PREFIX_DOCS;
+  }
 
   /**
    * Öffnet den Index, falls vorhanden; `false`, wenn noch keiner existiert.
@@ -276,13 +297,16 @@ export class SearchIndex {
     options: SearchOptions,
     typos: boolean,
   ): RankedRow[] {
+    const current = this.current;
+    if (!current) return [];
     const { lat, lon } = options;
     const hasLocation = lat !== undefined && lon !== undefined;
-    const [exact, ...trimmed] = queryVariants(tokens);
+    const [exact, ...trimmed] = tokenVariants(tokens);
     const variants = typos ? trimmed : exact === undefined ? [] : [exact];
-    for (const match of variants) {
-      const rows = (this.current?.search.all(inTextColumns(match)) ??
-        []) as unknown as CandidateRow[];
+    for (const variant of variants) {
+      const { match, idfs } = this.prepareQuery(current.stats, variant);
+      if (match === null) continue;
+      const rows = current.search.all(inTextColumns(match)) as unknown as CandidateRow[];
       // Weniger als CANDIDATES Treffer: Alle sind schon dabei, auch die nahen.
       if (hasLocation && rows.length >= CANDIDATES) {
         // Treffer in der Nähe, die es global nicht unter die ersten Kandidaten schaffen.
@@ -293,8 +317,10 @@ export class SearchIndex {
       }
       if (rows.length === 0) continue;
 
+      const phrases = phrasesFor(variant);
       const candidates: RankedRow[] = rows.map((row) => ({
         ...row,
+        bm25: bm25(phrases, idfs, ftsColumns(row), current.stats.avgTokens),
         names: candidateNames(row),
         ...(hasLocation ? { distanceKm: distanceKm(lat, lon, row.lat, row.lon) } : {}),
       }));
@@ -304,12 +330,36 @@ export class SearchIndex {
   }
 
   /**
+   * FTS5-Query und IDF je Suchwort aus der Wortstatistik. Ein langes Präfix mit
+   * einem häufigen Wort ("strasse"*) wird zerlegt, siehe `expandPrefix`.
+   */
+  private prepareQuery(
+    stats: TermStats,
+    tokens: readonly string[],
+  ): { match: string | null; idfs: number[] } {
+    const last = tokens[tokens.length - 1] ?? '';
+    let lastParts: string[] | null = null;
+    let lastDocs: number;
+    if (charLength(last) > MAX_INDEXED_PREFIX) {
+      const completions = stats.completions(last);
+      lastDocs = stats.prefixDocs(last, completions);
+      lastParts = expandPrefix(last, completions, this.expandPrefixDocs);
+    } else {
+      lastDocs = stats.prefixDocs(last);
+    }
+    const idfs = tokens.map((token, i) =>
+      idf(stats.rows, Math.min(stats.rows, i === tokens.length - 1 ? lastDocs : stats.docs(token))),
+    );
+    return { match: buildFtsQuery(tokens, lastParts), idfs };
+  }
+
+  /**
    * Die wichtigsten Treffer im Umkreis. Über die Rasterzellen der Box muss FTS5 nur
    * Treffer in der Nähe liefern; die Dauer hängt so von der Dichte im Umkreis ab,
    * nicht von der Zahl der Treffer im ganzen Index. Liegen schon unter den globalen
    * Kandidaten viele im Umkreis, sind die nahen Treffer auch ohne Zellen schnell
-   * gefunden, und das Zählen der Zellen für bm25 entfällt. Beide Wege liefern
-   * dieselben Zeilen.
+   * gefunden, und die Verschneidung mit den Trefferlisten der Zellen entfällt.
+   * Beide Wege liefern dieselben Zeilen.
    */
   private localCandidates(
     match: string,
