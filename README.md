@@ -119,10 +119,11 @@ Die Zähler liegen im Speicher des Prozesses und beginnen nach einem Neustart ne
 
 ### Cache
 
-Kurze Suchanfragen (bis 10 Zeichen nach der Normalisierung) kommen beim Tippen am häufigsten vor
-und sind am teuersten. Ihre Ergebnisse hält ein LRU-Cache im Speicher (`CACHE_SIZE` Einträge,
-Default 10.000, grob 20–50 MB). Der Header `X-Cache` zeigt `HIT`, `MISS` oder `BYPASS` (lange
-Anfrage). Nach einem Update wird der Cache geleert.
+Ergebnisse von Suchanfragen hält ein LRU-Cache im Speicher (`CACHE_SIZE` Einträge, Default 10.000,
+grob 20–50 MB). Schlüssel sind die normalisierte Anfrage, `limit`, `lang` und der Standort. Kurze
+Präfixe („Ha“, „Kö“) kommen beim Tippen am häufigsten wieder und bleiben deshalb im Cache; lange
+Anfragen mit Standort sind auf großen Indizes am teuersten und werden ebenfalls gecacht. Der Header
+`X-Cache` zeigt `HIT` oder `MISS`. Nach einem Update wird der Cache geleert.
 
 ### Logs
 
@@ -178,7 +179,7 @@ Start zu einer Fehlermeldung mit allen betroffenen Variablen.
 | `API_KEYS`           | –                                                             | Kommagetrennte API-Keys                                                     |
 | `RATE_LIMIT_API_KEY` | `600`                                                         | Anfragen pro Minute und API-Key                                             |
 | `TRUST_PROXY`        | `false`                                                       | Client-IP aus `X-Forwarded-For` übernehmen (nur hinter einem Reverse-Proxy) |
-| `CACHE_SIZE`         | `10000`                                                       | Einträge im Cache für kurze Suchanfragen, `0` = aus                         |
+| `CACHE_SIZE`         | `10000`                                                       | Einträge im Cache für Suchanfragen, `0` = aus                               |
 | `CORS_ORIGINS`       | `*`                                                           | Kommagetrennte Liste erlaubter Origins                                      |
 | `LOG_LEVEL`          | `info`                                                        | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                |
 | `TZ`                 | `UTC` (Container)                                             | Zeitzone für `UPDATE_CRON`                                                  |
@@ -366,12 +367,16 @@ Anfragen höher als im echten Betrieb. In beiden Update-Szenarien schlug keine e
 | ------------------------------------------ | ---------- | ------ | ------ | ------ | ------ |
 | Ohne Cache (`CACHE_SIZE=0`), ohne Standort | 411        | 81 ms  | 258 ms | 584 ms | 0      |
 | Ohne Cache, mit Standort                   | 221        | 169 ms | 429 ms | 927 ms | 0      |
-| Mit Cache, mit Standort                    | 545        | 24 ms  | 265 ms | 757 ms | 0      |
+| Mit Cache, ohne Standort                   | 40.163     | 1 ms   | 1 ms   | 2 ms   | 0      |
+| Mit Cache, mit Standort                    | 31.397     | 1 ms   | 1 ms   | 4 ms   | 0      |
 
 Eine Suche dauert hier im Mittel 2,4 ms ohne und 4,5 ms mit Standort; bei 50 Verbindungen
-warten die Anfragen vor allem aufeinander. Der Cache hilft wenig, weil er nur Anfragen bis
-10 Zeichen aufnimmt, die teuren sind aber die langen mit Standort. Für mehr Durchsatz siehe
-ROADMAP („Durchsatz auf großen Indizes“).
+warten die Anfragen ohne Cache vor allem aufeinander. Die Werte mit Cache sind eine Obergrenze:
+Der Test wiederholt 234 Anfragen, 99,98 % kommen aus dem Cache (Prozess danach 264 MB RSS). Im
+echten Betrieb sind lange Anfragen meist einmalig, dort liegt der Durchsatz zwischen beiden
+Zeilen. Bis zum 28.10.2026 nahm der Cache nur Anfragen bis 10 Zeichen auf; damit kam der Test
+mit Standort auf 545 Anfragen/s. Für mehr Durchsatz ohne Cache siehe ROADMAP („Durchsatz auf
+großen Indizes“).
 
 ## Qualität und Latenz der Suche
 

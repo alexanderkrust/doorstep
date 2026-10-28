@@ -7,12 +7,6 @@ import type { Metrics } from '../metrics.js';
 import { DEFAULT_SEARCH_LIMIT, searchParams } from '../params.js';
 import { queryIndex, sendBadRequest, sendCached } from '../replies.js';
 
-/**
- * Nur kurze Anfragen gehen in den Cache: Sie kommen beim Tippen am häufigsten
- * vor und sind am teuersten (viele Kandidaten). Länge der normalisierten Anfrage.
- */
-export const CACHE_MAX_QUERY_LENGTH = 10;
-
 export interface SearchRoutesOptions {
   index: SearchIndex;
   defaultLang: string;
@@ -33,24 +27,21 @@ export const searchRoutes: FastifyPluginAsync<SearchRoutesOptions> = async (
     const started = performance.now();
     let cacheKey: string | undefined;
     if (cache.maxSize > 0) {
-      const normalized = normalizeTokens(q).join(' ');
-      if (normalized.length <= CACHE_MAX_QUERY_LENGTH) {
-        cacheKey = [normalized, limit, lang, lat ?? '', lon ?? ''].join('|');
-        const hit = cache.get(cacheKey);
-        if (hit) {
-          metrics.cacheHits++;
-          return sendCached(
-            reply
-              .header('x-cache', 'HIT')
-              .header('server-timing', `search;dur=${(performance.now() - started).toFixed(2)}`),
-            hit,
-          );
-        }
-        metrics.cacheMisses++;
-        void reply.header('x-cache', 'MISS');
-      } else {
-        void reply.header('x-cache', 'BYPASS');
+      // Alle Anfragen, nicht nur kurze: Auf großen Indizes sind lange mit Standort am
+      // teuersten. Häufige kurze Präfixe bleiben im LRU, weil sie öfter wiederkommen.
+      cacheKey = [normalizeTokens(q).join(' '), limit, lang, lat ?? '', lon ?? ''].join('|');
+      const hit = cache.get(cacheKey);
+      if (hit) {
+        metrics.cacheHits++;
+        return sendCached(
+          reply
+            .header('x-cache', 'HIT')
+            .header('server-timing', `search;dur=${(performance.now() - started).toFixed(2)}`),
+          hit,
+        );
       }
+      metrics.cacheMisses++;
+      void reply.header('x-cache', 'MISS');
     }
 
     const rows = queryIndex(reply, () =>
