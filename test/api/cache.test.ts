@@ -32,8 +32,8 @@ const get = (url: string) => {
   return app.inject({ method: 'GET', url });
 };
 
-describe('Cache für kurze Prefix-Queries', () => {
-  it('beantwortet eine wiederholte kurze Anfrage aus dem Cache mit identischem Ergebnis', async () => {
+describe('Cache für Suchanfragen', () => {
+  it('beantwortet eine wiederholte Anfrage aus dem Cache mit identischem Ergebnis', async () => {
     app = buildTestServer(fixture.dir);
     const first = await get('/api?q=K%C3%B6nigs');
     const second = await get('/api?q=K%C3%B6nigs');
@@ -60,11 +60,15 @@ describe('Cache für kurze Prefix-Queries', () => {
     expect((await get('/api?q=K%C3%B6&lat=51.2&lon=6.8')).headers['x-cache']).toBe('HIT');
   });
 
-  it('umgeht den Cache bei langen Anfragen', async () => {
+  it('cacht auch lange Anfragen mit Standort', async () => {
+    // Auf großen Indizes sind gerade sie am teuersten ("Friedrichstraße 3" mit Standort).
     app = buildTestServer(fixture.dir);
-    const url = `/api?q=${encodeURIComponent('Königsallee 60d Düsseldorf')}`;
-    await get(url);
-    expect((await get(url)).headers['x-cache']).toBe('BYPASS');
+    const url = `/api?q=${encodeURIComponent('Königsallee 60d Düsseldorf')}&lat=51.2&lon=6.8`;
+    const first = await get(url);
+    const second = await get(url);
+    expect(first.headers['x-cache']).toBe('MISS');
+    expect(second.headers['x-cache']).toBe('HIT');
+    expect(second.json()).toEqual(first.json());
   });
 
   it('cacht keine Fehler', async () => {

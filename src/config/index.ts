@@ -73,7 +73,7 @@ const envSchema = z.object({
   RATE_LIMIT_API_KEY: optional(z.coerce.number().int().min(1).default(600)),
   /** Client-IP aus X-Forwarded-For übernehmen (nur hinter einem eigenen Reverse-Proxy). */
   TRUST_PROXY: flag(false),
-  /** Einträge im LRU-Cache für kurze Suchanfragen; 0 = aus. */
+  /** Einträge im LRU-Cache für Suchanfragen; 0 = aus. */
   CACHE_SIZE: optional(z.coerce.number().int().min(0).default(10_000)),
   /** Zeitplan für automatische Updates im Cron-Format, z. B. "0 3 * * *". */
   UPDATE_CRON: optional(cronExpression.optional()),
