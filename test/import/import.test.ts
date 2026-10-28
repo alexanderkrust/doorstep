@@ -61,6 +61,10 @@ function checkSamples(dbPath: string): void {
     // Präfix-Suche über den FTS5-Präfix-Index
     expect(fts('name:Königsal*').some((r) => r.name === 'Königsallee')).toBe(true);
 
+    // Rasterzelle für die Umkreissuche: Die Kö liegt in Zelle g564x747
+    expect(fts('name:Königsallee AND cell:g564x747').some((r) => r.type === 'street')).toBe(true);
+    expect(fts('name:Königsallee AND cell:g1x1')).toEqual([]);
+
     // R*Tree: Objekte im Umkreis der Kö
     const near = db
       .prepare(
