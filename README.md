@@ -3,7 +3,7 @@
 Self-hosted Adress-Autosuggest-API auf Basis von OpenStreetMap.
 Ein Docker-Image, keine externen Dienste: der Index ist eine SQLite-Datei (FTS5 + R\*Tree) unter `/data`.
 
-> Status: Phase 2 (Import-Pipeline). Siehe [ROADMAP.md](ROADMAP.md).
+> Status: Phase 3 (Such-API). Siehe [ROADMAP.md](ROADMAP.md).
 
 ## Entwicklung
 
@@ -40,6 +40,39 @@ Ohne `--region` gilt `REGION_URL`. Ablauf:
    R\*Tree `places_rtree`, Tabelle `meta`) und atomarer Austausch gegen `index.sqlite`.
 
 Richtwert: Der Bremen-Extrakt (21 MB) ergibt rund 177.000 Einträge in etwa 5 Sekunden.
+
+## API
+
+Alle Antworten sind GeoJSON-`FeatureCollection`s und enthalten das Feld
+`attribution` ("© OpenStreetMap contributors"). Erfolgreiche Antworten tragen
+`Cache-Control: public, max-age=3600`, Fehler `no-store`.
+
+### `GET /api` – Autosuggest
+
+| Parameter    | Pflicht | Beschreibung                                                        |
+| ------------ | ------- | ------------------------------------------------------------------- |
+| `q`          | ja      | Suchtext, mindestens 2 Zeichen                                      |
+| `limit`      | nein    | 1–10, Default 5                                                     |
+| `lat`, `lon` | nein    | Nur gemeinsam; bei gleichem Typ werden nahe Treffer bevorzugt       |
+| `lang`       | nein    | Zweistelliger Sprachcode, Default `DEFAULT_LANG` (wirkt ab Phase 4) |
+
+Das letzte Wort wird als Präfix gesucht, alle anderen exakt. Findet die Anfrage nichts, wird das
+letzte Wort um bis zu zwei Zeichen gekürzt (Tippfehler am Wortende).
+
+```bash
+curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
+```
+
+### `GET /reverse` – nächstes Objekt zu einem Punkt
+
+| Parameter    | Pflicht | Beschreibung                            |
+| ------------ | ------- | --------------------------------------- |
+| `lat`, `lon` | ja      | Koordinate in WGS84                     |
+| `limit`      | nein    | 1–10, Default 1                         |
+| `radius`     | nein    | Suchradius in km, > 0 bis 10, Default 1 |
+
+Ungültige Parameter liefern `400` mit einer Meldung wie `q: muss mindestens 2 Zeichen lang sein`.
+Solange noch kein Index unter `$DATA_DIR/index.sqlite` liegt, antworten beide Endpunkte mit `503`.
 
 ## Konfiguration (Umgebungsvariablen)
 
