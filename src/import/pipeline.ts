@@ -1,6 +1,7 @@
 import { createReadStream } from 'node:fs';
 import { mkdir, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { INDEX_FILE } from '../config/index.js';
 import { downloadExtract, type DownloadProgress } from './download.js';
 import { IndexWriter } from './index-writer.js';
 import { acquireLock } from './lock.js';
@@ -17,7 +18,7 @@ import { featureToPlace, parseGeoJsonSeqLine } from './place.js';
 import { formatCount, Progress, Steps, type Logger } from './progress.js';
 
 export const EXTRACT_FILE = 'extract.osm.pbf';
-export const INDEX_FILE = 'index.sqlite';
+export { INDEX_FILE };
 export const NEXT_INDEX_FILE = 'index.next.sqlite';
 /** Locks `dataDir` while an import or update is running (see `acquireLock`). */
 export const LOCK_FILE = 'import.lock.sqlite';
@@ -224,6 +225,8 @@ export async function importFromPbf(
 
 export interface RunImportOptions {
   dataDir: string;
+  /** Where the index goes; default `dataDir/index.sqlite` (INDEX_PATH). */
+  indexPath?: string;
   regionUrl: string;
   /** Local PBF file instead of a download. */
   input?: string;
@@ -279,7 +282,7 @@ async function runLockedImport(options: RunImportOptions): Promise<ImportResult>
     );
   }
 
-  const output = join(options.dataDir, INDEX_FILE);
+  const output = options.indexPath ?? join(options.dataDir, INDEX_FILE);
   const result = await importFromPbf(input, output, {
     workDir: options.dataDir,
     log,

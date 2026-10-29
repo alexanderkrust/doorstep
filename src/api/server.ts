@@ -1,8 +1,6 @@
-import { join } from 'node:path';
 import cors from '@fastify/cors';
 import Fastify, { LogController, type FastifyInstance } from 'fastify';
 import type { Config } from '../config/index.js';
-import { INDEX_FILE } from '../import/pipeline.js';
 import { LruCache } from '../search/cache.js';
 import { IndexUnavailableError, SearchIndex } from '../search/search-index.js';
 import type { FeatureCollection } from './geojson.js';
@@ -50,7 +48,7 @@ export function buildServer(config: Config, options: ServerOptions = {}): Fastif
   });
 
   const metrics = options.metrics ?? new Metrics();
-  const index = new SearchIndex(join(config.dataDir, INDEX_FILE));
+  const index = new SearchIndex(config.indexPath);
   const cache = new LruCache<string, FeatureCollection>(config.cacheSize);
 
   app.decorate('reloadIndex', () => {
@@ -112,7 +110,11 @@ export function buildServer(config: Config, options: ServerOptions = {}): Fastif
     methods: ['GET', 'HEAD', 'OPTIONS'],
   });
   registerRateLimit(app, config);
-  void app.register(healthRoutes, { index, importing: options.importing ?? (() => false) });
+  void app.register(healthRoutes, {
+    index,
+    importing: options.importing ?? (() => false),
+    indexMode: config.indexMode,
+  });
   void app.register(metricsRoutes, { index, metrics });
   void app.register(searchRoutes, { index, defaultLang: config.defaultLang, cache, metrics });
   void app.register(reverseRoutes, { index, defaultLang: config.defaultLang });

@@ -1,4 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
+import type { IndexMode } from '../../config/index.js';
+import { SCHEMA_VERSION } from '../../import/index-writer.js';
 import { IndexUnavailableError, type SearchIndex } from '../../search/search-index.js';
 import { ATTRIBUTION } from '../attribution.js';
 import { VERSION } from '../version.js';
@@ -7,21 +9,28 @@ export interface HealthRoutesOptions {
   index: SearchIndex;
   /** Is an import running in the background? */
   importing: () => boolean;
+  indexMode: IndexMode;
 }
 
-/** Is a usable index available? An index with an old schema does not count. */
-function indexAvailable(index: SearchIndex): boolean {
+/**
+ * Is a usable index available? An index with an old schema does not count; its
+ * version is reported anyway, so that a mismatch is visible.
+ */
+function indexState(index: SearchIndex): { available: boolean; schemaVersion?: number } {
   try {
-    return index.open();
+    if (!index.open()) return { available: false };
+    const version = Number(index.meta()?.['schema_version']);
+    return { available: true, ...(Number.isNaN(version) ? {} : { schemaVersion: version }) };
   } catch (err) {
-    if (err instanceof IndexUnavailableError) return false;
-    throw err;
+    if (!(err instanceof IndexUnavailableError)) throw err;
+    const found = err.foundSchemaVersion;
+    return { available: false, ...(found === undefined ? {} : { schemaVersion: found }) };
   }
 }
 
 export const healthRoutes: FastifyPluginAsync<HealthRoutesOptions> = async (
   app,
-  { index, importing },
+  { index, importing, indexMode },
 ) => {
   app.get(
     '/health',
@@ -40,14 +49,24 @@ export const healthRoutes: FastifyPluginAsync<HealthRoutesOptions> = async (
               importing: { type: 'boolean' },
               attribution: { type: 'string' },
               importedAt: { type: 'string' },
+              indexMode: { type: 'string', enum: ['build', 'mounted'] },
+              /** Schema version this image reads. */
+              schemaVersion: { type: 'integer' },
+              /** Schema version of the index file, also when it does not match. */
+              indexSchemaVersion: { type: 'integer' },
+              /** Region or file the index was built from. */
+              source: { type: 'string' },
             },
           },
         },
       },
     },
     () => {
-      const available = indexAvailable(index);
-      const importedAt = available ? index.meta()?.['imported_at'] : undefined;
+      const state = indexState(index);
+      const available = state.available;
+      const meta = available ? index.meta() : null;
+      const importedAt = meta?.['imported_at'];
+      const source = meta?.['source'];
       return {
         status: 'ok' as const,
         version: VERSION,
@@ -56,6 +75,10 @@ export const healthRoutes: FastifyPluginAsync<HealthRoutesOptions> = async (
         importing: importing(),
         attribution: ATTRIBUTION,
         ...(importedAt ? { importedAt } : {}),
+        indexMode,
+        schemaVersion: SCHEMA_VERSION,
+        ...(state.schemaVersion === undefined ? {} : { indexSchemaVersion: state.schemaVersion }),
+        ...(source ? { source } : {}),
       };
     },
   );

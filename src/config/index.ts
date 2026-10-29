@@ -1,4 +1,4 @@
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import { CronError, nextRun, parseCron } from '../import/cron.js';
 
@@ -42,45 +42,79 @@ const cronExpression = z
     }
   });
 
-const envSchema = z.object({
-  REGION_URL: optional(
-    z
-      .url({ protocol: /^https?$/, error: 'must be an http(s) URL' })
-      .default('https://download.geofabrik.de/europe/germany-latest.osm.pbf'),
-  ),
-  HOST: optional(z.string().default('0.0.0.0')),
-  PORT: optional(z.coerce.number().int().min(1).max(65535).default(2322)),
-  DATA_DIR: optional(z.string().refine(isAbsolute, 'must be an absolute path').default('/data')),
-  DEFAULT_LANG: optional(
-    z
-      .string()
-      .trim()
-      .toLowerCase()
-      .regex(/^[a-z]{2}$/, 'must be a two-letter language code (e.g. de)')
-      .default('de'),
-  ),
-  /** Rate limiting on or off. */
-  RATE_LIMIT_ENABLED: flag(true),
-  /** Requests per minute and IP; 0 = off. */
-  RATE_LIMIT: optional(z.coerce.number().int().min(0).default(60)),
-  /** Comma-separated API keys; with a valid key, RATE_LIMIT_API_KEY applies per key. */
-  API_KEYS: optional(list.default([])),
-  /** Requests per minute and API key. */
-  RATE_LIMIT_API_KEY: optional(z.coerce.number().int().min(1).default(600)),
-  /** Take the client IP from X-Forwarded-For (only behind your own reverse proxy). */
-  TRUST_PROXY: flag(false),
-  /** Entries in the LRU cache for search requests; 0 = off. */
-  CACHE_SIZE: optional(z.coerce.number().int().min(0).default(10_000)),
-  /** Schedule for automatic updates in cron format, e.g. "0 3 * * *". */
-  UPDATE_CRON: optional(cronExpression.optional()),
-  /** Comma-separated list of allowed origins, "*" = all. */
-  CORS_ORIGINS: optional(list.default(['*'])),
-  LOG_LEVEL: optional(
-    z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
-  ),
-  /** `serve` starts the import in the background if no index exists yet. */
-  AUTO_IMPORT: flag(false),
-});
+/** File name of the index in DATA_DIR, unless INDEX_PATH says otherwise. */
+export const INDEX_FILE = 'index.sqlite';
+
+/**
+ * `build`: the container downloads the extract and builds the index itself.
+ * `mounted`: the index is built elsewhere and mounted; no download, no import.
+ */
+export type IndexMode = 'build' | 'mounted';
+
+const DEFAULT_REGION_URL = 'https://download.geofabrik.de/europe/germany-latest.osm.pbf';
+const regionUrl = z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' });
+const absolutePath = z.string().refine(isAbsolute, 'must be an absolute path');
+
+const envSchema = z
+  .object({
+    /** Validated below, only when the container builds the index. */
+    REGION_URL: optional(z.string().trim().default(DEFAULT_REGION_URL)),
+    HOST: optional(z.string().default('0.0.0.0')),
+    PORT: optional(z.coerce.number().int().min(1).max(65535).default(2322)),
+    DATA_DIR: optional(absolutePath.default('/data')),
+    INDEX_MODE: optional(
+      z
+        .string()
+        .trim()
+        .toLowerCase()
+        .pipe(z.enum(['build', 'mounted'], { error: 'must be build or mounted' }))
+        .default('build'),
+    ),
+    /** Path of the index file; default `$DATA_DIR/index.sqlite`. */
+    INDEX_PATH: optional(absolutePath.optional()),
+    DEFAULT_LANG: optional(
+      z
+        .string()
+        .trim()
+        .toLowerCase()
+        .regex(/^[a-z]{2}$/, 'must be a two-letter language code (e.g. de)')
+        .default('de'),
+    ),
+    /** Rate limiting on or off. */
+    RATE_LIMIT_ENABLED: flag(true),
+    /** Requests per minute and IP; 0 = off. */
+    RATE_LIMIT: optional(z.coerce.number().int().min(0).default(60)),
+    /** Comma-separated API keys; with a valid key, RATE_LIMIT_API_KEY applies per key. */
+    API_KEYS: optional(list.default([])),
+    /** Requests per minute and API key. */
+    RATE_LIMIT_API_KEY: optional(z.coerce.number().int().min(1).default(600)),
+    /** Take the client IP from X-Forwarded-For (only behind your own reverse proxy). */
+    TRUST_PROXY: flag(false),
+    /** Entries in the LRU cache for search requests; 0 = off. */
+    CACHE_SIZE: optional(z.coerce.number().int().min(0).default(10_000)),
+    /** Schedule for automatic updates in cron format, e.g. "0 3 * * *". */
+    UPDATE_CRON: optional(cronExpression.optional()),
+    /** Comma-separated list of allowed origins, "*" = all. */
+    CORS_ORIGINS: optional(list.default(['*'])),
+    LOG_LEVEL: optional(
+      z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+    ),
+    /** `serve` starts the import in the background if no index exists yet. */
+    AUTO_IMPORT: flag(false),
+  })
+  .superRefine((env, ctx) => {
+    if (env.INDEX_MODE === 'build' && !regionUrl.safeParse(env.REGION_URL).success) {
+      ctx.addIssue({ code: 'custom', path: ['REGION_URL'], message: 'must be an http(s) URL' });
+    }
+    if (env.INDEX_MODE === 'mounted' && env.UPDATE_CRON) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['UPDATE_CRON'],
+        message:
+          'cannot be used with INDEX_MODE=mounted; replace the mounted index from outside instead',
+      });
+    }
+  });
 
 export interface Config {
   regionUrl: string;
@@ -98,6 +132,9 @@ export interface Config {
   trustProxy: boolean;
   cacheSize: number;
   updateCron: string | null;
+  indexMode: IndexMode;
+  /** Absolute path of the index file. */
+  indexPath: string;
 }
 
 export class ConfigError extends Error {
@@ -130,5 +167,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     trustProxy: e.TRUST_PROXY,
     cacheSize: e.CACHE_SIZE,
     updateCron: e.UPDATE_CRON ?? null,
+    indexMode: e.INDEX_MODE,
+    indexPath: e.INDEX_PATH ?? join(e.DATA_DIR, INDEX_FILE),
   };
 }

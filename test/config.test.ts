@@ -20,6 +20,8 @@ describe('loadConfig', () => {
       trustProxy: false,
       cacheSize: 10_000,
       updateCron: null,
+      indexMode: 'build',
+      indexPath: '/data/index.sqlite',
     });
   });
 
@@ -57,6 +59,8 @@ describe('loadConfig', () => {
       trustProxy: true,
       cacheSize: 0,
       updateCron: '0 3 * * *',
+      indexMode: 'build',
+      indexPath: '/tmp/doorstep/index.sqlite',
     });
   });
 
@@ -103,11 +107,39 @@ describe('loadConfig', () => {
     ['UPDATE_CRON', 'daily'],
     ['UPDATE_CRON', '60 3 * * *'],
     ['UPDATE_CRON', '0 3 * *'],
+    ['INDEX_MODE', 'readonly'],
+    ['INDEX_PATH', 'index/index.sqlite'],
   ])('rejects the invalid value %s=%s', (key, value) => {
     expect(() => loadConfig({ [key]: value })).toThrow(ConfigError);
   });
 
   it('names all invalid variables in the error message', () => {
     expect(() => loadConfig({ PORT: 'x', LOG_LEVEL: 'y' })).toThrow(/PORT[\s\S]*LOG_LEVEL/);
+  });
+
+  describe('prebuilt index (INDEX_MODE=mounted)', () => {
+    it('reads INDEX_MODE and INDEX_PATH', () => {
+      const config = loadConfig({ INDEX_MODE: ' Mounted ', INDEX_PATH: '/index/index.sqlite' });
+      expect(config.indexMode).toBe('mounted');
+      expect(config.indexPath).toBe('/index/index.sqlite');
+    });
+
+    it('also takes INDEX_PATH in build mode', () => {
+      expect(loadConfig({ INDEX_PATH: '/index/germany.sqlite' }).indexPath).toBe(
+        '/index/germany.sqlite',
+      );
+    });
+
+    it('rejects UPDATE_CRON with a hint to update from outside', () => {
+      expect(() => loadConfig({ INDEX_MODE: 'mounted', UPDATE_CRON: '0 3 * * *' })).toThrow(
+        /UPDATE_CRON: .*INDEX_MODE=mounted/,
+      );
+    });
+
+    it('does not need a valid REGION_URL', () => {
+      expect(loadConfig({ INDEX_MODE: 'mounted', REGION_URL: 'keine-url' }).indexMode).toBe(
+        'mounted',
+      );
+    });
   });
 });

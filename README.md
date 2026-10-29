@@ -115,6 +115,44 @@ docker exec doorstep doorstep update
 
 Geofabrik updates the extracts daily; a daily or weekly update is enough.
 
+### Using a prebuilt index
+
+The index can be built somewhere else (another machine, a CI job) and mounted into the container.
+With `INDEX_MODE=mounted`, the container only serves it: no download, no import, no scheduled
+update. That saves the import on every machine (Germany: about 34 min, 3.3 GB RAM) and works
+without internet access.
+
+```bash
+# 1. Build the index once (writes ./index/index.sqlite, about 10 GB for Germany)
+docker run --rm -v "$PWD/index:/data" meine-api import
+
+# 2. Serve it, read-only
+docker run -p 2322:2322 -v "$PWD/index:/index:ro" \
+  -e INDEX_MODE=mounted -e INDEX_PATH=/index/index.sqlite meine-api
+```
+
+- **Mount the directory, not the file.** With `-v ./index/index.sqlite:/…`, Docker pins the file
+  that existed at the start; a file replaced on the host later is not visible in the container.
+- **Updating:** build the new index next to the old one in the same directory and swap it with
+  `mv` (atomic on the same filesystem). The API loads it within 5 seconds, right away after
+  `docker kill -s HUP <container>`. Never use `cp` onto the live file: that changes it while
+  queries are reading it.
+  ```bash
+  docker run --rm -v "$PWD/next:/data" meine-api import
+  mv next/index.sqlite index/index.next.sqlite && mv index/index.next.sqlite index/index.sqlite
+  ```
+  `next/` and `index/` must be on the same filesystem for the last `mv` to be atomic.
+- **Schema version:** the index must have been built by an image with the same schema version (see
+  `schemaVersion` and `indexSchemaVersion` in `/health`). With a mismatch the container stops at
+  startup with an error naming both versions. Pin the image tag that built the index.
+- **Missing file:** the container starts anyway, logs a warning and answers `503` until the file
+  appears.
+- `UPDATE_CRON` is rejected with `INDEX_MODE=mounted`, and `import`/`update` refuse to run unless
+  `--force` is given. `AUTO_IMPORT` is ignored; `REGION_URL` is not needed.
+- Works with a read-only container (`docker run --read-only`); nothing is written.
+- Several containers can share one mounted index. Keep it on a local disk: SQLite on NFS/SMB is
+  slow and unreliable.
+
 ### Rate limiting and API keys
 
 - Without an API key: at most `RATE_LIMIT` requests per minute and IP on `/api` and `/reverse`.
@@ -171,7 +209,9 @@ proxy.
 
 `GET /health` answers `200` as soon as the API is running, also during the first import:
 `status`, `version`, `uptime`, `index` (usable index available), `importing` (import or update
-running), `importedAt` (build time of the active index) and `attribution`. The image uses this for
+running), `importedAt` (build time of the active index), `source` (region or file the index was
+built from), `indexMode` (`build` or `mounted`), `schemaVersion` (schema this image reads),
+`indexSchemaVersion` (schema of the index file, also when it does not match) and `attribution`. The image uses this for
 its `HEALTHCHECK`.
 
 ## Configuration (environment variables)
@@ -181,10 +221,12 @@ message at startup listing all affected variables.
 
 | Variable             | Default                                                       | Description                                                             |
 | -------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `REGION_URL`         | `https://download.geofabrik.de/europe/germany-latest.osm.pbf` | Geofabrik extract for import and update                                 |
+| `REGION_URL`         | `https://download.geofabrik.de/europe/germany-latest.osm.pbf` | Geofabrik extract for import and update (not needed when `mounted`)     |
 | `HOST`               | `0.0.0.0`                                                     | Bind address of the API                                                 |
 | `PORT`               | `2322`                                                        | Port of the API                                                         |
 | `DATA_DIR`           | `/data`                                                       | Directory for extract and index (absolute path)                         |
+| `INDEX_MODE`         | `build`                                                       | `build`: the container builds the index; `mounted`: prebuilt, see above |
+| `INDEX_PATH`         | `$DATA_DIR/index.sqlite`                                      | Path of the index file (absolute path)                                  |
 | `DEFAULT_LANG`       | `de`                                                          | Default language (two-letter code)                                      |
 | `AUTO_IMPORT`        | `false` (`true` in the Docker image)                          | `serve` imports in the background if no index exists                    |
 | `UPDATE_CRON`        | – (no updates)                                                | Schedule for automatic updates in cron format, e.g. `0 3 * * *`         |
@@ -344,7 +386,7 @@ curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
 | `lang`       | no       | As for `/api`                             |
 
 Invalid parameters return `400` with a message like `q: must be at least 2 characters long`.
-As long as there is no index at `$DATA_DIR/index.sqlite`, both endpoints answer `503`. This also
+As long as there is no index at `INDEX_PATH` (default `$DATA_DIR/index.sqlite`), both endpoints answer `503`. This also
 applies to an index with an old schema (currently version 8, since categories, more POI kinds and
 city/district/postcode from boundaries; version 7 brought split and joined street names, version
 6 the word statistics for bm25, version 5 country and state from administrative boundaries): then
@@ -379,6 +421,7 @@ Node as `node:sqlite` (with FTS5 and R\*Tree); no native modules are compiled.
 | `serve` (default)                          | Start the API; without an index, the import runs in the background (`AUTO_IMPORT`), updates per `UPDATE_CRON` |
 | `import [--region <url>] [--input <file>]` | Build the index (download, filter, import) and swap it in atomically                                          |
 | `update`                                   | Download the extract again (only if the Geofabrik MD5 changed), rebuild the index and swap it in              |
+| `--force` (with `import`/`update`)         | Run even with `INDEX_MODE=mounted`                                                                            |
 
 ```bash
 # Import up front, without starting the API
@@ -398,7 +441,9 @@ Builds the image, starts it with an empty volume and the mini extract from `test
 (automatic import via `REGION_URL`, served by a helper container), queries `/health`, `/api`,
 `/reverse` and `/metrics`, checks the `HEALTHCHECK`, runs `update` in the running container under
 constant requests and checks that none fails and that the API loads the new index without a
-restart. Needs only Docker and `curl`, no internet access except for the image build.
+restart. Finally, a second container serves the built index with `INDEX_MODE=mounted`,
+read-only (`--read-only`, volume mounted `:ro`) and without network, and must neither download
+nor import. Needs only Docker and `curl`, no internet access except for the image build.
 
 ## Load test
 

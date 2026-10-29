@@ -1,7 +1,8 @@
 import { Metrics } from './api/metrics.js';
 import { buildServer, DEFAULT_RELOAD_INTERVAL_MS } from './api/server.js';
+import { checkIndexAtStart } from './api/startup.js';
 import { ConfigError, loadConfig } from './config/index.js';
-import { ImportArgsError, parseImportArgs } from './import/args.js';
+import { assertImportAllowed, ImportArgsError, parseImportArgs } from './import/args.js';
 import {
   needsAutoImport,
   startBackgroundImport,
@@ -12,7 +13,8 @@ import { createCliLogger } from './import/log.js';
 import { runImport } from './import/pipeline.js';
 import { scheduleCron, type ScheduledJob } from './import/scheduler.js';
 
-const USAGE = 'Usage: doorstep <serve|import|update> [--region <url>] [--input <file.osm.pbf>]';
+const USAGE =
+  'Usage: doorstep <serve|import|update> [--region <url>] [--input <file.osm.pbf>] [--force]';
 
 /** Exit code when an import is already running (EX_TEMPFAIL). */
 const EXIT_LOCKED = 75;
@@ -53,6 +55,18 @@ async function serve(): Promise<void> {
   process.on('SIGHUP', () => {
     if (!app.reloadIndex()) app.log.info('SIGHUP: index unchanged');
   });
+
+  const check = checkIndexAtStart(config);
+  app.log[check.level]({ indexMode: config.indexMode, indexPath: config.indexPath }, check.message);
+  if (check.exit) {
+    await app.close();
+    process.exit(1);
+  }
+  if (config.indexMode === 'mounted') {
+    app.log.info(
+      'INDEX_MODE=mounted: no download, import or scheduled update; a replaced index file is loaded automatically',
+    );
+  }
 
   await app.listen({ host: config.host, port: config.port });
 
@@ -108,9 +122,11 @@ async function importCommand(command: 'import' | 'update', argv: string[]): Prom
   const config = loadConfig();
   const log = createCliLogger(command, config.logLevel);
   const args = parseImportArgs(argv, config.regionUrl);
+  assertImportAllowed(command, config.indexMode, args);
   const started = Date.now();
   const result = await runImport({
     dataDir: config.dataDir,
+    indexPath: config.indexPath,
     regionUrl: args.regionUrl,
     ...(args.input ? { input: args.input } : {}),
     log: (message) => {

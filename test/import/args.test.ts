@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ImportArgsError, parseImportArgs } from '../../src/import/args.js';
+import { assertImportAllowed, ImportArgsError, parseImportArgs } from '../../src/import/args.js';
 
 const DEFAULT = 'https://download.geofabrik.de/europe/germany-latest.osm.pbf';
 
@@ -21,6 +21,10 @@ describe('parseImportArgs', () => {
     });
   });
 
+  it('takes --force', () => {
+    expect(parseImportArgs(['--force'], DEFAULT)).toEqual({ regionUrl: DEFAULT, force: true });
+  });
+
   it.each([
     [['--region', 'keine-url']],
     [['--region', 'ftp://example.com/x.osm.pbf']],
@@ -28,5 +32,25 @@ describe('parseImportArgs', () => {
     [['--region']],
   ])('rejects %j', (argv) => {
     expect(() => parseImportArgs(argv, DEFAULT)).toThrow(ImportArgsError);
+  });
+});
+
+describe('assertImportAllowed', () => {
+  it('allows import and update when the container builds the index', () => {
+    expect(() => {
+      assertImportAllowed('import', 'build', {});
+    }).not.toThrow();
+  });
+
+  it.each(['import', 'update'] as const)('refuses %s with a mounted index', (command) => {
+    expect(() => {
+      assertImportAllowed(command, 'mounted', {});
+    }).toThrow(/INDEX_MODE=mounted.*--force/);
+  });
+
+  it('allows it with --force', () => {
+    expect(() => {
+      assertImportAllowed('update', 'mounted', { force: true });
+    }).not.toThrow();
   });
 });

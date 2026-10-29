@@ -181,6 +181,14 @@ describe.skipIf(!isOsmiumAvailable())('import from PBF with osmium', () => {
     checkSamples(join(dataDir, INDEX_FILE));
   });
 
+  it('writes the index to indexPath if given', async () => {
+    const dataDir = join(dir, 'index-path-data');
+    const indexPath = join(dir, 'index-path-out', 'germany.sqlite');
+    await runImport({ dataDir, indexPath, regionUrl: 'https://example.invalid/x.pbf', input: PBF });
+    checkSamples(indexPath);
+    expect(existsSync(join(dataDir, INDEX_FILE))).toBe(false);
+  });
+
   it('replaces an existing index', async () => {
     const out = join(dir, 'pbf', 'index.sqlite');
     const first = await importFromPbf(PBF, out, { workDir: join(dir, 'pbf') });

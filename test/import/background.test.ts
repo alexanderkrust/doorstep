@@ -61,4 +61,16 @@ describe('needsAutoImport', () => {
     await writeFile(join(dir, INDEX_FILE), '');
     expect(needsAutoImport(loadConfig({ DATA_DIR: dir, AUTO_IMPORT: 'true' }))).toBe(false);
   });
+
+  it('looks for the index at INDEX_PATH', async () => {
+    await writeFile(join(dir, INDEX_FILE), '');
+    const elsewhere = join(dir, 'elsewhere', 'index.sqlite');
+    const env = { DATA_DIR: dir, AUTO_IMPORT: 'true', INDEX_PATH: elsewhere };
+    expect(needsAutoImport(loadConfig(env))).toBe(true);
+  });
+
+  it('is never true with a mounted index, even without a file', () => {
+    const env = { DATA_DIR: dir, AUTO_IMPORT: 'true', INDEX_MODE: 'mounted' };
+    expect(needsAutoImport(loadConfig(env))).toBe(false);
+  });
 });

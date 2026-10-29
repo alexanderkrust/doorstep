@@ -133,6 +133,14 @@ function candidateNames(row: PlaceRow): string[] {
 /** The index exists but is not usable (e.g. old schema). */
 export class IndexUnavailableError extends Error {
   override name = 'IndexUnavailableError';
+
+  constructor(
+    message: string,
+    /** Schema version found in the file, if it could be read. */
+    readonly foundSchemaVersion?: number,
+  ) {
+    super(message);
+  }
 }
 
 /** Identity of a file: an atomic swap via rename yields a new inode. */
@@ -187,6 +195,7 @@ function openIndexFile(path: string): OpenIndex {
       throw new IndexUnavailableError(
         `Index has schema version ${version ?? 'unknown'}, expected ${String(SCHEMA_VERSION)}. ` +
           'Please import again.',
+        version === undefined || Number.isNaN(Number(version)) ? undefined : Number(version),
       );
     }
     return {

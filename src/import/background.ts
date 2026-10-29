@@ -1,8 +1,6 @@
 import { spawn, type StdioOptions } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import type { Config } from '../config/index.js';
-import { INDEX_FILE } from './pipeline.js';
 
 /** An import running as a separate process next to the API. */
 export interface BackgroundImport {
@@ -12,9 +10,12 @@ export interface BackgroundImport {
   stop(): void;
 }
 
-/** `serve` should import: AUTO_IMPORT is on and there is no index yet. */
+/**
+ * `serve` should import: AUTO_IMPORT is on, the container builds the index itself
+ * (not INDEX_MODE=mounted) and there is no index yet.
+ */
 export function needsAutoImport(config: Config): boolean {
-  return config.autoImport && !existsSync(join(config.dataDir, INDEX_FILE));
+  return config.autoImport && config.indexMode === 'build' && !existsSync(config.indexPath);
 }
 
 /**

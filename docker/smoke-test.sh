@@ -4,7 +4,8 @@
 #   sh docker/smoke-test.sh
 #
 # Same flow as the first start on a fresh machine: empty volume, `serve` finds no index
-# and imports in the background via REGION_URL. A helper container from the same image
+# and imports in the background via REGION_URL. At the end, a second container serves the
+# built index as a prebuilt one (INDEX_MODE=mounted): read-only, without network. A helper container from the same image
 # serves the extract (test/fixtures/koenigsallee.osm.pbf) over HTTP, so the test works
 # without internet access to Geofabrik.
 #
@@ -19,9 +20,12 @@ NET=$ID-net
 VOLUME=$ID-data
 API=$ID-api
 FILES=$ID-files
+MOUNTED=$ID-mounted
+# Container whose logs `fail` prints.
+LOGS_OF=$ID-api
 
 cleanup() {
-  docker rm -f "$API" "$FILES" >/dev/null 2>&1 || true
+  docker rm -f "$API" "$FILES" "$MOUNTED" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
   docker volume rm "$VOLUME" >/dev/null 2>&1 || true
 }
@@ -29,8 +33,8 @@ trap cleanup EXIT INT TERM
 
 fail() {
   echo "ERROR: $*" >&2
-  echo "--- Logs $API ---" >&2
-  docker logs "$API" >&2 2>&1 || true
+  echo "--- Logs $LOGS_OF ---" >&2
+  docker logs "$LOGS_OF" >&2 2>&1 || true
   exit 1
 }
 
@@ -149,5 +153,31 @@ wait_for 30 sh -c "curl -fsS '$BASE/health' | grep -q '\"index\":true,\"importin
   fail "No index after restart"
 curl -fsS "$BASE/api?q=K%C3%B6nigsall" | grep -q '"name":"Königsallee"' ||
   fail "No hits after restart"
+
+echo "==> Prebuilt index: read-only, without network (INDEX_MODE=mounted)"
+docker stop "$API" >/dev/null
+LOGS_OF=$MOUNTED
+docker run -d --name "$MOUNTED" --network none --read-only \
+  -v "$VOLUME:/index:ro" -e INDEX_MODE=mounted -e INDEX_PATH=/index/index.sqlite \
+  "$IMAGE" >/dev/null
+# Without network there is no published port: query from inside the container.
+inside() {
+  docker exec "$MOUNTED" node -e "
+    fetch('http://127.0.0.1:2322$1').then(async (r) => {
+      process.stdout.write(await r.text());
+      process.exit(r.ok ? 0 : 1);
+    }, () => process.exit(1));"
+}
+wait_for 30 inside /health || fail "/health does not answer with a mounted index"
+inside /health | grep -q '"index":true,"importing":false' || fail "Mounted index not available"
+inside /health | grep -q '"indexMode":"mounted"' || fail "/health does not report INDEX_MODE"
+inside '/api?q=K%C3%B6nigsall&limit=3' | grep -q '"name":"Königsallee"' ||
+  fail "No hits from the mounted index"
+if docker logs "$MOUNTED" 2>&1 | grep -q 'Downloading\|starting import'; then
+  fail "Download or import started despite INDEX_MODE=mounted"
+fi
+if docker exec "$MOUNTED" doorstep update >/dev/null 2>&1; then
+  fail "update ran despite INDEX_MODE=mounted"
+fi
 
 echo "==> Smoke test passed"

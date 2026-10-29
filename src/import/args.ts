@@ -1,5 +1,6 @@
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
+import type { IndexMode } from '../config/index.js';
 
 export class ImportArgsError extends Error {
   override name = 'ImportArgsError';
@@ -9,6 +10,8 @@ export interface ImportArgs {
   regionUrl: string;
   /** Local PBF file; skips the download. */
   input?: string;
+  /** Import even though INDEX_MODE=mounted. */
+  force?: true;
 }
 
 const regionUrl = z.url({ protocol: /^https?$/, error: '--region must be an http(s) URL' });
@@ -32,6 +35,7 @@ function parse(argv: string[], defaultRegionUrl: string): ImportArgs {
     options: {
       region: { type: 'string' },
       input: { type: 'string' },
+      force: { type: 'boolean' },
     },
     strict: true,
     allowPositionals: false,
@@ -40,5 +44,23 @@ function parse(argv: string[], defaultRegionUrl: string): ImportArgs {
     regionUrl: regionUrl.parse(values.region ?? defaultRegionUrl),
   };
   if (values.input) result.input = values.input;
+  if (values.force) result.force = true;
   return result;
+}
+
+/**
+ * With INDEX_MODE=mounted the index is managed outside the container: `import` and
+ * `update` would overwrite it (or fail on a read-only mount). Only with `--force`.
+ */
+export function assertImportAllowed(
+  command: 'import' | 'update',
+  mode: IndexMode,
+  args: Pick<ImportArgs, 'force'>,
+): void {
+  if (mode === 'mounted' && !args.force) {
+    throw new ImportArgsError(
+      `\`${command}\` is disabled with INDEX_MODE=mounted: the index is built outside the ` +
+        'container. Replace the mounted file instead, or pass --force to build it here anyway.',
+    );
+  }
 }

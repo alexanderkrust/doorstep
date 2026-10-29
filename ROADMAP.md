@@ -156,3 +156,44 @@ The response format moved away from the old flat property list towards what auto
 - [x] Duplicates: the same city as a boundary and as a place node, or two nodes of one station, are shown once.
 - [ ] **Bus stops and transit stops** are not searchable (named `highway=bus_stop` nodes, 53,000 in Germany). Would need their own type and ranking so they do not crowd out streets with the same name.
 - [ ] **Opening hours, phone, website** are not part of the response; a details endpoint (`/place/<id>`) could return them.
+
+## Prebuilt index (mount instead of import)
+
+**Goal:** An index built elsewhere (another machine, a CI job, a previous container) can be mounted into the container. The container then only serves it: no download and no import, neither at the start nor on a schedule.
+
+What works today: `serve` only imports when `$DATA_DIR/index.sqlite` is missing (`needsAutoImport`), so a volume that already holds an index skips the import. What is missing is an explicit mode with clear behavior and error messages, plus documentation:
+
+- A mounted index with the wrong schema version ends up in a silent 503: the file exists, so nothing is imported, and only `/health` shows `index: false`.
+- `UPDATE_CRON` together with a mounted index (often read-only) fails on every scheduled run.
+- When a single file is bind-mounted (`-v ./index.sqlite:/data/index.sqlite`), an update cannot swap it via `rename` (EBUSY). If the host replaces the file, the container keeps seeing the old one, because the bind mount pins the inode. Mounting the directory is fine.
+
+Tasks (done 2026-10-29):
+
+- [x] New variable `INDEX_MODE` in `src/config`: `build` (default, today's behavior) or `mounted`. In `mounted` mode:
+  - no automatic import, `AUTO_IMPORT` is ignored (silently: the image sets it to `true` by default, so a note would appear on every start)
+  - `UPDATE_CRON` is a configuration error (fails at startup with a clear message)
+  - the `import` and `update` commands refuse to run unless `--force` is given
+  - `REGION_URL` is not needed and not validated
+- [x] Optional `INDEX_PATH` (absolute path, default `$DATA_DIR/index.sqlite`), so that the index can be mounted somewhere other than the writable data directory, e.g. `-v /srv/doorstep:/index:ro -e INDEX_PATH=/index/index.sqlite`.
+- [x] Start checks in `mounted` mode (`src/api/startup.ts`): missing file → warning in the log, 503 until it shows up (every request tries to open it). Wrong schema → error in the log naming the found and the expected version, and the process ends with exit 1, so that orchestrators notice. In `build` mode, a wrong schema is now logged at startup too, but the process keeps running (503 as before).
+- [x] Opening read-only works on `:ro` mounts and with `docker run --read-only` (journal mode is `DELETE`; test that nothing else writes to `/data` or the container filesystem).
+- [x] `/health` additionally reports `indexMode`, `schemaVersion` (expected by the image), `indexSchemaVersion` (found in the file, also on a mismatch) and `source`; `importedAt` was already there.
+- [x] Updates in `mounted` mode come from outside: write the new file into the mounted directory as `index.next.sqlite` and `mv` it onto `index.sqlite` (same filesystem, so the rename is atomic). The API switches within 5 s or right away on `docker kill -s HUP <container>`. Never `cp` over the live file: that changes it in place while queries are reading it.
+- [x] Tests: config validation (`INDEX_MODE`, `INDEX_PATH`, `mounted` + `UPDATE_CRON`), no import started in `mounted` mode even without an index, refused `import`/`update`, schema mismatch message.
+- [x] Smoke test, second scenario: build the index with the mini extract in a container, start a second container with the index mounted `:ro`, `--network none` and `INDEX_MODE=mounted`, then query `/api` (proves that nothing is downloaded). Additionally `--read-only`, and `update` in the container must fail.
+- [x] README: section "Using a prebuilt index" with
+  - building it: `docker run --rm -v ./index:/data <image> import`, including the time and RAM it needs
+  - mounting it, and why a directory mount beats a file mount
+  - the update procedure (`mv`, SIGHUP)
+  - schema compatibility: the image tag must match the index's schema version
+
+**Done when:** `docker run --network none -v ./index:/data:ro -e INDEX_MODE=mounted -p 2322:2322 <image>` answers `/api` with the mounted index, the logs show no download or import attempt, and a mounted index with the wrong schema produces a clear error message.
+
+### Further ideas
+
+- [ ] **Download a prebuilt index (`INDEX_URL`)** instead of the PBF: one machine builds, many instances only fetch. Load `index.sqlite.gz` or a similar compressed file plus a checksum (`.sha256`), check the schema version before swapping, and update via `UPDATE_CRON` by fetching the new index instead of rebuilding. Saves about 30 min and 3–4 GB RAM per instance.
+- [ ] **`doorstep info` command:** prints the index metadata (schema version, region, extract MD5, build time, number of entries) and exits non-zero if the image cannot read the index. Useful in CI before a mounted index goes live.
+- [ ] **Open with `immutable=1`** (SQLite URI) in `mounted` mode: no file locking, so it is somewhat faster and works on read-only media. Safe because updates arrive as a new file via `rename` and are opened anew. First check whether `node:sqlite` accepts URI filenames.
+- [ ] **Warm-up after the start:** right after an import, single queries take up to 385 ms because the file is not yet in the page cache. With a mounted index this happens on every container start. Optionally (`INDEX_WARMUP=true`), read the index once or run a few typical queries before `/health` reports `index: true`.
+- [ ] **Several containers on one mounted index:** read-only sharing is safe and adds throughput without worker threads (see "Throughput on large indexes"). Document it, and warn that SQLite on network filesystems (NFS/SMB) is slow and unreliable with locking; a local disk is recommended.
+- [ ] **Image with a baked-in index** (`FROM <image>` plus `COPY index.sqlite /data/`) for small regions: starts without any volume. Not sensible for Germany (10 GB image).
