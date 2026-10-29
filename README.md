@@ -91,10 +91,13 @@ docker exec doorstep doorstep update
 - `UPDATE_CRON` versteht fünf Felder (Minute, Stunde, Tag, Monat, Wochentag) mit `*`, Zahlen,
   Listen (`1,15`), Bereichen (`1-5`) und Schritten (`*/15`). Namen wie `mon` gehen nicht.
   Andere Zeitzone: `-e TZ=Europe/Berlin`.
-- Es läuft nie mehr als ein Import gleichzeitig: Eine Sperrdatei `/data/import.lock` verhindert,
-  dass sich ein geplantes und ein manuelles Update in die Quere kommen. Das zweite bricht mit
-  Exit-Code 75 und einer Meldung ab. Bleibt die Datei nach einem Absturz liegen, wird sie
-  erkannt und übernommen (spätestens nach 24 Stunden).
+- Es läuft nie mehr als ein Import gleichzeitig: Eine Dateisperre auf `/data/import.lock.sqlite`
+  verhindert, dass sich ein geplantes und ein manuelles Update in die Quere kommen. Das zweite
+  bricht mit Exit-Code 75 und einer Meldung ab. Endet der importierende Prozess, gibt das
+  Betriebssystem die Sperre sofort frei, auch wenn der Container mitten im Import ersetzt wird.
+  Die Datei selbst bleibt liegen und muss nie gelöscht werden. Eine `import.lock` älterer
+  Versionen wird beim nächsten Import entfernt. Das Volume muss POSIX-Dateisperren
+  unterstützen (lokales Docker-Volume oder Bind-Mount, kein NFS).
 - Sofort neu laden statt bis zu 5 Sekunden zu warten: `docker kill -s HUP doorstep`.
 - Kontrolle: `/health` zeigt in `importedAt`, wann der aktive Index gebaut wurde; `/metrics`
   zählt `doorstep_index_reloads_total` und `doorstep_updates_total`.
@@ -295,7 +298,7 @@ als `node:sqlite` in Node enthalten (mit FTS5 und R\*Tree); native Module werden
 
 - Läuft als Nutzer `node` (uid 1000), nicht als root.
 - `/data` ist ein `VOLUME` und enthält `extract.osm.pbf`, `index.sqlite` und während eines
-  Updates `index.next.sqlite` und `import.lock`. Bei einem Bind-Mount (`-v $PWD/data:/data`)
+  Updates `index.next.sqlite`; dazu die Sperrdatei `import.lock.sqlite` (mit `import.lock.sqlite.json`, solange ein Import läuft). Bei einem Bind-Mount (`-v $PWD/data:/data`)
   muss das Verzeichnis für uid 1000 beschreibbar sein.
 - Port `2322`, `HEALTHCHECK` gegen `/health` (alle 30 s).
 - Schlägt der automatische Erstimport fehl, beendet sich der Container mit Exit-Code 1. Mit
@@ -427,7 +430,7 @@ DATA_DIR=$PWD/data npm run import -- --input ./mein-extrakt.osm.pbf   # lokale D
 
 Ohne `--region` gilt `REGION_URL`. Ablauf:
 
-1. Sperre `$DATA_DIR/import.lock` setzen (nie zwei Imports gleichzeitig).
+1. Sperre `$DATA_DIR/import.lock.sqlite` setzen (nie zwei Imports gleichzeitig).
 2. Download nach `$DATA_DIR/extract.osm.pbf`. Abgebrochene Downloads werden fortgesetzt
    (`extract.osm.pbf.part`), die Geofabrik-`.md5` wird geprüft. Passt eine vorhandene Datei
    zur `.md5`, wird nicht neu geladen.

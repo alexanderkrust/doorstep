@@ -1,10 +1,17 @@
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { isOsmiumAvailable } from '../../src/import/osmium.js';
-import { importFromGeoJsonSeq, importFromPbf } from '../../src/import/pipeline.js';
+import {
+  importFromGeoJsonSeq,
+  importFromPbf,
+  INDEX_FILE,
+  LEGACY_LOCK_FILE,
+  runImport,
+} from '../../src/import/pipeline.js';
 import { ATTRIBUTION } from '../../src/api/attribution.js';
 
 const FIXTURES = join(import.meta.dirname, '..', 'fixtures');
@@ -151,6 +158,27 @@ describe.skipIf(!isOsmiumAvailable())('Import aus PBF mit osmium', () => {
 
     expect(result.places).toBeGreaterThan(500);
     checkSamples(out);
+  });
+
+  it('lässt sich von einer alten Sperrdatei aus einem anderen Container nicht aufhalten', async () => {
+    // So hinterlassen ältere Versionen ihre Sperre, wenn der Container mitten im Import endet.
+    const dataDir = join(dir, 'alte-sperre');
+    await mkdir(dataDir, { recursive: true });
+    const legacy = join(dataDir, LEGACY_LOCK_FILE);
+    await writeFile(
+      legacy,
+      JSON.stringify({ pid: 18, host: '723eb07e300d', startedAt: new Date().toISOString() }),
+    );
+
+    const result = await runImport({
+      dataDir,
+      regionUrl: 'https://example.invalid/x.pbf',
+      input: PBF,
+    });
+
+    expect(result.places).toBeGreaterThan(500);
+    expect(existsSync(legacy)).toBe(false);
+    checkSamples(join(dataDir, INDEX_FILE));
   });
 
   it('ersetzt einen vorhandenen Index', async () => {

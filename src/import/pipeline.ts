@@ -18,8 +18,13 @@ import { featureToPlace, parseGeoJsonSeqLine } from './place.js';
 export const EXTRACT_FILE = 'extract.osm.pbf';
 export const INDEX_FILE = 'index.sqlite';
 export const NEXT_INDEX_FILE = 'index.next.sqlite';
-/** Sperrt `dataDir`, solange ein Import oder Update läuft. */
-export const LOCK_FILE = 'import.lock';
+/** Sperrt `dataDir`, solange ein Import oder Update läuft (siehe `acquireLock`). */
+export const LOCK_FILE = 'import.lock.sqlite';
+/**
+ * Sperrdatei älterer Versionen (JSON mit PID und Host). Sie blieb liegen, wenn der
+ * Container mitten im Import endete, und blockierte dann jeden neuen Container.
+ */
+export const LEGACY_LOCK_FILE = 'import.lock';
 
 export interface ImportResult {
   /** Anzahl der gelesenen Features. */
@@ -198,6 +203,7 @@ export async function runImport(options: RunImportOptions): Promise<ImportResult
   await mkdir(options.dataDir, { recursive: true });
   const release = await acquireLock(join(options.dataDir, LOCK_FILE));
   try {
+    await rm(join(options.dataDir, LEGACY_LOCK_FILE), { force: true });
     return await runLockedImport(options);
   } finally {
     await release();
