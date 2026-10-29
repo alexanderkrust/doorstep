@@ -4,6 +4,7 @@ import { ATTRIBUTION } from '../api/attribution.js';
 import { boundingBox, distanceKm, gridCell } from '../search/geo.js';
 import { housenumberText, indexText } from '../search/normalize.js';
 import { withLocation, type Place, type PlaceLocation } from './place.js';
+import { Progress, type Logger } from './progress.js';
 
 /**
  * 2: name_de/name_en, normalisierter Volltextindex, IDs nach Wichtigkeit (Phase 4).
@@ -104,6 +105,10 @@ export interface IndexWriterOptions {
    * Ohne: Werte aus `addr:country`/`addr:state`.
    */
   locate?: (lat: number, lon: number) => PlaceLocation;
+  /** Meldungen zum Fortschritt beim Aufbau des Index (`finish`). */
+  log?: Logger;
+  /** Abstand der Fortschrittsmeldungen; 0 meldet jeden Fortschritt (Tests). */
+  progressIntervalMs?: number;
 }
 
 /**
@@ -131,12 +136,16 @@ export class IndexWriter {
   private readonly stagingPath: string;
   private readonly indexBatchSize: number;
   private readonly locate: ((lat: number, lon: number) => PlaceLocation) | undefined;
+  private readonly log: Logger;
+  private readonly progressIntervalMs: number | undefined;
   private pending = 0;
   private count = 0;
 
   constructor(path: string, options: IndexWriterOptions = {}) {
     this.indexBatchSize = options.indexBatchSize ?? DEFAULT_INDEX_BATCH_SIZE;
     this.locate = options.locate;
+    this.log = options.log ?? (() => undefined);
+    this.progressIntervalMs = options.progressIntervalMs;
     this.stagingPath = `${path}.staging`;
     rmSync(this.stagingPath, { force: true });
     this.db = new DatabaseSync(path);
@@ -196,6 +205,7 @@ export class IndexWriter {
   /** Baut FTS und R*Tree auf, schreibt Metadaten und schließt die Datei. Liefert die Zeilenzahl. */
   finish(meta: Record<string, string>): number {
     this.db.exec('COMMIT');
+    this.log('Einträge sortieren');
     this.db.exec(`
       BEGIN;
       INSERT INTO places (${PLACE_COLUMNS})
@@ -206,6 +216,7 @@ export class IndexWriter {
     rmSync(this.stagingPath, { force: true });
     this.assignStreetAddresses();
     this.buildSearchIndexes();
+    this.log('Wortstatistik und Optimierung');
     const ftsTokens = this.buildTermStats();
     const setMeta = this.db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
     const entries: Record<string, string> = {
@@ -237,11 +248,14 @@ export class IndexWriter {
     const { maxId } = this.db.prepare('SELECT coalesce(max(id), 0) AS maxId FROM places').get() as {
       maxId: number;
     };
+    const progress = this.progress('Suchindex aufbauen', maxId);
     this.db.exec('BEGIN');
     for (let from = 0; from < maxId; from += this.indexBatchSize) {
       fts.run(from, from + this.indexBatchSize);
       rtree.run(from, from + this.indexBatchSize);
+      progress.update(Math.min(maxId, from + this.indexBatchSize));
     }
+    progress.finish(maxId);
     this.db.exec(`COMMIT; INSERT INTO places_fts(places_fts) VALUES ('optimize');`);
   }
 
@@ -299,9 +313,15 @@ export class IndexWriter {
       CREATE TEMP TABLE street_address (
         id INTEGER PRIMARY KEY, city TEXT, district TEXT, postcode TEXT);
     `);
-    const streets = this.db.prepare(`
-      SELECT id, name, city, district, postcode, lat, lon FROM places
-       WHERE type = 'street' AND name IS NOT NULL AND (city IS NULL OR postcode IS NULL)`);
+    const where = `type = 'street' AND name IS NOT NULL AND (city IS NULL OR postcode IS NULL)`;
+    const streets = this.db.prepare(
+      `SELECT id, name, city, district, postcode, lat, lon FROM places WHERE ${where}`,
+    );
+    const { total } = this.db
+      .prepare(`SELECT count(*) AS total FROM places WHERE ${where}`)
+      .get() as { total: number };
+    const progress = this.progress('Straßen zuordnen', total);
+    let done = 0;
     const addresses = this.db.prepare(`
       SELECT city, district, postcode, lat, lon FROM places INDEXED BY places_street_lat
        WHERE street = ? AND (city IS NOT NULL OR postcode IS NOT NULL)
@@ -311,6 +331,7 @@ export class IndexWriter {
     );
 
     for (const row of streets.iterate()) {
+      progress.update(++done);
       const street = row as unknown as AddressRow & { id: number; name: string };
       // Nur suchen, was der Straße noch fehlt.
       const needsCity = street.city === null;
@@ -354,6 +375,7 @@ export class IndexWriter {
       }
     }
 
+    progress.finish(done);
     this.db.exec(`
       UPDATE places
          SET city = coalesce(places.city, a.city),
@@ -364,6 +386,13 @@ export class IndexWriter {
       DROP TABLE temp.street_address;
       DROP INDEX places_street_lat;
     `);
+  }
+
+  private progress(label: string, total: number): Progress {
+    return new Progress(this.log, label, {
+      total,
+      ...(this.progressIntervalMs !== undefined ? { intervalMs: this.progressIntervalMs } : {}),
+    });
   }
 
   /** Bricht ab und löscht die Zwischendatei; die Indexdatei räumt der Aufrufer auf. */

@@ -14,6 +14,7 @@ import {
   filterExtract,
 } from './osmium.js';
 import { featureToPlace, parseGeoJsonSeqLine } from './place.js';
+import { formatCount, Progress, Steps, type Logger } from './progress.js';
 
 export const EXTRACT_FILE = 'extract.osm.pbf';
 export const INDEX_FILE = 'index.sqlite';
@@ -35,7 +36,22 @@ export interface ImportResult {
   skipped: number;
 }
 
-export type Logger = (message: string) => void;
+export type { Logger } from './progress.js';
+
+/** Objekttyp aus `osmium export`; osmium liefert erst Knoten, dann Wege, dann Relationen. */
+const OSM_TYPE_NAMES: Record<string, string> = {
+  node: 'Knoten',
+  way: 'Wege',
+  relation: 'Relationen',
+};
+
+interface WriteIndexOptions {
+  boundaries?: BoundaryIndex | undefined;
+  log?: Logger | undefined;
+  progressIntervalMs?: number | undefined;
+  /** Nummerierte Schritte; der Aufbau des Index beginnt einen neuen. */
+  steps?: Steps | undefined;
+}
 
 /** `/data/index.sqlite` → `/data/index.next.sqlite` */
 function nextPath(output: string): string {
@@ -52,16 +68,25 @@ async function writeIndex(
   openLines: () => AsyncIterable<string>,
   output: string,
   meta: Record<string, string>,
-  boundaries?: BoundaryIndex,
+  options: WriteIndexOptions = {},
 ): Promise<ImportResult> {
+  const { boundaries, steps } = options;
+  const log = options.log ?? (() => undefined);
+  const intervalMs =
+    options.progressIntervalMs !== undefined ? { intervalMs: options.progressIntervalMs } : {};
   await mkdir(dirname(output), { recursive: true });
   const tmp = nextPath(output);
   await rm(tmp, { force: true });
 
-  const writer = new IndexWriter(
-    tmp,
-    boundaries ? { locate: (lat, lon) => boundaries.locate(lat, lon) } : {},
-  );
+  const writer = new IndexWriter(tmp, {
+    ...(boundaries ? { locate: (lat, lon) => boundaries.locate(lat, lon) } : {}),
+    log,
+    ...(options.progressIntervalMs !== undefined
+      ? { progressIntervalMs: options.progressIntervalMs }
+      : {}),
+  });
+  // Die Gesamtzahl ist vorab unbekannt (osmium liefert die Features als Strom).
+  const progress = new Progress(log, 'Features einlesen', intervalMs);
   let features = 0;
   let skipped = 0;
   try {
@@ -70,10 +95,13 @@ async function writeIndex(
       const feature = parseGeoJsonSeqLine(line);
       if (!feature) continue;
       features++;
+      progress.update(features, OSM_TYPE_NAMES[String(feature.properties?.['@type'])]);
       const place = featureToPlace(feature);
       if (place) writer.add(place);
       else skipped++;
     }
+    progress.finish(features);
+    steps?.start('Index aufbauen (sortieren, Straßen zuordnen, Suchindex)');
     const places = writer.finish(boundaries ? { ...meta, ...boundaryMeta(boundaries) } : meta);
     await rename(tmp, output);
     return { features, places, skipped };
@@ -92,6 +120,10 @@ function boundaryMeta(boundaries: BoundaryIndex): Record<string, string> {
 export interface GeoJsonSeqImportOptions {
   /** Grenzen für Land und Bundesland; ohne gelten `addr:country`/`addr:state`. */
   boundaries?: BoundaryIndex;
+  /** Fortschrittsmeldungen. */
+  log?: Logger;
+  /** Abstand der Fortschrittsmeldungen; 0 meldet jeden Fortschritt (Tests). */
+  progressIntervalMs?: number;
 }
 
 /** Importiert eine fertige GeoJSON-Sequenz (Ausgabe von `osmium export`). */
@@ -101,7 +133,7 @@ export async function importFromGeoJsonSeq(
   options: GeoJsonSeqImportOptions = {},
 ): Promise<ImportResult> {
   const openLines = () => readLines(createReadStream(input));
-  return writeIndex(openLines, output, { source: input }, options.boundaries);
+  return writeIndex(openLines, output, { source: input }, options);
 }
 
 /**
@@ -139,7 +171,12 @@ export interface PbfImportOptions {
   workDir?: string;
   source?: string;
   log?: Logger;
+  /** Schrittzählung, wenn vorher schon Schritte liefen (Download). */
+  steps?: Steps;
 }
+
+/** Schritte von `importFromPbf`: Grenzen, Filtern, Features einlesen, Index aufbauen. */
+const PBF_STEPS = 4;
 
 /** Filtert eine PBF-Datei mit osmium und importiert sie per Streaming. */
 export async function importFromPbf(
@@ -151,28 +188,30 @@ export async function importFromPbf(
   const workDir = options.workDir ?? dirname(output);
   await mkdir(workDir, { recursive: true });
   const filtered = join(workDir, 'filtered.osm.pbf');
+  const steps = options.steps ?? new Steps(log, PBF_STEPS);
 
   try {
-    log('Lade Verwaltungsgrenzen (admin_level 2 und 4)');
+    steps.start('Verwaltungsgrenzen laden (admin_level 2 und 4)');
     const boundaries = await loadBoundariesFromPbf(input, workDir);
     const { countries, states, borderSegments } = boundaries.summary;
     log(
       `Grenzen: Länder ${countries.join(', ') || 'keine'}, ${String(states)} Bundesländer, ` +
         `${String(borderSegments)} Abschnitte zu Nachbarländern`,
     );
-    log(`Filtere ${input} mit osmium tags-filter`);
+    steps.start(`Extrakt filtern (osmium tags-filter ${input})`);
     await filterExtract(input, filtered);
-    log('Exportiere und importiere Features');
+    steps.start('Features einlesen (osmium export)');
     const result = await writeIndex(
       () => exportGeoJsonSeq(filtered),
       output,
       { source: options.source ?? input },
-      boundaries,
+      { boundaries, log, steps },
     );
+    steps.done();
     const { inside, border, unknown } = boundaries.stats;
     log(
-      `Land per Grenze: ${String(inside)} innerhalb, ${String(border)} über Nachbargrenze, ` +
-        `${String(unknown)} ohne (addr:country bleibt)`,
+      `Land per Grenze: ${formatCount(inside)} innerhalb, ${formatCount(border)} über Nachbargrenze, ` +
+        `${formatCount(unknown)} ohne (addr:country bleibt)`,
     );
     return result;
   } finally {
@@ -214,11 +253,12 @@ async function runLockedImport(options: RunImportOptions): Promise<ImportResult>
   const log = options.log ?? (() => undefined);
   let input = options.input;
   let source = input;
+  const steps = new Steps(log, input ? PBF_STEPS : PBF_STEPS + 1);
 
   if (!input) {
     input = join(options.dataDir, EXTRACT_FILE);
     source = options.regionUrl;
-    log(`Lade ${options.regionUrl}`);
+    steps.start(`Extrakt laden (${options.regionUrl})`);
     let lastLog = 0;
     const download = await downloadExtract(options.regionUrl, input, {
       onProgress: (p) => {
@@ -240,8 +280,9 @@ async function runLockedImport(options: RunImportOptions): Promise<ImportResult>
   const result = await importFromPbf(input, output, {
     workDir: options.dataDir,
     log,
+    steps,
     ...(source ? { source } : {}),
   });
-  log(`Index ${output} mit ${String(result.places)} Einträgen erstellt`);
+  log(`Index ${output} mit ${formatCount(result.places)} Einträgen erstellt`);
   return result;
 }

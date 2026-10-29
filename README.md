@@ -20,8 +20,22 @@ docker run -d --name doorstep --restart unless-stopped \
 
 Beim ersten Start liegt noch kein Index im Volume. Die API startet trotzdem sofort, lädt im
 Hintergrund den Extrakt aus `REGION_URL` (Default: Deutschland, rund 4,5 GB) und baut den Index.
-Bis dahin antwortet `/api` mit `503`. Den Fortschritt zeigen `docker logs -f doorstep` und
-`/health` (`"index": false, "importing": true`). Danach liefert die API Vorschläge:
+Bis dahin antwortet `/api` mit `503`, auch nach dem Download noch: Das Indizieren dauert beim
+Deutschland-Extrakt etwa eine halbe Stunde. Den Fortschritt zeigen `docker logs -f doorstep` und
+`/health` (`"index": false, "importing": true`). Das Log nennt jeden Schritt mit Nummer und Dauer
+und meldet lange Schritte alle 15 Sekunden:
+
+```text
+Schritt 4/5: Features einlesen (osmium export)
+Features einlesen: 1.850.098 (123.340/s), gerade Wege
+Schritt 5/5: Index aufbauen (sortieren, Straßen zuordnen, Suchindex)
+Straßen zuordnen: 1.200.000 / 4.170.155 (28 %), noch ca. 3 min 10 s
+Suchindex aufbauen: 18.000.000 / 25.568.099 (70 %), noch ca. 2 min 5 s
+```
+
+Beim Einlesen der Features ist die Gesamtzahl vorab unbekannt (osmium liefert sie als Strom);
+dort stehen Anzahl, Rate und der gerade gelesene Objekttyp (erst Knoten, dann Wege, dann
+Relationen). Danach liefert die API Vorschläge:
 
 ```bash
 curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
