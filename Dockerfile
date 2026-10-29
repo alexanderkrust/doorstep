@@ -1,7 +1,7 @@
 # doorstep: Autosuggest API based on OSM, one image, no external services.
 #
-#   docker build -t meine-api .
-#   docker run -p 2322:2322 -v data:/data meine-api
+#   docker build -t doorstep-api .
+#   docker run -p 2322:2322 -v data:/data doorstep-api
 #
 # Debian instead of Alpine: osmium-tool comes straight from the Debian packages. SQLite is
 # built into Node as `node:sqlite` (with FTS5 and R*Tree); nothing is compiled natively.

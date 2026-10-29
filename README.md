@@ -39,9 +39,9 @@ Every API response contains this notice in the `attribution` field.
 Requirement: Docker. Nothing else, no docker-compose either.
 
 ```bash
-docker build -t meine-api .
+docker build -t doorstep-api .
 docker run -d --name doorstep --restart unless-stopped \
-  -p 2322:2322 -v data:/data meine-api
+  -p 2322:2322 -v data:/data doorstep-api
 ```
 
 On the first start there is no index in the volume yet. The API starts right away anyway,
@@ -72,7 +72,7 @@ For a quick test, pick a smaller region (Bremen: 21 MB, import in seconds):
 ```bash
 docker run -d --name doorstep -p 2322:2322 -v data-bremen:/data \
   -e REGION_URL=https://download.geofabrik.de/europe/germany/bremen-latest.osm.pbf \
-  meine-api
+  doorstep-api
 ```
 
 The automatic import only runs while the volume contains no index. For a different region, use a
@@ -90,7 +90,7 @@ docker run -d --name doorstep --restart unless-stopped \
   -e API_KEYS=a-long-random-key \
   -e RATE_LIMIT_API_KEY=1200 \
   -e CORS_ORIGINS=https://www.example.com \
-  meine-api
+  doorstep-api
 ```
 
 ## System requirements
@@ -120,7 +120,7 @@ Two ways to trigger an update:
 
 ```bash
 # Automatically on a schedule (cron format, container time zone, default UTC)
-docker run … -e UPDATE_CRON='0 3 * * *' meine-api
+docker run … -e UPDATE_CRON='0 3 * * *' doorstep-api
 
 # By hand in the running container
 docker exec doorstep doorstep update
@@ -150,11 +150,11 @@ without internet access.
 
 ```bash
 # 1. Build the index once (writes ./index/index.sqlite, about 10 GB for Germany)
-docker run --rm -v "$PWD/index:/data" meine-api import
+docker run --rm -v "$PWD/index:/data" doorstep-api import
 
 # 2. Serve it, read-only
 docker run -p 2322:2322 -v "$PWD/index:/index:ro" \
-  -e INDEX_MODE=mounted -e INDEX_PATH=/index/index.sqlite meine-api
+  -e INDEX_MODE=mounted -e INDEX_PATH=/index/index.sqlite doorstep-api
 ```
 
 - **Mount the directory, not the file.** With `-v ./index/index.sqlite:/…`, Docker pins the file
@@ -164,7 +164,7 @@ docker run -p 2322:2322 -v "$PWD/index:/index:ro" \
   `docker kill -s HUP <container>`. Never use `cp` onto the live file: that changes it while
   queries are reading it.
   ```bash
-  docker run --rm -v "$PWD/next:/data" meine-api import
+  docker run --rm -v "$PWD/next:/data" doorstep-api import
   mv next/index.sqlite index/index.next.sqlite && mv index/index.next.sqlite index/index.sqlite
   ```
   `next/` and `index/` must be on the same filesystem for the last `mv` to be atomic.
@@ -451,7 +451,7 @@ Node as `node:sqlite` (with FTS5 and R\*Tree); no native modules are compiled.
 
 ```bash
 # Import up front, without starting the API
-docker run --rm -v data:/data meine-api import --region https://download.geofabrik.de/europe/germany/bremen-latest.osm.pbf
+docker run --rm -v data:/data doorstep-api import --region https://download.geofabrik.de/europe/germany/bremen-latest.osm.pbf
 
 # Update in the running container; the API switches to the new index by itself
 docker exec doorstep doorstep update

@@ -24,7 +24,7 @@ The container holds the API, the importer and `osmium-tool`; the index is a SQLi
 - **One image, two commands:** `serve` starts the API, `import` downloads the extract and builds the index. On the first start, the default start runs `import` automatically if there is no index on the volume yet.
 - **Volume `/data`:** contains `extract.osm.pbf`, `index.sqlite` and, during an update, the new file `index.next.sqlite`.
 - **Configuration via env:** `REGION_URL` (Geofabrik link), `PORT`, `DEFAULT_LANG`, `RATE_LIMIT`, `CORS_ORIGINS`.
-- **Start:** `docker run -p 2322:2322 -v data:/data meine-api`
+- **Start:** `docker run -p 2322:2322 -v data:/data doorstep-api`
 - **One process:** the API only reads the index; updates build a new file and swap it in atomically (phase 6).
 
 ## Phase 1: project setup
@@ -107,7 +107,7 @@ The container holds the API, the importer and `osmium-tool`; the index is a SQLi
 - [ ] Configuration exclusively via env, examples in the README
 - [ ] Smoke test script: build the image, start it with a mini extract, query `/api`
 
-**Done when:** `docker build -t meine-api .` and `docker run -p 2322:2322 -v data:/data meine-api` lead to working suggestions on a fresh machine.
+**Done when:** `docker build -t doorstep-api .` and `docker run -p 2322:2322 -v data:/data doorstep-api` lead to working suggestions on a fresh machine.
 
 ## Phase 6: updates and operations
 
