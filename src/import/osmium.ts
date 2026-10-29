@@ -10,14 +10,26 @@ export const TAG_FILTERS = [
   'nwr/addr:street',
   'nwr/place',
   'w/highway',
+  // POIs (`POI_TAGS` in place.ts); unnamed ones are dropped during the import.
   'nwr/amenity',
+  'nwr/shop',
+  'nwr/tourism',
+  'nwr/railway=station,halt',
+  'nwr/public_transport=station',
+  'nwr/aeroway=aerodrome,terminal',
+  'nwr/healthcare',
+  'nwr/office',
+  'nwr/leisure',
+  'nwr/historic',
+  'nwr/craft',
 ];
 
 /**
- * Administrative boundaries for country and state (`src/import/boundaries.ts`). Osmium keeps the
- * ways and nodes of the relations; the import checks `boundary=administrative` itself.
+ * Boundaries for country, state, city, district and postcode (`src/import/boundaries.ts`).
+ * Osmium keeps the ways and nodes of the relations; the import checks
+ * `boundary=administrative` itself. Levels 5–7 only count for cities marked `de:place=city`.
  */
-export const BOUNDARY_FILTERS = ['r/admin_level=2,4'];
+export const BOUNDARY_FILTERS = ['r/admin_level=2,4,5,6,7,8,9,10', 'r/boundary=postal_code'];
 
 export class OsmiumError extends Error {
   override name = 'OsmiumError';
@@ -45,7 +57,7 @@ export async function filterExtract(input: string, output: string): Promise<void
   await run(['tags-filter', input, ...TAG_FILTERS, '-o', output, '--overwrite']);
 }
 
-/** Reduces the extract to the administrative boundaries (countries, states). */
+/** Reduces the extract to the boundaries (administrative areas and postcodes). */
 export async function filterBoundaries(input: string, output: string): Promise<void> {
   await run(['tags-filter', input, ...BOUNDARY_FILTERS, '-o', output, '--overwrite']);
 }

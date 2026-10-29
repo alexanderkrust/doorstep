@@ -1,10 +1,10 @@
-# Roadmap: self-hosted autosuggest API
+# Roadmap: self-hosted address autosuggest API
 
 Oct 28, 2026 · @Alex
 
 ## Goal and constraints
 
-The goal is an address autosuggest API based on OSM that runs as a single Docker image and is started with `docker run`, without docker-compose and without external services.
+The goal is a solid address autosuggest API based on OSM, comparable to Google Places Autocomplete, that runs as a single Docker image and is started with `docker run`, without docker-compose and without external services.
 
 This changes the first recommendation (Typesense/OpenSearch as a separate server): a separate search server would need a second container. So the index is embedded in the application.
 
@@ -15,7 +15,7 @@ This changes the first recommendation (Typesense/OpenSearch as a separate server
 | Index                | SQLite with FTS5 (prefix search) and R\*Tree (geo)                            | Embedded, one file, no second process to manage                   |
 | OSM preparation      | `osmium-tool` in the image, import script in TypeScript                       | Proven filtering, the import stays in the project                 |
 | Data source          | Geofabrik extract, configurable via env                                       | Start with Germany, Europe possible later                         |
-| Output format        | GeoJSON                                                                       | Existing clients can be switched over later                       |
+| Output format        | GeoJSON with display texts and a structured address                           | Standard format, easy to use in maps and forms                    |
 
 ## Architecture in one container
 
@@ -127,11 +127,11 @@ The container holds the API, the importer and `osmium-tool`; the index is a SQLi
 ### Open items from the code review (2026-10-28)
 
 - [x] **Location search with very frequent words:** every entry carries its grid cell (0.25°) as a token in the FTS column `cell` (schema version 3). The nearby search requires one of the box's cells, and FTS5 intersects the hit lists; if at least 10 of the 200 global candidates already lie within the radius, the search runs without cells (both ways return the same rows). Synthetic (1 million distant hits, 500,000 addresses within the radius), full search with a location: "Ha" 108 → 51 ms, "Hauptstr" 76 → 38 ms, "Hafen" 68 → 18 ms; dense queries ("Be", "Hasenheide 12") unchanged. The duration now depends on the density within the radius, no longer on the number of hits in the whole index. Rejected: searching from the R\*Tree (1–20 s, FTS5 restarts the query per row and bm25 counts all hits every time), a narrow coordinate table (about 15 %). The largest remaining share was counting the hits per phrase for bm25 (8–20 ms for frequent prefixes, also without a location); since schema 5, bm25 is computed in JS (see phase 4).
-- [ ] **City for streets without addresses:** streets take city and postcode from the nearest address on the same street (87 % and 90 % respectively in the Düsseldorf test). Streets without any house numbers stay without a city; that would need administrative boundaries (`boundary=administrative`).
+- [x] **City for streets without addresses:** solved with schema 8: the import loads municipality (`admin_level=8`, or `de:place=city` at a higher level), district (`admin_level=10`/`9`) and postcode boundaries (`boundary=postal_code`) and fills missing city, district and postcode from them. Germany (2026-10-29): city and postcode missing on under 1 % of entries (before: streets 15 %, POIs 50 %, districts almost 100 %).
 
 ### Open items from phase 6
 
-- [x] **Measurements on the Germany index:** import measured (2026-10-28): schema 4 30 min, max 5.4 GB RAM, index 8.5 GB; schema 5 (with boundaries) 39 min, max 4.2 GB RAM, index 8.8 GB. Schema 7 (boundaries, word statistics, spelling variants) 28 min, max 4.2 GB RAM, index 9.3 GB; search p95 16.9 ms (warm cache; cold right after the import, single queries up to 385 ms). Load test schema 7 (`npm run loadtest`, 50 connections, 20 s, one process): without cache 411 requests/s (p50 81 ms, p99 584 ms), without cache with a location 221/s (p50 169 ms, p99 927 ms), with cache and a location 545/s (p50 24 ms, p99 757 ms), 0 errors each. The latency under load is almost only waiting time: one process searches sequentially, on average 2.4 ms (without location) and 4.5 ms (with) per request. Before, on 17,618 entries: about 1,100 requests/s without cache, 0 errors during updates under load.
+- [x] **Measurements on the Germany index:** import measured (2026-10-28): schema 4 30 min, max 5.4 GB RAM, index 8.5 GB; schema 5 (with boundaries) 39 min, max 4.2 GB RAM, index 8.8 GB. Schema 8 (municipality/district/postcode boundaries, 2.0 million POIs) 34 min, max 3.3 GB RAM, index 10.1 GB, 26.0 million entries; search p50 2.9 ms, p95 19.5 ms (warm cache). Schema 7 (boundaries, word statistics, spelling variants) 28 min, max 4.2 GB RAM, index 9.3 GB; search p95 16.9 ms (warm cache; cold right after the import, single queries up to 385 ms). Load test schema 7 (`npm run loadtest`, 50 connections, 20 s, one process): without cache 411 requests/s (p50 81 ms, p99 584 ms), without cache with a location 221/s (p50 169 ms, p99 927 ms), with cache and a location 545/s (p50 24 ms, p99 757 ms), 0 errors each. The latency under load is almost only waiting time: one process searches sequentially, on average 2.4 ms (without location) and 4.5 ms (with) per request. Before, on 17,618 entries: about 1,100 requests/s without cache, 0 errors during updates under load.
 - [ ] **Throughput on large indexes:** one process manages 220–410 requests/s without cache on the Germany index, because `node:sqlite` searches synchronously on one core. More throughput via worker threads that each only read the index. Done: since 2026-10-28 the cache takes all queries, not only those up to 10 characters (on the Germany index, long ones with a location are the most expensive). Load test with cache: 545 → 31,397 requests/s with a location, 40,163/s without, p99 2–4 ms; that is an upper bound, because the test only repeats 234 different requests. The throughput on cache misses remains open.
 
 ### Open items from the test with Germany data (2026-10-28)
@@ -145,3 +145,14 @@ Fixed: districts (`addr:suburb`/`addr:hamlet` → `district`, 4.8 million addres
 - [ ] **Update without new data:** `update` rebuilds the index even if the extract (MD5) has not changed. Could be skipped to save compute time.
 - [ ] **`/metrics` is public:** so far only protected via the reverse proxy. If needed, a separate variable (e.g. `METRICS_TOKEN`).
 - [ ] **Docker smoke test not in `npm run ci`:** it needs Docker and therefore runs separately (`npm run smoke`).
+
+### Response quality (2026-10-29)
+
+The response format moved away from the old flat property list towards what autosuggest clients such as Google Places Autocomplete offer (schema 8):
+
+- [x] Every hit has `id`, `type` (`address`, `street`, `poi`, `locality`, `sublocality`, `place`), `category` (OSM tag), ready-to-display `label`, `main_text` and `secondary_text`, a structured `address` with the country name in the requested language, and `distance_m` when a location is given.
+- [x] POIs beyond `amenity`: `shop`, `tourism`, `healthcare`, `office`, `leisure`, `historic`, `craft`, stations and airports (Germany: 2.0 million POIs instead of 755,000); noise such as signposts, Stolpersteine and benches is left out.
+- [x] For queries with a house number, the plain address comes before shops located there.
+- [x] Duplicates: the same city as a boundary and as a place node, or two nodes of one station, are shown once.
+- [ ] **Bus stops and transit stops** are not searchable (named `highway=bus_stop` nodes, 53,000 in Germany). Would need their own type and ranking so they do not crowd out streets with the same name.
+- [ ] **Opening hours, phone, website** are not part of the response; a details endpoint (`/place/<id>`) could return them.

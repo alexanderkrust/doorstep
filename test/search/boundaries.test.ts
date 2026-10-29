@@ -74,7 +74,8 @@ afterAll(async () => {
 async function first(q: string): Promise<Record<string, unknown> | undefined> {
   const res = await app.inject({ method: 'GET', url: `/api?q=${encodeURIComponent(q)}` });
   expect(res.statusCode).toBe(200);
-  return res.json<FeatureCollection>().features[0]?.properties;
+  const properties = res.json<FeatureCollection>().features[0]?.properties;
+  return properties?.['address'] as Record<string, unknown> | undefined;
 }
 
 describe('country and state in search results', () => {
@@ -83,17 +84,17 @@ describe('country and state in search results', () => {
       street: 'Neustraße',
       housenumber: '127',
       state: 'Nordrhein-Westfalen',
-      country: 'DE',
+      country_code: 'DE',
     });
   });
 
   it('address in Kerkrade: Netherlands, even with a wrong addr:country', async () => {
     const properties = await first('Nieuwstraat 60 Kerkrade');
-    expect(properties).toMatchObject({ street: 'Nieuwstraat', country: 'NL' });
+    expect(properties).toMatchObject({ street: 'Nieuwstraat', country_code: 'NL' });
     expect(properties).not.toHaveProperty('state');
   });
 
   it('address in the Kleinwalsertal: Austria', async () => {
-    expect(await first('Walserstraße 77 Riezlern')).toMatchObject({ country: 'AT' });
+    expect(await first('Walserstraße 77 Riezlern')).toMatchObject({ country_code: 'AT' });
   });
 });

@@ -1,22 +1,65 @@
 {
   "description": "Golden queries against test/fixtures/duesseldorf.geojsonseq. 'expect' must match one hit among the first 'top' (default 1); text comparisons ignore case. 'near' = [lat, lon, maxMeters].",
   "queries": [
-    { "q": "Düsseldorf", "expect": { "name": "Düsseldorf", "type": "city" } },
-    { "q": "Düss", "expect": { "name": "Düsseldorf", "type": "city" } },
-    { "q": "Dusseldorf", "expect": { "name": "Düsseldorf", "type": "city" } },
-    { "q": "duesseldorf", "expect": { "name": "Düsseldorf", "type": "city" } },
-    { "q": "Düsseldorf", "lang": "en", "expect": { "name": "Dusseldorf", "type": "city" } },
-    { "q": "Neuss", "expect": { "name": "Neuss", "type": "city" } },
-    { "q": "Essen", "expect": { "name": "Essen", "type": "city" } },
-    { "q": "Duisburg", "expect": { "name": "Duisburg", "type": "city" } },
-    { "q": "Krefeld", "expect": { "name": "Krefeld", "type": "city" } },
-    { "q": "Mönchengladbach", "expect": { "name": "Mönchengladbach", "type": "city" } },
-    { "q": "Moenchengladbach", "expect": { "name": "Mönchengladbach", "type": "city" } },
-    { "q": "Wuppertal", "expect": { "name": "Wuppertal", "type": "city" } },
-    { "q": "Oberkassel", "expect": { "name": "Oberkassel", "type": "suburb" } },
-    { "q": "Bilk", "expect": { "name": "Bilk", "type": "suburb" } },
-    { "q": "Benrath", "expect": { "name": "Benrath", "type": "suburb" } },
-    { "q": "Kaiserswerth", "expect": { "name": "Kaiserswerth", "type": "suburb" } },
+    {
+      "q": "Düsseldorf",
+      "expect": { "name": "Düsseldorf", "type": "locality", "category": "place=city" }
+    },
+    {
+      "q": "Düss",
+      "expect": { "name": "Düsseldorf", "type": "locality", "category": "place=city" }
+    },
+    {
+      "q": "Dusseldorf",
+      "expect": { "name": "Düsseldorf", "type": "locality", "category": "place=city" }
+    },
+    {
+      "q": "duesseldorf",
+      "expect": { "name": "Düsseldorf", "type": "locality", "category": "place=city" }
+    },
+    {
+      "q": "Düsseldorf",
+      "lang": "en",
+      "expect": { "name": "Dusseldorf", "type": "locality", "category": "place=city" }
+    },
+    { "q": "Neuss", "expect": { "name": "Neuss", "type": "locality", "category": "place=city" } },
+    { "q": "Essen", "expect": { "name": "Essen", "type": "locality", "category": "place=city" } },
+    {
+      "q": "Duisburg",
+      "expect": { "name": "Duisburg", "type": "locality", "category": "place=city" }
+    },
+    {
+      "q": "Krefeld",
+      "expect": { "name": "Krefeld", "type": "locality", "category": "place=city" }
+    },
+    {
+      "q": "Mönchengladbach",
+      "expect": { "name": "Mönchengladbach", "type": "locality", "category": "place=city" }
+    },
+    {
+      "q": "Moenchengladbach",
+      "expect": { "name": "Mönchengladbach", "type": "locality", "category": "place=city" }
+    },
+    {
+      "q": "Wuppertal",
+      "expect": { "name": "Wuppertal", "type": "locality", "category": "place=city" }
+    },
+    {
+      "q": "Oberkassel",
+      "expect": { "name": "Oberkassel", "type": "sublocality", "category": "place=suburb" }
+    },
+    {
+      "q": "Bilk",
+      "expect": { "name": "Bilk", "type": "sublocality", "category": "place=suburb" }
+    },
+    {
+      "q": "Benrath",
+      "expect": { "name": "Benrath", "type": "sublocality", "category": "place=suburb" }
+    },
+    {
+      "q": "Kaiserswerth",
+      "expect": { "name": "Kaiserswerth", "type": "sublocality", "category": "place=suburb" }
+    },
     {
       "q": "Altstadt",
       "lat": 51.225,

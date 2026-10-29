@@ -18,6 +18,15 @@ export interface Location {
   country: string | null;
   /** Name of the state (`admin_level=4`). */
   state: string | null;
+  /**
+   * Municipality: `admin_level=8`, else a city at a higher level marked with `de:place=city`
+   * or `place=city` (independent cities like Köln, city-states like Berlin).
+   */
+  city: string | null;
+  /** District: `admin_level=10`, else `admin_level=9`. */
+  district: string | null;
+  /** From `boundary=postal_code`. */
+  postcode: string | null;
 }
 
 export interface LocateStats {
@@ -36,6 +45,16 @@ const BORDER_CELL_DEG = 0.05;
 /** At most this many grid cells per axis for an area. */
 const MAX_CELLS_PER_AXIS = 512;
 const MIN_CELL_DEG = 0.002;
+
+/**
+ * Municipalities, districts and postcode areas: tens of thousands of areas. A coarser grid
+ * per area and outlines simplified to about 10 m keep the memory in check; a point a few
+ * meters from a municipal border may end up on the wrong side.
+ */
+const LOCALITY_GRID = { maxCellsPerAxis: 64, minCellDeg: 0.005 } as const;
+const LOCALITY_SIMPLIFY_DEG = 0.0001;
+/** Bucket size of the coarse index that finds the candidate areas of a point. */
+const BUCKET_DEG = 0.25;
 
 // --- OPL ------------------------------------------------------------------------------------
 
@@ -79,11 +98,16 @@ export function parseOplRelation(line: string): OplRelation | null {
   return { id, tags, wayIds };
 }
 
-/** Administrative level 2 or 4, otherwise `null`. */
-function adminLevel(tags: Record<string, unknown>): 2 | 4 | null {
+/** Administrative level of a `boundary=administrative` object, otherwise `null`. */
+function adminLevel(tags: Record<string, unknown>): number | null {
   if (tags['boundary'] !== 'administrative') return null;
-  const level = tags['admin_level'];
-  return level === '2' ? 2 : level === '4' ? 4 : null;
+  const level = Number(tags['admin_level']);
+  return Number.isInteger(level) ? level : null;
+}
+
+/** Marked as a city (independent cities and city-states above `admin_level=8`). */
+function isCity(tags: Record<string, unknown>): boolean {
+  return tags['de:place'] === 'city' || tags['place'] === 'city';
 }
 
 /** ISO code of a country relation; border line relations (`Deutschland - Österreich`) have none. */
@@ -129,7 +153,10 @@ export class PolygonGrid {
   private readonly cellEdges: (Int32Array | undefined)[];
   private readonly status: Uint8Array;
 
-  constructor(rings: readonly Position[][]) {
+  constructor(
+    rings: readonly Position[][],
+    { maxCellsPerAxis = MAX_CELLS_PER_AXIS, minCellDeg = MIN_CELL_DEG } = {},
+  ) {
     const coords: number[] = [];
     let minX = Infinity;
     let minY = Infinity;
@@ -150,7 +177,7 @@ export class PolygonGrid {
     this.edges = Float64Array.from(coords);
     if (coords.length === 0) [minX, minY, maxX, maxY] = [0, 0, -1, -1];
     [this.minX, this.minY, this.maxX, this.maxY] = [minX, minY, maxX, maxY];
-    this.size = Math.max(MIN_CELL_DEG, Math.max(maxX - minX, maxY - minY) / MAX_CELLS_PER_AXIS);
+    this.size = Math.max(minCellDeg, Math.max(maxX - minX, maxY - minY) / maxCellsPerAxis);
     this.cols = Math.max(1, Math.floor((maxX - minX) / this.size) + 1);
     this.rows = Math.max(1, Math.floor((maxY - minY) / this.size) + 1);
     this.cellEdges = this.assignEdges();
@@ -159,6 +186,14 @@ export class PolygonGrid {
 
   private colX(col: number): number {
     return this.minX + col * this.size;
+  }
+
+  /**
+   * East boundary of a column. The last column has none: with rounding, `colX(cols)` can
+   * equal `maxX`, and an edge exactly there would no longer be counted.
+   */
+  private colEnd(col: number): number {
+    return col >= this.cols - 1 ? Infinity : this.colX(col + 1);
   }
 
   private rowY(row: number): number {
@@ -219,7 +254,7 @@ export class PolygonGrid {
           continue;
         }
         status[cell] = MIXED;
-        if (this.countCrossings(list, y, this.colX(c), this.colX(c + 1), true) % 2 === 1) {
+        if (this.countCrossings(list, y, this.colX(c), this.colEnd(c), true) % 2 === 1) {
           inside = !inside;
         }
       }
@@ -259,11 +294,100 @@ export class PolygonGrid {
       const list = this.cellEdges[cell];
       if (!list) continue;
       const from = c === start ? x : this.colX(c);
-      if (this.countCrossings(list, y, from, this.colX(c + 1), c !== start) % 2 === 1) odd = !odd;
+      if (this.countCrossings(list, y, from, this.colEnd(c), c !== start) % 2 === 1) odd = !odd;
     }
     return odd;
   }
 }
+
+/**
+ * Douglas-Peucker simplification of a ring: drops points closer than `tolerance` (degrees) to
+ * the line between their neighbors. Keeps first and last point.
+ */
+export function simplifyRing(ring: readonly Position[], tolerance: number): Position[] {
+  if (ring.length <= 4) return [...ring];
+  const keep = new Uint8Array(ring.length);
+  keep[0] = 1;
+  keep[ring.length - 1] = 1;
+  const stack: [number, number][] = [[0, ring.length - 1]];
+  while (stack.length > 0) {
+    const [from, to] = stack.pop() ?? [0, 0];
+    const [ax = 0, ay = 0] = ring[from] ?? [];
+    const [bx = 0, by = 0] = ring[to] ?? [];
+    let worst = -1;
+    let worstDistance = tolerance;
+    for (let i = from + 1; i < to; i++) {
+      const [px = 0, py = 0] = ring[i] ?? [];
+      const d = pointSegmentDistance(px, py, ax, ay, bx, by);
+      if (d > worstDistance) [worst, worstDistance] = [i, d];
+    }
+    if (worst >= 0) {
+      keep[worst] = 1;
+      stack.push([from, worst], [worst, to]);
+    }
+  }
+  const out = ring.filter((_, i) => keep[i] === 1);
+  // A ring needs at least three distinct points; otherwise keep the original.
+  return out.length >= 4 ? out : [...ring];
+}
+
+function pointSegmentDistance(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const length = dx * dx + dy * dy;
+  const t = length === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / length));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+/**
+ * Many areas with a coarse bucket index over their bounding boxes. With several matches, the
+ * one with the highest `rank` wins (e.g. Bremerhaven at level 6 before the state of Bremen).
+ */
+class AreaSet {
+  private readonly areas: { name: string; rank: number; grid: PolygonGrid }[] = [];
+  private readonly buckets = new Map<number, number[]>();
+
+  get size(): number {
+    return this.areas.length;
+  }
+
+  add(name: string, rings: Position[][], rank = 0): void {
+    const simplified = rings.map((ring) => simplifyRing(ring, LOCALITY_SIMPLIFY_DEG));
+    const grid = new PolygonGrid(simplified, LOCALITY_GRID);
+    if (grid.maxX < grid.minX) return;
+    const index = this.areas.push({ name, rank, grid }) - 1;
+    for (let row = bucketOf(grid.minY); row <= bucketOf(grid.maxY); row++) {
+      for (let col = bucketOf(grid.minX); col <= bucketOf(grid.maxX); col++) {
+        const key = bucketKey(row, col);
+        const list = this.buckets.get(key);
+        if (list) list.push(index);
+        else this.buckets.set(key, [index]);
+      }
+    }
+  }
+
+  find(x: number, y: number): string | null {
+    const list = this.buckets.get(bucketKey(bucketOf(y), bucketOf(x)));
+    let best: { name: string; rank: number } | null = null;
+    for (const i of list ?? []) {
+      const area = this.areas[i];
+      if (!area || (best && area.rank <= best.rank)) continue;
+      if (area.grid.contains(x, y)) best = area;
+    }
+    return best?.name ?? null;
+  }
+}
+
+const bucketOf = (deg: number) => Math.floor(deg / BUCKET_DEG);
+// Rows and columns stay within ±1440; a unique key without a string.
+const bucketKey = (row: number, col: number) => (row + 2048) * 4096 + (col + 2048);
 
 /** All rings of an area (Polygon or MultiPolygon). */
 function areaRings(feature: Feature): Position[][] | null {
@@ -369,7 +493,32 @@ export interface BoundarySummary {
   states: number;
   /** Number of border segments with a known neighboring country. */
   borderSegments: number;
+  /** Number of municipality areas (including cities above `admin_level=8`). */
+  municipalities: number;
+  /** Number of district areas (`admin_level=9` and `10`). */
+  districts: number;
+  /** Number of postcode areas. */
+  postcodes: number;
 }
+
+/** Municipalities, districts and postcode areas. */
+interface Localities {
+  /** `admin_level=8`, rank 0. */
+  municipalities: AreaSet;
+  /** Cities above `admin_level=8`, ranked by level (most specific first). */
+  cities: AreaSet;
+  districts10: AreaSet;
+  districts9: AreaSet;
+  postcodes: AreaSet;
+}
+
+const emptyLocalities = (): Localities => ({
+  municipalities: new AreaSet(),
+  cities: new AreaSet(),
+  districts10: new AreaSet(),
+  districts9: new AreaSet(),
+  postcodes: new AreaSet(),
+});
 
 export class BoundaryIndex {
   readonly stats: LocateStats = { inside: 0, border: 0, unknown: 0 };
@@ -378,11 +527,12 @@ export class BoundaryIndex {
     private readonly countries: Area[],
     private readonly states: Area[],
     private readonly borders: BorderIndex,
+    private readonly localities: Localities,
   ) {}
 
   /** Empty index: country and state stay as in the address tags. */
   static empty(): BoundaryIndex {
-    return new BoundaryIndex([], [], new BorderIndex());
+    return new BoundaryIndex([], [], new BorderIndex(), emptyLocalities());
   }
 
   /**
@@ -412,6 +562,7 @@ export class BoundaryIndex {
 
     const countries: Area[] = [];
     const states: Area[] = [];
+    const localities = emptyLocalities();
     const lines: { id: number; coordinates: Position[] }[] = [];
     for await (const line of features()) {
       const feature = parse(line);
@@ -425,15 +576,25 @@ export class BoundaryIndex {
       }
       if (props['@type'] !== 'relation') continue;
       const rings = areaRings(feature);
+      if (!rings) continue;
+      if (props['boundary'] === 'postal_code') {
+        const code = stringTag(props, 'postal_code') ?? stringTag(props, 'ref');
+        if (code) localities.postcodes.add(code, rings);
+        continue;
+      }
       const level = adminLevel(props);
-      if (!rings || !level) continue;
+      const name = stringTag(props, 'name');
       if (level === 2) {
         const code = relationCodes.get(id) ?? countryCode(props);
         if (code) countries.push({ name: code, grid: new PolygonGrid(rings) });
-      } else {
-        const name = typeof props['name'] === 'string' ? props['name'] : null;
-        if (name) states.push({ name, grid: new PolygonGrid(rings) });
+        continue;
       }
+      if (!level || !name) continue;
+      if (level === 4) states.push({ name, grid: new PolygonGrid(rings) });
+      if (level === 8) localities.municipalities.add(name, rings);
+      else if (level > 2 && level < 8 && isCity(props)) localities.cities.add(name, rings, level);
+      else if (level === 9) localities.districts9.add(name, rings);
+      else if (level === 10) localities.districts10.add(name, rings);
     }
 
     // Boundary ways with exactly one incomplete country: shared borders with a complete
@@ -446,7 +607,7 @@ export class BoundaryIndex {
       const others = (wayCountries.get(id) ?? []).filter((code) => !complete.has(code));
       if (others.length === 1 && others[0]) borders.add(coordinates, others[0]);
     }
-    return new BoundaryIndex(countries, states, borders);
+    return new BoundaryIndex(countries, states, borders, localities);
   }
 
   get summary(): BoundarySummary {
@@ -454,6 +615,9 @@ export class BoundaryIndex {
       countries: this.countries.map((c) => c.name),
       states: this.states.length,
       borderSegments: this.borders.size,
+      municipalities: this.localities.municipalities.size + this.localities.cities.size,
+      districts: this.localities.districts9.size + this.localities.districts10.size,
+      postcodes: this.localities.postcodes.size,
     };
   }
 
@@ -466,8 +630,20 @@ export class BoundaryIndex {
       if (country) this.stats.border++;
       else this.stats.unknown++;
     }
-    return { country, state: findArea(this.states, lon, lat) };
+    const { municipalities, cities, districts10, districts9, postcodes } = this.localities;
+    return {
+      country,
+      state: findArea(this.states, lon, lat),
+      city: municipalities.find(lon, lat) ?? cities.find(lon, lat),
+      district: districts10.find(lon, lat) ?? districts9.find(lon, lat),
+      postcode: postcodes.find(lon, lat),
+    };
   }
+}
+
+function stringTag(props: Record<string, unknown>, key: string): string | null {
+  const value = props[key];
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
 }
 
 function findArea(areas: readonly Area[], x: number, y: number): string | null {

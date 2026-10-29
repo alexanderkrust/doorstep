@@ -1,6 +1,6 @@
 # doorstep
 
-Self-hosted address autosuggest API based on OpenStreetMap.
+Self-hosted, address autosuggest API based on OpenStreetMap.
 One Docker image, no external services: the index is a SQLite file (FTS5 + R\*Tree) under `/data`.
 
 Data: © OpenStreetMap contributors, [ODbL](https://opendatacommons.org/licenses/odbl/).
@@ -72,13 +72,13 @@ docker run -d --name doorstep --restart unless-stopped \
 Guide values for the Germany extract. Only the Düsseldorf administrative region was measured
 (217 MB PBF → 389 MB index); the values for Germany are extrapolated from it.
 
-| Resource          | Germany (estimate)                     | Note                                                                                                                                                         |
-| ----------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Disk (volume)     | **at least 30 GB free**                | Extract about 4.5 GB, index about 8 GB. During an update, the filtered intermediate file, `index.next.sqlite` and its staging file are on the volume as well |
-| RAM, API          | 1 GB for the process, **better 8 GB+** | The process itself needs little; SQLite reads the index from disk. For response times below 50 ms, the index should fit into the system's page cache         |
-| RAM, import       | **4–8 GB**                             | `osmium export` keeps the node coordinates in memory; the import runs as a separate process next to the API                                                  |
-| CPU               | 2 cores                                | The API uses one core; the second keeps import and update away from the API                                                                                  |
-| First import time | about 15–30 min plus download          | Düsseldorf administrative region: 45 s for 1.4 million entries                                                                                               |
+| Resource          | Germany (estimate)                     | Note                                                                                                                                                          |
+| ----------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Disk (volume)     | **at least 30 GB free**                | Extract about 4.9 GB, index about 10 GB. During an update, the filtered intermediate file, `index.next.sqlite` and its staging file are on the volume as well |
+| RAM, API          | 1 GB for the process, **better 8 GB+** | The process itself needs little; SQLite reads the index from disk. For response times below 50 ms, the index should fit into the system's page cache          |
+| RAM, import       | **4–8 GB**                             | `osmium export` keeps the node coordinates in memory; the import runs as a separate process next to the API                                                   |
+| CPU               | 2 cores                                | The API uses one core; the second keeps import and update away from the API                                                                                   |
+| First import time | about 15–30 min plus download          | Düsseldorf administrative region: 45 s for 1.4 million entries                                                                                                |
 
 ## Operations
 
@@ -203,8 +203,8 @@ Flags (`AUTO_IMPORT`, `RATE_LIMIT_ENABLED`, `TRUST_PROXY`) accept `true`/`false`
 
 ## API
 
-All responses are GeoJSON `FeatureCollection`s and contain the `attribution`
-field ("© OpenStreetMap contributors"). Successful responses carry
+All responses are GeoJSON `FeatureCollection`s and contain the `attribution` field
+("© OpenStreetMap contributors"). Successful responses carry
 `Cache-Control: public, max-age=3600`, errors `no-store`.
 
 ### `GET /api` – autosuggest
@@ -224,13 +224,66 @@ then the last word trimmed by up to two characters (typo at the end of a word). 
 number is missing, the street in the named city comes before a house number in a similarly
 spelled city (`… 1 Bonn` does not return `… 1 Bönen`).
 
-**Fields per hit:** `name`, `street`, `housenumber`, `postcode`, `city`, `district`, `state`,
-`country`, `osm_id`, `osm_type`, `type`; missing values are left out. `district` is the district
-(`addr:suburb`, otherwise `addr:hamlet`), `city` is often the municipality: `Strandstraße 1
-Westerland` finds the address with `city: "Sylt"`, `district: "Westerland"`. Addresses without a
-street (`addr:place`) carry the place name in `street`. Streets take city, district and postcode
-from the nearest address on the same street. `country` (ISO code, e.g. `DE`) and `state` (federal
-state, e.g. `Nordrhein-Westfalen`) come from the OSM administrative boundaries, see below.
+**Response:** every hit is a `Feature` with a `Point` geometry and these properties (missing
+values are left out, never `null`):
+
+| Property         | Example                                     | Description                                                                                                        |
+| ---------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `id`             | `node/4474544994`                           | Stable ID of the OSM object (`node/…`, `way/…`, `relation/…`)                                                      |
+| `type`           | `address`                                   | `address`, `street`, `poi`, `locality` (city, town, village), `sublocality` (district), `place`                    |
+| `category`       | `amenity=restaurant`                        | OSM tag that makes the object what it is; missing for plain addresses                                              |
+| `name`           | `Ratskeller`                                | Name in the language from `lang`; missing for plain addresses                                                      |
+| `label`          | `Marienplatz 8, 80331 München, Deutschland` | One line for display: `main_text, secondary_text`                                                                  |
+| `main_text`      | `Marienplatz 8`                             | What the user is looking for (name, or street and house number)                                                    |
+| `secondary_text` | `80331 München, Deutschland`                | Where it is                                                                                                        |
+| `address`        | `{ "street": "Marienplatz", … }`            | `street`, `housenumber`, `postcode`, `city`, `district`, `state`, `country` (name in `lang`), `country_code` (ISO) |
+| `distance_m`     | `120`                                       | Distance to `lat`/`lon` in meters, only if given (always for `/reverse`)                                           |
+
+```json
+{
+  "type": "Feature",
+  "geometry": { "type": "Point", "coordinates": [11.5752, 48.1376] },
+  "properties": {
+    "id": "way/42",
+    "type": "address",
+    "label": "Marienplatz 8, 80331 München, Deutschland",
+    "main_text": "Marienplatz 8",
+    "secondary_text": "80331 München, Deutschland",
+    "address": {
+      "street": "Marienplatz",
+      "housenumber": "8",
+      "postcode": "80331",
+      "city": "München",
+      "district": "Altstadt-Lehel",
+      "state": "Bayern",
+      "country": "Deutschland",
+      "country_code": "DE"
+    }
+  }
+}
+```
+
+The texts depend on the type: a POI shows its address in `secondary_text`
+(`Ratskeller` – `Marienplatz 8, 80331 München, Deutschland`), a street its district and city
+(`Sendlinger Straße` – `Altstadt-Lehel, München, Deutschland`), a district its city
+(`Ehrenfeld` – `Köln, Deutschland`), a city its state.
+
+Where the data comes from: `street`, `housenumber`, `city` (the postal town), `postcode` and
+`district` come from the address tags (`addr:*`; `district` from `addr:suburb`, otherwise
+`addr:hamlet`; addresses without a street carry `addr:place` in `street`). Where they are
+missing, the import fills city, district and postcode from OSM boundaries: municipalities
+(`admin_level=8`, or cities marked `de:place=city` such as Köln or Berlin), districts
+(`admin_level=10`, else `9`) and postcode areas (`boundary=postal_code`). Villages and other
+settlements get their municipality as `city`. `country` and `state` always come from the
+boundaries, see below.
+
+POIs are named objects with `amenity`, `shop`, `tourism`, `healthcare`, `office`, `leisure`,
+`historic` or `craft`, plus railway stations and airports. Left out are things nobody searches
+for: signposts and information boards (tourist offices stay), Stolpersteine, benches, waste
+bins, vending machines, parking spaces and hunting stands. Streets come only from OSM ways, not
+from named nodes such as bus stops. Stations and airports rank above other POIs. The same place
+found twice (e.g. a city as a boundary and as a place node) is shown once. For queries with a house number, the plain address comes before shops and businesses
+that are only located there.
 
 **Normalization** (the same for import and search, `src/search/normalize.ts`): lowercase,
 `ä` ↔ `ae`, `ß` ↔ `ss`, other accents removed, `Str.` ↔ `Straße`, `Schlosstr.` ↔
@@ -292,9 +345,10 @@ curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
 
 Invalid parameters return `400` with a message like `q: must be at least 2 characters long`.
 As long as there is no index at `$DATA_DIR/index.sqlite`, both endpoints answer `503`. This also
-applies to an index with an old schema (currently version 7, since split and joined street names;
-version 6 brought the word statistics for bm25, version 5 country and state from administrative
-boundaries): then please import again or wait for the next update.
+applies to an index with an old schema (currently version 8, since categories, more POI kinds and
+city/district/postcode from boundaries; version 7 brought split and joined street names, version
+6 the word statistics for bm25, version 5 country and state from administrative boundaries): then
+please import again or wait for the next update.
 
 ### Other endpoints
 
@@ -403,8 +457,10 @@ indexes").
 npm run bench -- --index $PWD/data/index.sqlite
 ```
 
-Measured on a MacBook, Node 24, 5 rounds. **Germany** (Geofabrik extract from 2026-10-27, 4.9 GB
-PBF → 25.6 million entries): **p50 2.8 ms, p95 16.5 ms, p99 29 ms**, max 41–91 ms, measured with
+Measured on a MacBook, Node 24, 5 rounds. **Germany, current schema 8** (Geofabrik extract from
+2026-10-27, 4.9 GB PBF → 26.0 million entries including 2.0 million POIs, 10.1 GB index, import
+34 min, max 3.3 GB RAM): **p50 2.9 ms, p95 19.5 ms, p99 33 ms**, max 69 ms with a warm cache.
+Earlier: p50 2.8 ms, p95 16.5 ms, p99 29 ms, max 41–91 ms, measured with
 schema 5 without boundaries; before that (up to schema 4) p95 was 194 ms. Schema 7 with boundaries
 and spelling variants: p50 2.5 ms, p95 16.9 ms, max 56 ms with a warm cache. Import sizes: schema
 5 without boundaries 8.5 GB index, 30 min, max 5.4 GB RAM; with boundaries 8.8 GB, 39 min, max
@@ -448,13 +504,16 @@ Without `--region`, `REGION_URL` applies. Steps:
 2. Download to `$DATA_DIR/extract.osm.pbf`. Interrupted downloads are resumed
    (`extract.osm.pbf.part`), the Geofabrik `.md5` is verified. If an existing file matches the
    `.md5`, it is not downloaded again.
-3. Load the administrative boundaries: `osmium tags-filter` on `admin_level=2,4`, then areas and
-   boundary ways via `osmium export`, relation members via `osmium cat` (OPL). Countries and
-   states are then in memory (Germany: about 300 MB, 30 s).
-4. `osmium tags-filter` on addresses, places (`place=*`), streets (`highway` with a name) and named
-   `amenity` objects.
+3. Load the boundaries: `osmium tags-filter` on `admin_level=2,4–10` and `boundary=postal_code`,
+   then areas and boundary ways via `osmium export`, relation members via `osmium cat` (OPL).
+   Countries, states, municipalities, districts and postcode areas are then in memory; the
+   outlines of the small areas are simplified to about 10 m.
+4. `osmium tags-filter` on addresses, places (`place=*`), streets (`highway` with a name) and
+   POIs (`amenity`, `shop`, `tourism`, `healthcare`, `office`, `leisure`, `historic`, `craft`,
+   stations, airports).
 5. `osmium export` as a GeoJSON sequence that is read line by line (constant memory use). Every
-   entry gets country and state from the boundaries on insert.
+   entry gets country and state, and missing city, district and postcode, from the boundaries on
+   insert.
 6. Build `index.next.sqlite` (table `places`, FTS5 table `places_fts` with a prefix index and a
    grid cell (0.25°) per entry, R\*Tree `places_rtree`, table `meta`) and swap it in atomically
    for `index.sqlite`.

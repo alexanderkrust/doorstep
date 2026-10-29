@@ -39,6 +39,7 @@ describe('featureToPlace', () => {
       district: null,
       state: null,
       country: 'DE',
+      category: null,
       lat: 51.22,
       lon: 6.78,
       importance: importanceFor('house'),
@@ -98,6 +99,86 @@ describe('featureToPlace', () => {
     });
     expect(house({ 'addr:hamlet': 'Kleinweiler' })).toMatchObject({ district: 'Kleinweiler' });
     expect(house({})).toMatchObject({ district: null });
+  });
+
+  describe('POI categories', () => {
+    const poi = (tags: Record<string, string>) =>
+      featureToPlace({
+        type: 'Feature',
+        geometry: point(6.95, 50.94),
+        properties: { '@type': 'node', '@id': 9, ...tags },
+      });
+
+    it('turns named shops into POIs with a category, also with an address', () => {
+      expect(poi({ shop: 'supermarket', name: 'REWE' })).toMatchObject({
+        type: 'poi',
+        category: 'shop=supermarket',
+      });
+      expect(
+        poi({
+          shop: 'supermarket',
+          name: 'REWE',
+          'addr:street': 'Venloer Straße',
+          'addr:housenumber': '1',
+        }),
+      ).toMatchObject({ type: 'poi', category: 'shop=supermarket', street: 'Venloer Straße' });
+    });
+
+    it('recognizes stations, hotels, offices and more', () => {
+      expect(poi({ railway: 'station', name: 'Köln Hbf' })).toMatchObject({
+        category: 'railway=station',
+      });
+      expect(poi({ tourism: 'hotel', name: 'Hotel am Dom' })).toMatchObject({
+        category: 'tourism=hotel',
+      });
+      expect(poi({ office: 'company', name: 'Firma' })).toMatchObject({
+        category: 'office=company',
+      });
+      expect(poi({ healthcare: 'doctor', name: 'Praxis' })).toMatchObject({
+        category: 'healthcare=doctor',
+      });
+    });
+
+    it('ranks stations and airports above ordinary POIs', () => {
+      const station = poi({ railway: 'station', name: 'Köln Hbf' });
+      const kiosk = poi({ shop: 'kiosk', name: 'Kiosk' });
+      expect(station?.importance).toBeGreaterThan(kiosk?.importance ?? 1);
+    });
+
+    it('keeps unnamed shops with an address as addresses', () => {
+      expect(poi({ shop: 'bakery', 'addr:street': 'Weg', 'addr:housenumber': '2' })).toMatchObject({
+        type: 'house',
+      });
+    });
+
+    it('leaves out objects nobody searches for', () => {
+      expect(
+        poi({ tourism: 'information', information: 'guidepost', name: 'Wanderweg' }),
+      ).toBeNull();
+      expect(poi({ tourism: 'information', information: 'board', name: 'Stadtplan' })).toBeNull();
+      expect(poi({ historic: 'memorial', memorial: 'stolperstein', name: 'Anna M.' })).toBeNull();
+      expect(poi({ amenity: 'bench', name: 'Sitzbank' })).toBeNull();
+      expect(poi({ amenity: 'waste_basket', name: 'Eimer' })).toBeNull();
+      // Tourist offices and other memorials stay
+      expect(
+        poi({ tourism: 'information', information: 'office', name: 'Tourist-Info' }),
+      ).toMatchObject({
+        category: 'tourism=information',
+      });
+      expect(poi({ historic: 'memorial', name: 'Ehrenmal' })).toMatchObject({ type: 'poi' });
+    });
+
+    it('takes streets only from ways, not from single nodes such as bus stops', () => {
+      expect(poi({ highway: 'bus_stop', name: 'Hauptstraße' })).toBeNull();
+      expect(poi({ highway: 'motorway_junction', name: 'Köln-Ehrenfeld' })).toBeNull();
+    });
+
+    it('stores the category of places and streets too', () => {
+      expect(poi({ place: 'village', name: 'Dorf' })).toMatchObject({ category: 'place=village' });
+      expect(poi({ amenity: 'restaurant', name: 'Lokal' })).toMatchObject({
+        category: 'amenity=restaurant',
+      });
+    });
   });
 
   it('takes name:de and name:en separately', () => {
@@ -277,6 +358,7 @@ describe('withLocation', () => {
     district: null,
     state: 'Nordrhein-Westfalen',
     country: 'DE',
+    category: null,
     lat: 50.85,
     lon: 6.07,
     importance: 0.3,
@@ -305,5 +387,33 @@ describe('withLocation', () => {
 
   it('without a result the tags stay', () => {
     expect(withLocation(base, { country: null, state: null })).toBe(base);
+  });
+
+  const located = { country: 'DE', state: 'Nordrhein-Westfalen' };
+
+  it('fills a missing city, district and postcode from the boundaries', () => {
+    const poi = { ...base, type: 'poi', name: 'Kiosk', city: null, postcode: null };
+    expect(
+      withLocation(poi, { ...located, city: 'Köln', district: 'Ehrenfeld', postcode: '50823' }),
+    ).toMatchObject({ city: 'Köln', district: 'Ehrenfeld', postcode: '50823' });
+  });
+
+  it('keeps addr:city, addr:suburb and addr:postcode', () => {
+    const house = { ...base, city: 'Köln', district: 'Neuehrenfeld', postcode: '50825' };
+    expect(
+      withLocation(house, {
+        ...located,
+        city: 'Cologne',
+        district: 'Ehrenfeld',
+        postcode: '50823',
+      }),
+    ).toMatchObject({ city: 'Köln', district: 'Neuehrenfeld', postcode: '50825' });
+  });
+
+  it('gives a village the municipality it belongs to as its city', () => {
+    const village = { ...base, type: 'village', name: 'Kleindorf', city: 'Kleindorf' };
+    expect(withLocation(village, { ...located, city: 'Großgemeinde' })).toMatchObject({
+      city: 'Großgemeinde',
+    });
   });
 });

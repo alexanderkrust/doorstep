@@ -52,7 +52,11 @@ export const searchRoutes: FastifyPluginAsync<SearchRoutesOptions> = async (
       }),
     );
     if (rows === null) return reply;
-    const body = toFeatureCollection(rows, lang);
+    const body = toFeatureCollection(
+      rows,
+      lang,
+      lat !== undefined && lon !== undefined ? { lat, lon } : undefined,
+    );
     if (cacheKey !== undefined) cache.set(cacheKey, body);
     return sendCached(reply, body);
   });

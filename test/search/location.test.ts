@@ -27,6 +27,7 @@ function place(overrides: Partial<Place> & Pick<Place, 'osmId' | 'type' | 'lat' 
     district: null,
     state: null,
     country: null,
+    category: null,
     importance: importanceFor(overrides.type),
     ...overrides,
   };

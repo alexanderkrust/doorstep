@@ -41,8 +41,8 @@ describe('GET /reverse', () => {
     const [first] = coords(body);
     expect(distanceMeters(51.2220118, 6.7810708, first?.lat ?? 0, first?.lon ?? 0)).toBeLessThan(1);
     expect(body.features[0]?.properties).toMatchObject({
-      street: 'Königsallee',
-      city: 'Düsseldorf',
+      address: { street: 'Königsallee', city: 'Düsseldorf' },
+      distance_m: 0,
     });
   });
 

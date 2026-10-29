@@ -10,6 +10,7 @@ import {
   distanceMeters,
   type FeatureCollection,
   type FixtureIndex,
+  type PointFeature,
 } from '../helpers/fixture-index.js';
 
 let fixture: FixtureIndex;
@@ -32,6 +33,9 @@ async function search(query: string) {
 
 const q = (text: string, extra = '') => `q=${encodeURIComponent(text)}${extra}`;
 
+/** The structured address of a hit. */
+const address = (f: PointFeature) => (f.properties['address'] ?? {}) as Record<string, unknown>;
+
 describe('GET /api', () => {
   it('returns Königsallee for "Königsall" among the first results', async () => {
     const { res, body } = await search(q('Königsall'));
@@ -43,7 +47,7 @@ describe('GET /api', () => {
     expect(top).toContain('Königsallee');
   });
 
-  it('returns GeoJSON features with attribution', async () => {
+  it('returns GeoJSON features with display texts, an address and attribution', async () => {
     const { body } = await search(q('Königsallee 60d'));
 
     expect(body.attribution).toBe('© OpenStreetMap contributors');
@@ -54,15 +58,22 @@ describe('GET /api', () => {
     expect(lon).toBeCloseTo(6.781, 2);
     expect(lat).toBeCloseTo(51.222, 2);
     expect(feature?.properties).toMatchObject({
-      street: 'Königsallee',
-      postcode: '40212',
-      city: 'Düsseldorf',
-      country: 'DE',
-      osm_id: expect.any(Number) as unknown,
-      osm_type: expect.stringMatching(/^[NWR]$/) as unknown,
+      id: expect.stringMatching(/^(node|way|relation)\/\d+$/) as unknown,
+      type: expect.stringMatching(/^(address|poi)$/) as unknown,
+      label: expect.stringContaining('Königsallee 60') as unknown,
+      main_text: expect.any(String) as unknown,
+      secondary_text: expect.stringContaining('40212 Düsseldorf') as unknown,
+      address: {
+        street: 'Königsallee',
+        postcode: '40212',
+        city: 'Düsseldorf',
+        country: 'Deutschland',
+        country_code: 'DE',
+      },
     });
     // Missing values are left out instead of returned as null.
     expect(Object.values(feature?.properties ?? {})).not.toContain(null);
+    expect(Object.values(feature?.properties['address'] ?? {})).not.toContain(null);
   });
 
   it('finds a street with a house number', async () => {
@@ -70,8 +81,8 @@ describe('GET /api', () => {
 
     expect(body.features.length).toBeGreaterThan(0);
     for (const f of body.features) {
-      expect(f.properties['street']).toBe('Königsallee');
-      expect(String(f.properties['housenumber'])).toMatch(/^60d$/i);
+      expect(address(f)['street']).toBe('Königsallee');
+      expect(String(address(f)['housenumber'])).toMatch(/^60d$/i);
     }
   });
 
@@ -79,7 +90,7 @@ describe('GET /api', () => {
     const { body } = await search(q('Königsallee 6', '&limit=10'));
     // Hits without a house number are possible (e.g. POI name "… Königsallee 62").
     const numbers = body.features
-      .map((f) => f.properties['housenumber'])
+      .map((f) => address(f)['housenumber'])
       .filter((n): n is string => typeof n === 'string');
     expect(numbers.length).toBeGreaterThan(5);
     expect(numbers.every((n) => n.startsWith('6'))).toBe(true);
@@ -87,7 +98,11 @@ describe('GET /api', () => {
 
   it('finds a city and ranks it before streets and addresses', async () => {
     const { body } = await search(q('Düsseldorf'));
-    expect(body.features[0]?.properties).toMatchObject({ name: 'Düsseldorf', type: 'city' });
+    expect(body.features[0]?.properties).toMatchObject({
+      name: 'Düsseldorf',
+      type: 'locality',
+      category: 'place=city',
+    });
   });
 
   it('tolerates typos at the end of a word', async () => {
@@ -245,8 +260,9 @@ describe('phase 4: normalization, fallback, language', () => {
 
   it('finds an address with a separate house number suffix', async () => {
     const { body } = await search(q('Königsallee 60 d'));
-    expect(body.features[0]?.properties['street']).toBe('Königsallee');
-    expect(String(body.features[0]?.properties['housenumber'])).toMatch(/^60d$/i);
+    const top = body.features[0];
+    expect(top && address(top)['street']).toBe('Königsallee');
+    expect(String(top && address(top)['housenumber'])).toMatch(/^60d$/i);
   });
 
   it('returns the street for an unknown house number', async () => {

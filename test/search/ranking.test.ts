@@ -106,6 +106,26 @@ describe('scoreCandidate', () => {
 });
 
 describe('rank', () => {
+  describe('address queries', () => {
+    // "Marienplatz 8 München": the plain address and a restaurant at the same address
+    const address = candidate({ importance: 0.3, names: ['marienplatz 8'], plainAddress: true });
+    const restaurant = candidate({
+      importance: 0.35,
+      names: ['crepefruit', 'marienplatz 8'],
+      ownNames: ['crepefruit'],
+    });
+
+    it('puts the address before POIs that only share it', () => {
+      const ranked = rank([restaurant, address], ['marienplatz', '8', 'muenchen']);
+      expect(ranked[0]).toBe(address);
+    });
+
+    it('keeps POIs first when their name is searched', () => {
+      const ranked = rank([address, restaurant], ['crepefruit']);
+      expect(ranked[0]).toBe(restaurant);
+    });
+  });
+
   it('sorts city before street before house number at equal relevance', () => {
     const ranked = rank(
       [
@@ -188,6 +208,13 @@ describe('dedupeNearby', () => {
   it('merges equal hits nearby and keeps the first', () => {
     const rows = [row('kö', 51.22), row('kö', 51.225), row('kö', 51.218)];
     expect(dedupeNearby(rows, keyOf, 2)).toEqual([rows[0]]);
+  });
+
+  it('can use a different radius per row', () => {
+    const rows = [row('kö', 51.22), row('kö', 51.25), row('dorf', 51.22), row('dorf', 51.25)];
+    // 0.03° of latitude is about 3.3 km: merged with 5 km, kept with 2 km
+    const radius = (r: { key: string }) => (r.key === 'kö' ? 5 : 2);
+    expect(dedupeNearby(rows, (r) => r.key, radius)).toHaveLength(3);
   });
 
   it('keeps equal names that are far apart', () => {

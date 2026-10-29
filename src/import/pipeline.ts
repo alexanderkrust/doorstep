@@ -191,12 +191,15 @@ export async function importFromPbf(
   const steps = options.steps ?? new Steps(log, PBF_STEPS);
 
   try {
-    steps.start('Loading administrative boundaries (admin_level 2 and 4)');
+    steps.start('Loading boundaries (countries, states, municipalities, districts, postcodes)');
     const boundaries = await loadBoundariesFromPbf(input, workDir);
-    const { countries, states, borderSegments } = boundaries.summary;
+    const { countries, states, borderSegments, municipalities, districts, postcodes } =
+      boundaries.summary;
     log(
       `Boundaries: countries ${countries.join(', ') || 'none'}, ${String(states)} states, ` +
-        `${String(borderSegments)} segments to neighboring countries`,
+        `${formatCount(municipalities)} municipalities, ${formatCount(districts)} districts, ` +
+        `${formatCount(postcodes)} postcode areas, ` +
+        `${formatCount(borderSegments)} segments to neighboring countries`,
     );
     steps.start(`Filtering the extract (osmium tags-filter ${input})`);
     await filterExtract(input, filtered);

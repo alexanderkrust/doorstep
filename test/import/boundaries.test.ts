@@ -134,6 +134,19 @@ describe('PolygonGrid', () => {
     compareWithBruteForce([star], 50_000, 2);
   });
 
+  it('counts an edge that lies exactly on the last cell boundary', () => {
+    // 4.9 + 50 cells of 0.002° rounds to exactly 5.0, the right edge of the square.
+    const square = [
+      [4.9, 53.9],
+      [5.0, 53.9],
+      [5.0, 54.0],
+      [4.9, 54.0],
+      [4.9, 53.9],
+    ];
+    expect(new PolygonGrid([square]).contains(4.95, 53.95)).toBe(true);
+    expect(new PolygonGrid([square]).contains(5.05, 53.95)).toBe(false);
+  });
+
   it('an empty area contains nothing', () => {
     expect(new PolygonGrid([]).contains(0, 0)).toBe(false);
   });
@@ -155,31 +168,37 @@ describe('boundaries from the fixture', () => {
   });
 
   it('Herzogenrath is in North Rhine-Westphalia', () => {
-    expect(boundaries.locate(HERZOGENRATH.lat, HERZOGENRATH.lon)).toEqual({
+    expect(boundaries.locate(HERZOGENRATH.lat, HERZOGENRATH.lon)).toMatchObject({
       country: 'DE',
       state: 'Nordrhein-Westfalen',
     });
-    expect(boundaries.locate(AACHEN.lat, AACHEN.lon)).toEqual({
+    expect(boundaries.locate(AACHEN.lat, AACHEN.lon)).toMatchObject({
       country: 'DE',
       state: 'Nordrhein-Westfalen',
     });
   });
 
   it('Kerkrade across the street is in the Netherlands', () => {
-    expect(boundaries.locate(KERKRADE.lat, KERKRADE.lon)).toEqual({ country: 'NL', state: null });
+    expect(boundaries.locate(KERKRADE.lat, KERKRADE.lon)).toMatchObject({
+      country: 'NL',
+      state: null,
+    });
     expect(boundaries.locate(VAALS.lat, VAALS.lon).country).toBe('NL');
   });
 
   it('Riezlern in the Kleinwalsertal is in Austria, Oberstdorf in Bavaria', () => {
-    expect(boundaries.locate(RIEZLERN.lat, RIEZLERN.lon)).toEqual({ country: 'AT', state: null });
-    expect(boundaries.locate(OBERSTDORF.lat, OBERSTDORF.lon)).toEqual({
+    expect(boundaries.locate(RIEZLERN.lat, RIEZLERN.lon)).toMatchObject({
+      country: 'AT',
+      state: null,
+    });
+    expect(boundaries.locate(OBERSTDORF.lat, OBERSTDORF.lon)).toMatchObject({
       country: 'DE',
       state: 'Bayern',
     });
   });
 
   it('Büsingen is German, Schaffhausen next door is Swiss', () => {
-    expect(boundaries.locate(BUESINGEN.lat, BUESINGEN.lon)).toEqual({
+    expect(boundaries.locate(BUESINGEN.lat, BUESINGEN.lon)).toMatchObject({
       country: 'DE',
       state: 'Baden-Württemberg',
     });
@@ -189,11 +208,14 @@ describe('boundaries from the fixture', () => {
   it('Luxembourg on the Moselle, Perl in Saarland', () => {
     expect(boundaries.locate(REMICH.lat, REMICH.lon).country).toBe('LU');
     expect(boundaries.locate(MERTERT.lat, MERTERT.lon).country).toBe('LU');
-    expect(boundaries.locate(PERL.lat, PERL.lon)).toEqual({ country: 'DE', state: 'Saarland' });
+    expect(boundaries.locate(PERL.lat, PERL.lon)).toMatchObject({
+      country: 'DE',
+      state: 'Saarland',
+    });
   });
 
   it('far away from any border the country stays open', () => {
-    expect(boundaries.locate(40, -30)).toEqual({ country: null, state: null });
+    expect(boundaries.locate(40, -30)).toMatchObject({ country: null, state: null });
   });
 
   it('point in polygon with a grid matches the simple count', async () => {

@@ -218,3 +218,84 @@ describe('spelling variants of street names', () => {
     expect(top('Konrad Adenauerstr 1 Bad Honnef')).toMatchObject({ postcode: '53604' });
   });
 });
+
+describe('duplicates in the results', () => {
+  let dupDir: string;
+  let dups: SearchIndex;
+
+  beforeAll(async () => {
+    dupDir = await mkdtemp(join(tmpdir(), 'doorstep-dups-'));
+    const path = join(dupDir, 'index.sqlite');
+    const writer = new IndexWriter(path);
+    for (const feature of [
+      // The city as a boundary centroid and as a place node, 4.4 km apart
+      node(52.3247, 14.4903, { place: 'city', name: 'Frankfurt (Oder)' }),
+      node(52.3412, 14.5495, { place: 'town', name: 'Frankfurt (Oder)' }),
+      // Two station nodes 100 m apart, one with an English name
+      node(53.5532, 10.0064, { railway: 'station', name: 'Hamburg Hauptbahnhof' }),
+      node(53.5527, 10.0076, {
+        railway: 'station',
+        name: 'Hamburg Hauptbahnhof',
+        'name:en': 'Hamburg Central Station',
+      }),
+    ]) {
+      const place = featureToPlace(feature);
+      if (place) writer.add(place);
+    }
+    writer.finish({});
+    dups = new SearchIndex(path);
+  });
+
+  afterAll(async () => {
+    dups.close();
+    await rm(dupDir, { recursive: true, force: true });
+  });
+
+  it('shows a city only once, even as a boundary and a place node', () => {
+    expect(dups.search({ q: 'Frankfurt Oder', limit: 5 })).toHaveLength(1);
+  });
+
+  it('shows a station only once, even with different English names', () => {
+    expect(dups.search({ q: 'Hamburg Hauptbahnhof', limit: 5 })).toHaveLength(1);
+  });
+});
+
+describe('address queries on a common street name', () => {
+  let streetDir: string;
+  let streets: SearchIndex;
+
+  beforeAll(async () => {
+    streetDir = await mkdtemp(join(tmpdir(), 'doorstep-common-street-'));
+    const path = join(streetDir, 'index.sqlite');
+    const writer = new IndexWriter(path);
+    // More POIs on a Hauptstraße than the search reads as candidates (200) …
+    for (let i = 0; i < 250; i++) {
+      const place = featureToPlace(
+        node(48 + i * 0.01, 9, {
+          amenity: 'restaurant',
+          name: `Gasthaus ${String(i)}`,
+          ...addr('Hauptstraße', `1${String(i)}`, '70000', `Ort ${String(i)}`),
+        }),
+      );
+      if (place) writer.add(place);
+    }
+    // … and one plain address with exactly the number searched for.
+    const house = featureToPlace(node(52, 13, addr('Hauptstraße', '1', '10000', 'Berlin')));
+    if (house) writer.add(house);
+    writer.finish({});
+    streets = new SearchIndex(path);
+  });
+
+  afterAll(async () => {
+    streets.close();
+    await rm(streetDir, { recursive: true, force: true });
+  });
+
+  it('finds the plain address behind many more important POIs', () => {
+    expect(streets.search({ q: 'Hauptstraße 1', limit: 5 })?.[0]).toMatchObject({
+      type: 'house',
+      housenumber: '1',
+      city: 'Berlin',
+    });
+  });
+});

@@ -27,7 +27,7 @@ export const reverseRoutes: FastifyPluginAsync<ReverseRoutesOptions> = async (
 
     const rows = queryIndex(reply, () => index.reverse({ lat, lon, limit, radiusKm: radius }));
     if (rows === null) return reply;
-    return sendCached(reply, toFeatureCollection(rows, lang));
+    return sendCached(reply, toFeatureCollection(rows, lang, { lat, lon }));
   });
   await Promise.resolve();
 };

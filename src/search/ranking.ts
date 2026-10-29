@@ -19,6 +19,10 @@ export interface Candidate {
   names: readonly string[];
   /** Distance to the request's location; only set if lat/lon were given. */
   distanceKm?: number;
+  /** A house number without a name: what an address query is looking for. */
+  plainAddress?: boolean;
+  /** The object's own names (without "street number"), if it has any. */
+  ownNames?: readonly string[];
 }
 
 export interface ScoreContext {
@@ -32,6 +36,12 @@ export interface ScoreContext {
 export const LOCATION_BIAS_SCALE_KM = 5;
 /** Factor for names that do not start with the query's first word. */
 const NOT_AT_START = 0.7;
+/**
+ * Adjustment for queries with a house number: the plain address goes up, a named object that
+ * only shares the address (a shop at "Marienplatz 8") goes down.
+ */
+const ADDRESS_QUERY_BONUS = 0.05;
+const HOUSENUMBER = /^\d+[a-z]?$/;
 /** Factor when the last word only matches as a prefix ("Königsallee 1" → "… 11"). */
 const PREFIX_ONLY = 0.9;
 
@@ -89,10 +99,19 @@ export function scoreCandidate(candidate: Candidate, ctx: ScoreContext): number 
   const relevance = ctx.bestBm25 < 0 ? clamp01(candidate.bm25 / ctx.bestBm25) : 1;
   const text = 0.5 * relevance + 0.5 * nameMatch(ctx.queryTokens, candidate.names);
   const importance = clamp01(candidate.importance);
-  if (candidate.distanceKm === undefined) {
-    return 0.6 * text + 0.4 * importance;
-  }
-  return 0.45 * text + 0.3 * importance + 0.25 * proximity(candidate.distanceKm);
+  const base =
+    candidate.distanceKm === undefined
+      ? 0.6 * text + 0.4 * importance
+      : 0.45 * text + 0.3 * importance + 0.25 * proximity(candidate.distanceKm);
+  return clamp01(base + addressQueryAdjustment(candidate, ctx.queryTokens));
+}
+
+function addressQueryAdjustment(candidate: Candidate, queryTokens: readonly string[]): number {
+  if (!queryTokens.some((t) => HOUSENUMBER.test(t))) return 0;
+  if (candidate.plainAddress) return ADDRESS_QUERY_BONUS;
+  const own = candidate.ownNames;
+  if (own && own.length > 0 && nameMatch(queryTokens, own) === 0) return -ADDRESS_QUERY_BONUS;
+  return 0;
 }
 
 /** Sorts the candidates by descending score (stable, without changing the input). */
@@ -116,14 +135,16 @@ export function rank<T extends Candidate>(
 export function dedupeNearby<T extends { lat: number; lon: number }>(
   rows: readonly T[],
   keyOf: (row: T) => string,
-  radiusKm: number,
+  radiusKm: number | ((row: T) => number),
 ): T[] {
+  const radiusOf = typeof radiusKm === 'number' ? () => radiusKm : radiusKm;
   const kept: T[] = [];
   const byKey = new Map<string, T[]>();
   for (const row of rows) {
     const key = keyOf(row);
     const same = byKey.get(key) ?? [];
-    if (same.some((k) => distanceKm(k.lat, k.lon, row.lat, row.lon) <= radiusKm)) continue;
+    const radius = radiusOf(row);
+    if (same.some((k) => distanceKm(k.lat, k.lon, row.lat, row.lon) <= radius)) continue;
     same.push(row);
     byKey.set(key, same);
     kept.push(row);

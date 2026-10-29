@@ -35,6 +35,8 @@ export interface Place {
   district: string | null;
   state: string | null;
   country: string | null;
+  /** OSM tag that makes the object what it is, e.g. `shop=supermarket`, `place=village`. */
+  category: string | null;
   lat: number;
   lon: number;
   importance: number;
@@ -66,8 +68,72 @@ const CITY_TYPES = new Set(['city', 'town', 'village', 'hamlet']);
 
 const OSM_TYPES: Record<string, OsmType> = { node: 'N', way: 'W', relation: 'R' };
 
-export function importanceFor(type: string): number {
-  return IMPORTANCE[type] ?? DEFAULT_IMPORTANCE;
+/**
+ * Tags that make a named object a POI, in order of priority for its category. `null` = any
+ * value; otherwise only the listed values (e.g. stations, not every railway track).
+ */
+const POI_TAGS: readonly (readonly [string, ReadonlySet<string> | null])[] = [
+  ['amenity', null],
+  ['shop', null],
+  ['tourism', null],
+  ['railway', new Set(['station', 'halt'])],
+  ['public_transport', new Set(['station'])],
+  ['aeroway', new Set(['aerodrome', 'terminal'])],
+  ['healthcare', null],
+  ['office', null],
+  ['leisure', null],
+  ['historic', null],
+  ['craft', null],
+];
+
+/** POIs that people look for by name more often than others. */
+const POI_IMPORTANCE: Record<string, number> = {
+  'aeroway=aerodrome': 0.65,
+  'railway=station': 0.6,
+  'public_transport=station': 0.55,
+  'tourism=attraction': 0.5,
+  'tourism=museum': 0.5,
+  'amenity=university': 0.5,
+  'amenity=hospital': 0.5,
+};
+
+export function importanceFor(type: string, category: string | null = null): number {
+  return (
+    (category ? POI_IMPORTANCE[category] : undefined) ?? IMPORTANCE[type] ?? DEFAULT_IMPORTANCE
+  );
+}
+
+/**
+ * Named objects that nobody looks for in an autosuggest: signposts and boards, Stolpersteine
+ * (named after people), street furniture.
+ */
+function isNoise(props: Record<string, unknown>): boolean {
+  const tourism = tag(props, 'tourism');
+  if (tourism === 'information' && tag(props, 'information') !== 'office') return true;
+  if (tag(props, 'historic') === 'memorial' && tag(props, 'memorial') === 'stolperstein') {
+    return true;
+  }
+  const amenity = tag(props, 'amenity');
+  return amenity !== null && NOISE_AMENITIES.has(amenity);
+}
+
+const NOISE_AMENITIES = new Set([
+  'bench',
+  'waste_basket',
+  'vending_machine',
+  'parking_space',
+  'hunting_stand',
+  'grit_bin',
+]);
+
+/** The POI tag of an object as `key=value`, or `null`. */
+function poiCategory(props: Record<string, unknown>): string | null {
+  if (isNoise(props)) return null;
+  for (const [key, values] of POI_TAGS) {
+    const value = tag(props, key);
+    if (value && (!values || values.has(value))) return `${key}=${value}`;
+  }
+  return null;
 }
 
 function tag(props: Record<string, unknown>, key: string): string | null {
@@ -77,13 +143,23 @@ function tag(props: Record<string, unknown>, key: string): string | null {
   return trimmed === '' ? null : trimmed;
 }
 
-/** Determines the type; `null` if the object does not belong in the index. */
-function classify(props: Record<string, unknown>, name: string | null): string | null {
+/** Type and category; `null` if the object does not belong in the index. */
+function classify(
+  props: Record<string, unknown>,
+  name: string | null,
+  osmType: OsmType,
+): { type: string; category: string | null } | null {
   const place = tag(props, 'place');
-  if (place && name) return place;
-  if (tag(props, 'amenity') && name) return 'poi';
-  if (tag(props, 'addr:housenumber')) return 'house';
-  if (tag(props, 'highway') && name) return 'street';
+  if (place && name) return { type: place, category: `place=${place}` };
+  const poi = name ? poiCategory(props) : null;
+  if (poi) return { type: 'poi', category: poi };
+  if (tag(props, 'addr:housenumber')) return { type: 'house', category: null };
+  const highway = tag(props, 'highway');
+  // Only ways: osmium also passes along the nodes of a road, and named nodes are bus stops,
+  // junctions and the like, not streets.
+  if (highway && name && osmType !== 'N') {
+    return { type: 'street', category: `highway=${highway}` };
+  }
   return null;
 }
 
@@ -98,8 +174,9 @@ export function featureToPlace(feature: Feature): Place | null {
   const name = tag(props, 'name');
   const nameDe = tag(props, 'name:de');
   const nameEn = tag(props, 'name:en');
-  const type = classify(props, name ?? nameDe ?? nameEn);
-  if (!type) return null;
+  const kind = classify(props, name ?? nameDe ?? nameEn, osmType);
+  if (!kind) return null;
+  const { type, category } = kind;
 
   const point = representativePoint(feature.geometry);
   if (!point) return null;
@@ -119,9 +196,10 @@ export function featureToPlace(feature: Feature): Place | null {
     district: tag(props, 'addr:suburb') ?? tag(props, 'addr:hamlet'),
     state: tag(props, 'addr:state'),
     country: tag(props, 'addr:country'),
+    category,
     lat: point.lat,
     lon: point.lon,
-    importance: importanceFor(type),
+    importance: importanceFor(type, category),
   };
 }
 
@@ -229,10 +307,14 @@ export function parseGeoJsonSeqLine(line: string): Feature | null {
   return JSON.parse(text) as Feature;
 }
 
-/** Country and state from the administrative boundaries (see `boundaries.ts`). */
+/** Location from the boundaries (see `boundaries.ts`); `null` where they give nothing. */
 export interface PlaceLocation {
   country: string | null;
   state: string | null;
+  /** Municipality. */
+  city?: string | null;
+  district?: string | null;
+  postcode?: string | null;
 }
 
 /**
@@ -240,11 +322,30 @@ export interface PlaceLocation {
  * and `addr:state`. The tags stay only where the boundaries give nothing. If, according to
  * the boundaries, the point lies in a different country than `addr:country`, then
  * `addr:state` does not fit either.
+ *
+ * City, district and postcode are the other way round: `addr:city` (the postal town),
+ * `addr:suburb` and `addr:postcode` stay, the boundaries only fill gaps. Villages and other
+ * settlements get the municipality they belong to as their city.
  */
 export function withLocation(place: Place, location: PlaceLocation): Place {
   const country = location.country ?? place.country;
   const state =
     location.state ??
     (location.country !== null && location.country !== place.country ? null : place.state);
-  return country === place.country && state === place.state ? place : { ...place, country, state };
+  const municipality = location.city ?? null;
+  const city = CITY_TYPES.has(place.type)
+    ? (municipality ?? place.city)
+    : (place.city ?? municipality);
+  const district = place.district ?? location.district ?? null;
+  const postcode = place.postcode ?? location.postcode ?? null;
+  if (
+    country === place.country &&
+    state === place.state &&
+    city === place.city &&
+    district === place.district &&
+    postcode === place.postcode
+  ) {
+    return place;
+  }
+  return { ...place, country, state, city, district, postcode };
 }

@@ -14,11 +14,12 @@ import { Progress, type Logger } from './progress.js';
  * 6: word statistics (`terms`, `prefixes`, meta `fts_tokens`) for bm25 in JS and the
  *    expansion of long prefixes (src/search/bm25.ts, `expandPrefix`).
  * 7: street names also split and joined ("Friedrich Straße", "Adenauerstraße").
+ * 8: `category` (e.g. `shop=supermarket`), more POI kinds, city/district/postcode from boundaries.
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 const PLACE_COLUMNS = `osm_type, osm_id, type, name, name_de, name_en, street, housenumber,
-  postcode, city, district, state, country, lat, lon, importance`;
+  postcode, city, district, state, country, category, lat, lon, importance`;
 
 /** Staging table in a separate file; copied into places, sorted, at the end. */
 const STAGING_SCHEMA = `
@@ -36,6 +37,7 @@ CREATE TABLE staging.places (
   district    TEXT,
   state       TEXT,
   country     TEXT,
+  category    TEXT,
   lat         REAL    NOT NULL,
   lon         REAL    NOT NULL,
   importance  REAL    NOT NULL,
@@ -60,6 +62,7 @@ CREATE TABLE places (
   district    TEXT,
   state       TEXT,
   country     TEXT,
+  category    TEXT,
   lat         REAL    NOT NULL,
   lon         REAL    NOT NULL,
   importance  REAL    NOT NULL,
@@ -159,7 +162,7 @@ export class IndexWriter {
     // area) are ignored; the first entry wins.
     this.insert = this.db.prepare(`
       INSERT OR IGNORE INTO staging.places (${PLACE_COLUMNS})
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     // Normalization in JS, so import and search use the same function.
     this.db.function('index_text', { varargs: true, deterministic: true }, (...values) =>
       indexText(values.map((v) => (typeof v === 'string' ? v : null))),
@@ -191,6 +194,7 @@ export class IndexWriter {
       place.district,
       place.state,
       place.country,
+      place.category,
       place.lat,
       place.lon,
       place.importance,

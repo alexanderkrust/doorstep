@@ -47,9 +47,16 @@ afterAll(async () => {
 const text = (value: unknown) =>
   typeof value === 'string' || typeof value === 'number' ? String(value) : '';
 
+/** Properties and address fields in one object (`street`, `city` … live in `address`). */
+function fields(feature: PointFeature): Record<string, unknown> {
+  const { address, ...rest } = feature.properties;
+  return { ...(address as Record<string, unknown> | undefined), ...rest };
+}
+
 function matches(feature: PointFeature, query: GoldenQuery): boolean {
+  const all = fields(feature);
   const fits = Object.entries(query.expect).every(
-    ([key, value]) => text(feature.properties[key]).toLowerCase() === value.toLowerCase(),
+    ([key, value]) => text(all[key]).toLowerCase() === value.toLowerCase(),
   );
   if (!fits || !query.near) return fits;
   const [lat, lon, maxMeters] = query.near;
@@ -88,8 +95,7 @@ describe('golden queries', () => {
       .slice(0, 5)
       .map((f) => {
         const p = f.properties;
-        const where = `${text(p['street'])} ${text(p['housenumber'])}`.trim();
-        return `${text(p['type'])}: ${text(p['name']) || where}`;
+        return `${text(p['type'])}: ${text(p['label'])}`;
       })
       .join(' | ');
     expect(

@@ -1,6 +1,7 @@
 import { existsSync, statSync } from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { SCHEMA_VERSION } from '../import/index-writer.js';
+import { importanceFor } from '../import/place.js';
 import { bm25, ftsColumns, idf } from './bm25.js';
 import { boundingBox, distanceKm, gridCellsInBox } from './geo.js';
 import { nameForms, normalizeTokens } from './normalize.js';
@@ -34,6 +35,7 @@ export interface PlaceRow {
   district: string | null;
   state: string | null;
   country: string | null;
+  category: string | null;
   lat: number;
   lon: number;
 }
@@ -67,7 +69,7 @@ export interface SearchIndexOptions {
 }
 
 const COLUMNS = `p.osm_type, p.osm_id, p.type, p.name, p.name_de, p.name_en, p.street,
-  p.housenumber, p.postcode, p.city, p.district, p.state, p.country, p.lat, p.lon`;
+  p.housenumber, p.postcode, p.city, p.district, p.state, p.country, p.category, p.lat, p.lon`;
 
 /**
  * From this many documents on, a prefix over 4 characters is expanded. FTS5 needs about
@@ -89,14 +91,34 @@ const MAX_LOCAL_CELLS = 64;
  * cells: with 10 out of 200, 200 nearby hits are reached after checking about 4,000.
  */
 const LOCAL_DENSE_HITS = 10;
+/** Looks like a house number ("12", "60d"). */
+const HOUSENUMBER_TOKEN = /^\d+[a-z]?$/;
 /** Hits with the same name (e.g. segments of a street) within this distance are merged. */
 const DEDUPE_RADIUS_KM = 2;
 
-/** Equal hits have the same type, name and address. */
+/**
+ * Settlements: the same city often exists as a boundary (its centroid) and as a place node a
+ * few kilometers apart, sometimes with different `place` values (`city` and `town`).
+ */
+const SETTLEMENT_TYPES = new Set(['city', 'town', 'village', 'hamlet', 'municipality']);
+const SETTLEMENT_DEDUPE_RADIUS_KM = 10;
+
+/**
+ * Equal hits have the same kind, name and address. Only the main name counts: two OSM objects
+ * for the same station may differ in `name:en`.
+ */
 const dedupeKey = (row: PlaceRow) =>
-  [row.type, row.name, row.name_de, row.name_en, row.street, row.housenumber]
+  [
+    SETTLEMENT_TYPES.has(row.type) ? 'settlement' : row.type,
+    row.name ?? row.name_de ?? row.name_en,
+    row.street,
+    row.housenumber,
+  ]
     .map((v) => v?.toLowerCase() ?? '')
     .join('|');
+
+const dedupeRadius = (row: PlaceRow) =>
+  SETTLEMENT_TYPES.has(row.type) ? SETTLEMENT_DEDUPE_RADIUS_KM : DEDUPE_RADIUS_KM;
 
 /** Start radius of the nearby search; doubled until there are enough hits. */
 const REVERSE_START_RADIUS_KM = 0.05;
@@ -130,7 +152,11 @@ interface OpenIndex {
   meta: Record<string, string>;
   stats: TermStats;
   search: StatementSync;
+  /** Like `search`, but only from a given id on (see `addressStart`). */
+  searchFrom: StatementSync;
   searchLocal: StatementSync;
+  /** First id of the addresses; ids are sorted by importance, addresses come last. */
+  addressStart: number | null;
   box: StatementSync;
 }
 
@@ -173,6 +199,11 @@ function openIndexFile(path: string): OpenIndex {
         FROM (SELECT rowid AS id FROM places_fts
                WHERE places_fts MATCH ? LIMIT ${String(CANDIDATES)}) f
         JOIN places p ON p.id = f.id`),
+      searchFrom: db.prepare(`SELECT p.id, ${COLUMNS}, p.importance
+        FROM (SELECT rowid AS id FROM places_fts
+               WHERE places_fts MATCH ? AND rowid >= ? LIMIT ${String(CANDIDATES)}) f
+        JOIN places p ON p.id = f.id`),
+      addressStart: findAddressStart(db),
       // All hits within the radius, not just the most important: nearby addresses have the
       // lowest importance and come last in FTS order. The query contains the box's grid
       // cells; FTS5 then intersects the hit lists.
@@ -188,6 +219,27 @@ function openIndexFile(path: string): OpenIndex {
     db.close();
     throw err;
   }
+}
+
+/**
+ * First id with the importance of an address, by binary search over the ids (they are
+ * assigned by descending importance). `null` if there are no addresses.
+ */
+function findAddressStart(db: DatabaseSync): number | null {
+  const threshold = importanceFor('house');
+  const importanceAt = db.prepare('SELECT importance FROM places WHERE id = ?');
+  const { maxId } = db.prepare('SELECT coalesce(max(id), 0) AS maxId FROM places').get() as {
+    maxId: number;
+  };
+  let lo = 1;
+  let hi = maxId + 1;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const row = importanceAt.get(mid) as { importance?: number } | undefined;
+    if ((row?.importance ?? 0) <= threshold) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo <= maxId ? lo : null;
 }
 
 /**
@@ -307,6 +359,20 @@ export class SearchIndex {
       const { match, idfs } = this.prepareQuery(current.stats, variant);
       if (match === null) continue;
       const rows = current.search.all(inTextColumns(match)) as unknown as CandidateRow[];
+      // A query with a house number looks for an address, but on a common street the
+      // candidates fill up with more important POIs first: also read from the addresses.
+      if (
+        rows.length >= CANDIDATES &&
+        current.addressStart !== null &&
+        variant.some((t) => HOUSENUMBER_TOKEN.test(t))
+      ) {
+        const seen = new Set(rows.map((r) => r.id));
+        const addresses = current.searchFrom.all(
+          inTextColumns(match),
+          current.addressStart,
+        ) as unknown as CandidateRow[];
+        for (const row of addresses) if (!seen.has(row.id)) rows.push(row);
+      }
       // Fewer than CANDIDATES hits: all are already included, the nearby ones too.
       if (hasLocation && rows.length >= CANDIDATES) {
         // Nearby hits that do not make it into the first candidates globally.
@@ -322,9 +388,11 @@ export class SearchIndex {
         ...row,
         bm25: bm25(phrases, idfs, ftsColumns(row), current.stats.avgTokens),
         names: candidateNames(row),
+        ownNames: [row.name, row.name_de, row.name_en].flatMap(nameForms),
+        plainAddress: row.type === 'house' && !row.name && !row.name_de && !row.name_en,
         ...(hasLocation ? { distanceKm: distanceKm(lat, lon, row.lat, row.lon) } : {}),
       }));
-      return dedupeNearby(rank(candidates, tokens), dedupeKey, DEDUPE_RADIUS_KM);
+      return dedupeNearby(rank(candidates, tokens), dedupeKey, dedupeRadius);
     }
     return [];
   }
