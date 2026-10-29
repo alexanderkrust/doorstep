@@ -8,6 +8,32 @@ Every API response contains this notice in the `attribution` field.
 
 > Status: phase 6 (updates and operations). See [ROADMAP.md](ROADMAP.md).
 
+## Contents
+
+- [Quick start](#quick-start)
+- [System requirements](#system-requirements)
+- [Operations](#operations)
+  - [Updates without downtime](#updates-without-downtime)
+  - [Using a prebuilt index](#using-a-prebuilt-index)
+  - [Rate limiting and API keys](#rate-limiting-and-api-keys)
+  - [Cache](#cache)
+  - [Logs](#logs)
+  - [Metrics](#metrics)
+  - [Healthcheck](#healthcheck)
+- [Configuration (environment variables)](#configuration-environment-variables)
+- [API](#api)
+  - [`GET /api` – autosuggest](#get-api--autosuggest)
+  - [`GET /reverse` – nearest object to a point](#get-reverse--nearest-object-to-a-point)
+  - [Other endpoints](#other-endpoints)
+- [Docker](#docker)
+  - [Commands](#commands)
+  - [Smoke test](#smoke-test)
+- [Load test](#load-test)
+- [Search quality and latency](#search-quality-and-latency)
+- [Development](#development)
+- [Import](#import)
+- [Data license](#data-license)
+
 ## Quick start
 
 Requirement: Docker. Nothing else, no docker-compose either.
