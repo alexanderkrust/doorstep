@@ -7,33 +7,33 @@ export const DEFAULT_SEARCH_LIMIT = 5;
 export const DEFAULT_REVERSE_RADIUS_KM = 1;
 export const MAX_REVERSE_RADIUS_KM = 10;
 
-/** Ein einzelner Query-Parameter (mehrfach angegebene Parameter kommen als Array). */
+/** A single query parameter (parameters given more than once arrive as an array). */
 const single = z.string({
-  error: (issue) => (issue.input === undefined ? 'fehlt' : 'darf nur einmal angegeben werden'),
+  error: (issue) => (issue.input === undefined ? 'is required' : 'must be given only once'),
 });
 
 const integer = (min: number, max: number) =>
   single
     .trim()
-    .regex(/^-?\d+$/, 'muss eine ganze Zahl sein')
+    .regex(/^-?\d+$/, 'must be an integer')
     .transform(Number)
     .pipe(
       z
         .number()
-        .min(min, `muss mindestens ${String(min)} sein`)
-        .max(max, `darf höchstens ${String(max)} sein`),
+        .min(min, `must be at least ${String(min)}`)
+        .max(max, `must be at most ${String(max)}`),
     );
 
 const decimal = (min: number, max: number, exclusiveMin = false) =>
   single
     .trim()
-    .regex(/^[-+]?(\d+\.?\d*|\.\d+)$/, 'muss eine Zahl sein')
+    .regex(/^[-+]?(\d+\.?\d*|\.\d+)$/, 'must be a number')
     .transform(Number)
     .pipe(
       (exclusiveMin
-        ? z.number().gt(min, `muss größer als ${String(min)} sein`)
-        : z.number().min(min, `muss mindestens ${String(min)} sein`)
-      ).max(max, `darf höchstens ${String(max)} sein`),
+        ? z.number().gt(min, `must be greater than ${String(min)}`)
+        : z.number().min(min, `must be at least ${String(min)}`)
+      ).max(max, `must be at most ${String(max)}`),
     );
 
 const lat = decimal(-90, 90);
@@ -42,12 +42,12 @@ const lon = decimal(-180, 180);
 const lang = single
   .trim()
   .toLowerCase()
-  .regex(/^[a-z]{2}$/, 'muss ein zweistelliger Sprachcode sein (z. B. de)');
+  .regex(/^[a-z]{2}$/, 'must be a two-letter language code (e.g. de)');
 
 const query = single
   .trim()
-  .min(MIN_QUERY_LENGTH, `muss mindestens ${String(MIN_QUERY_LENGTH)} Zeichen lang sein`)
-  .refine((q) => normalizeTokens(q).length > 0, 'enthält keine suchbaren Wörter');
+  .min(MIN_QUERY_LENGTH, `must be at least ${String(MIN_QUERY_LENGTH)} characters long`)
+  .refine((q) => normalizeTokens(q).length > 0, 'contains no searchable words');
 
 export const searchParams = z
   .object({
@@ -59,10 +59,18 @@ export const searchParams = z
   })
   .superRefine((p, ctx) => {
     if (p.lat !== undefined && p.lon === undefined) {
-      ctx.addIssue({ code: 'custom', path: ['lon'], message: 'fehlt (lat und lon nur gemeinsam)' });
+      ctx.addIssue({
+        code: 'custom',
+        path: ['lon'],
+        message: 'is required (lat and lon go together)',
+      });
     }
     if (p.lon !== undefined && p.lat === undefined) {
-      ctx.addIssue({ code: 'custom', path: ['lat'], message: 'fehlt (lat und lon nur gemeinsam)' });
+      ctx.addIssue({
+        code: 'custom',
+        path: ['lat'],
+        message: 'is required (lat and lon go together)',
+      });
     }
   });
 
@@ -74,7 +82,7 @@ export const reverseParams = z.object({
   lang: lang.optional(),
 });
 
-/** "q: muss mindestens 2 Zeichen lang sein; limit: …" */
+/** "q: must be at least 2 characters long; limit: …" */
 export function formatIssues(error: z.ZodError): string {
   return error.issues
     .map((issue) => `${issue.path.join('.') || 'query'}: ${issue.message}`)

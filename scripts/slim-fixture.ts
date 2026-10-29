@@ -1,9 +1,8 @@
 /**
- * Verkleinert eine GeoJSON-Sequenz (Ausgabe von `osmium export`) für Test-Fixtures:
- * Nur Features, die der Import übernimmt, nur die Tags, die er liest, und als Geometrie
- * der repräsentative Punkt.
+ * Shrinks a GeoJSON sequence (output of `osmium export`) for test fixtures: only features
+ * the import takes, only the tags it reads, and the representative point as geometry.
  *
- *   npx tsx scripts/slim-fixture.ts <eingabe.geojsonseq> <ausgabe.geojsonseq>
+ *   npx tsx scripts/slim-fixture.ts <input.geojsonseq> <output.geojsonseq>
  */
 import { createReadStream, createWriteStream } from 'node:fs';
 import { readLines } from '../src/import/lines.js';
@@ -13,7 +12,7 @@ const KEEP = /^(@type|@id|name|name:de|name:en|place|highway|amenity|postal_code
 
 const [input, output] = process.argv.slice(2);
 if (!input || !output) {
-  console.error('Verwendung: tsx scripts/slim-fixture.ts <eingabe> <ausgabe>');
+  console.error('Usage: tsx scripts/slim-fixture.ts <input> <output>');
   process.exit(1);
 }
 
@@ -37,4 +36,4 @@ for await (const line of readLines(createReadStream(input))) {
   kept++;
 }
 out.end();
-console.log(`${String(kept)} Features geschrieben`);
+console.log(`Wrote ${String(kept)} features`);

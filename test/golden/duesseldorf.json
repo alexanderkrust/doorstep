@@ -1,5 +1,5 @@
 {
-  "description": "Golden-Queries gegen test/fixtures/duesseldorf.geojsonseq. 'expect' muss auf einen Treffer unter den ersten 'top' (Default 1) passen; Textvergleiche ignorieren Groß-/Kleinschreibung. 'near' = [lat, lon, maxMeter].",
+  "description": "Golden queries against test/fixtures/duesseldorf.geojsonseq. 'expect' must match one hit among the first 'top' (default 1); text comparisons ignore case. 'near' = [lat, lon, maxMeters].",
   "queries": [
     { "q": "Düsseldorf", "expect": { "name": "Düsseldorf", "type": "city" } },
     { "q": "Düss", "expect": { "name": "Düsseldorf", "type": "city" } },
@@ -65,7 +65,7 @@
       "lon": 6.78,
       "top": 5,
       "expect": { "name": "Königsallee", "type": "street" },
-      "note": "Kö12, Kö-Galerie und Kö-Center enthalten 'Kö' als ganzes Wort und liegen knapp vorn; ohne Bekanntheitssignal (wikidata) ist das vertretbar."
+      "note": "Kö12, Kö-Galerie and Kö-Center contain 'Kö' as a whole word and rank slightly ahead; without a popularity signal (wikidata) this is acceptable."
     },
 
     { "q": "Königsallee 1", "expect": { "street": "Königsallee", "housenumber": "1" } },
@@ -84,7 +84,7 @@
     {
       "q": "Kasernenstraße 4",
       "expect": { "street": "Kasernenstraße" },
-      "note": "Eine Kasernenstraße 4 gibt es nicht; erwartet werden Adressen 4x, nicht die Straße über ihre PLZ 40213."
+      "note": "There is no Kasernenstraße 4; expected are addresses 4x, not the street via its postcode 40213."
     },
     {
       "q": "Kasernenstraße Düsseldorf",

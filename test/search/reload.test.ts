@@ -27,22 +27,22 @@ afterEach(async () => {
 });
 
 describe('SearchIndex.reloadIfChanged', () => {
-  it('meldet keine Änderung, solange die Datei dieselbe ist', async () => {
+  it('reports no change while the file is the same', async () => {
     await importFromGeoJsonSeq(SMALL, path);
     expect(index.open()).toBe(true);
     expect(index.reloadIfChanged()).toBe(false);
   });
 
-  it('meldet keine Änderung, wenn noch kein Index geöffnet ist', () => {
+  it('reports no change when no index is open yet', () => {
     expect(index.reloadIfChanged()).toBe(false);
   });
 
-  it('liest nach dem atomaren Tausch den alten Index weiter und wechselt erst beim Neuladen', async () => {
+  it('keeps reading the old index after the atomic swap and switches only on reload', async () => {
     await importFromGeoJsonSeq(SMALL, path);
     expect(names('Oberbilker Allee')).not.toContain('Oberbilker Allee');
 
     await importFromGeoJsonSeq(LARGE, path);
-    // Die alte Datei ist zwar umbenannt/gelöscht, bleibt aber geöffnet und lesbar.
+    // The old file is renamed/deleted, but stays open and readable.
     expect(names('Königsallee')).toContain('Königsallee');
     expect(names('Oberbilker Allee')).not.toContain('Oberbilker Allee');
 
@@ -51,7 +51,7 @@ describe('SearchIndex.reloadIfChanged', () => {
     expect(index.reloadIfChanged()).toBe(false);
   });
 
-  it('behält den alten Index, wenn die neue Datei unbrauchbar ist', async () => {
+  it('keeps the old index when the new file is unusable', async () => {
     await importFromGeoJsonSeq(SMALL, path);
     expect(index.open()).toBe(true);
 
@@ -61,7 +61,7 @@ describe('SearchIndex.reloadIfChanged', () => {
     expect(names('Königsallee')).toContain('Königsallee');
   });
 
-  it('behält den alten Index, wenn die Datei verschwindet', async () => {
+  it('keeps the old index when the file disappears', async () => {
     await importFromGeoJsonSeq(SMALL, path);
     expect(index.open()).toBe(true);
 
@@ -72,7 +72,7 @@ describe('SearchIndex.reloadIfChanged', () => {
 });
 
 describe('SearchIndex.meta', () => {
-  it('liefert Metadaten des geöffneten Index', async () => {
+  it('returns metadata of the open index', async () => {
     expect(index.meta()).toBeNull();
     await importFromGeoJsonSeq(SMALL, path);
     expect(index.open()).toBe(true);

@@ -10,7 +10,7 @@ export interface PointFeature {
 export interface FeatureCollection {
   type: 'FeatureCollection';
   features: PointFeature[];
-  /** Fremdes Member (GeoJSON erlaubt das); Pflicht nach ODbL. */
+  /** Foreign member (allowed by GeoJSON); required by the ODbL. */
   attribution: string;
 }
 
@@ -25,13 +25,13 @@ const PROPERTY_KEYS = [
   'country',
 ] as const;
 
-/** Name in der gewünschten Sprache; sonst `name`, sonst irgendein vorhandener Name. */
+/** Name in the requested language; otherwise `name`, otherwise any available name. */
 export function displayName(row: PlaceRow, lang: string): string | null {
   const localized = lang === 'de' ? row.name_de : lang === 'en' ? row.name_en : null;
   return localized ?? row.name ?? row.name_de ?? row.name_en;
 }
 
-/** GeoJSON-Feature; fehlende Werte werden weggelassen. */
+/** GeoJSON feature; missing values are left out. */
 export function toFeature(row: PlaceRow, lang: string): PointFeature {
   const properties: Record<string, string | number> = {
     osm_type: row.osm_type,

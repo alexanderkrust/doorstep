@@ -1,16 +1,16 @@
 # doorstep
 
-Self-hosted Adress-Autosuggest-API auf Basis von OpenStreetMap.
-Ein Docker-Image, keine externen Dienste: der Index ist eine SQLite-Datei (FTS5 + R\*Tree) unter `/data`.
+Self-hosted address autosuggest API based on OpenStreetMap.
+One Docker image, no external services: the index is a SQLite file (FTS5 + R\*Tree) under `/data`.
 
-Daten: © OpenStreetMap contributors, [ODbL](https://opendatacommons.org/licenses/odbl/).
-Jede API-Antwort enthält diesen Hinweis im Feld `attribution`.
+Data: © OpenStreetMap contributors, [ODbL](https://opendatacommons.org/licenses/odbl/).
+Every API response contains this notice in the `attribution` field.
 
-> Status: Phase 6 (Updates und Betrieb). Siehe [ROADMAP.md](ROADMAP.md).
+> Status: phase 6 (updates and operations). See [ROADMAP.md](ROADMAP.md).
 
-## Schnellstart
+## Quick start
 
-Voraussetzung: Docker. Sonst nichts, auch kein docker-compose.
+Requirement: Docker. Nothing else, no docker-compose either.
 
 ```bash
 docker build -t meine-api .
@@ -18,30 +18,30 @@ docker run -d --name doorstep --restart unless-stopped \
   -p 2322:2322 -v data:/data meine-api
 ```
 
-Beim ersten Start liegt noch kein Index im Volume. Die API startet trotzdem sofort, lädt im
-Hintergrund den Extrakt aus `REGION_URL` (Default: Deutschland, rund 4,5 GB) und baut den Index.
-Bis dahin antwortet `/api` mit `503`, auch nach dem Download noch: Das Indizieren dauert beim
-Deutschland-Extrakt etwa eine halbe Stunde. Den Fortschritt zeigen `docker logs -f doorstep` und
-`/health` (`"index": false, "importing": true`). Das Log nennt jeden Schritt mit Nummer und Dauer
-und meldet lange Schritte alle 15 Sekunden:
+On the first start there is no index in the volume yet. The API starts right away anyway,
+downloads the extract from `REGION_URL` in the background (default: Germany, about 4.5 GB) and
+builds the index. Until then `/api` answers `503`, also after the download: indexing the Germany
+extract takes about half an hour. `docker logs -f doorstep` and `/health`
+(`"index": false, "importing": true`) show the progress. The log names every step with its number
+and duration and reports long steps every 15 seconds:
 
 ```text
-Schritt 4/5: Features einlesen (osmium export)
-Features einlesen: 1.850.098 (123.340/s), gerade Wege
-Schritt 5/5: Index aufbauen (sortieren, Straßen zuordnen, Suchindex)
-Straßen zuordnen: 1.200.000 / 4.170.155 (28 %), noch ca. 3 min 10 s
-Suchindex aufbauen: 18.000.000 / 25.568.099 (70 %), noch ca. 2 min 5 s
+Step 4/5: Reading features (osmium export)
+Reading features: 1,850,098 (123,340/s), currently ways
+Step 5/5: Building the index (sorting, assigning streets, search index)
+Assigning streets: 1,200,000 / 4,170,155 (28 %), about 3 min 10 s left
+Building search index: 18,000,000 / 25,568,099 (70 %), about 2 min 5 s left
 ```
 
-Beim Einlesen der Features ist die Gesamtzahl vorab unbekannt (osmium liefert sie als Strom);
-dort stehen Anzahl, Rate und der gerade gelesene Objekttyp (erst Knoten, dann Wege, dann
-Relationen). Danach liefert die API Vorschläge:
+While reading the features, the total is unknown in advance (osmium delivers them as a stream);
+there the log shows the count, the rate and the object type currently being read (nodes first,
+then ways, then relations). After that the API returns suggestions:
 
 ```bash
 curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
 ```
 
-Für einen schnellen Test eine kleinere Region wählen (Bremen: 21 MB, Import in Sekunden):
+For a quick test, pick a smaller region (Bremen: 21 MB, import in seconds):
 
 ```bash
 docker run -d --name doorstep -p 2322:2322 -v data-bremen:/data \
@@ -49,12 +49,11 @@ docker run -d --name doorstep -p 2322:2322 -v data-bremen:/data \
   meine-api
 ```
 
-Der automatische Import läuft nur, solange das Volume keinen Index enthält. Für eine andere
-Region daher ein neues Volume nehmen oder `import --region <url>` ausführen (siehe
-[Kommandos](#kommandos)).
+The automatic import only runs while the volume contains no index. For a different region, use a
+new volume or run `import --region <url>` (see [Commands](#commands)).
 
-Ein typischer Produktivstart mit täglichem Update um 3 Uhr (UTC), API-Key für das eigene
-Frontend und Betrieb hinter einem Reverse-Proxy:
+A typical production start with a daily update at 3 am (UTC), an API key for your own frontend,
+and running behind a reverse proxy:
 
 ```bash
 docker run -d --name doorstep --restart unless-stopped \
@@ -62,376 +61,377 @@ docker run -d --name doorstep --restart unless-stopped \
   -e UPDATE_CRON='0 3 * * *' \
   -e TRUST_PROXY=true \
   -e RATE_LIMIT=60 \
-  -e API_KEYS=ein-langer-zufaelliger-key \
+  -e API_KEYS=a-long-random-key \
   -e RATE_LIMIT_API_KEY=1200 \
   -e CORS_ORIGINS=https://www.example.com \
   meine-api
 ```
 
-## Systemanforderungen
+## System requirements
 
-Richtwerte für den Deutschland-Extrakt. Gemessen ist nur der Regierungsbezirk Düsseldorf
-(217 MB PBF → 389 MB Index); die Werte für Deutschland sind daraus hochgerechnet.
+Guide values for the Germany extract. Only the Düsseldorf administrative region was measured
+(217 MB PBF → 389 MB index); the values for Germany are extrapolated from it.
 
-| Ressource        | Deutschland (Schätzung)                | Hinweis                                                                                                                                                               |
-| ---------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Platte (Volume)  | **mind. 30 GB frei**                   | Extrakt ca. 4,5 GB, Index ca. 8 GB. Während eines Updates liegen zusätzlich die gefilterte Zwischendatei, `index.next.sqlite` und dessen Staging-Datei auf dem Volume |
-| RAM, API         | 1 GB für den Prozess, **besser 8 GB+** | Der Prozess selbst braucht wenig, SQLite liest den Index von der Platte. Für Antwortzeiten unter 50 ms sollte der Index in den Page-Cache des Systems passen          |
-| RAM, Import      | **4–8 GB**                             | `osmium export` hält die Knotenkoordinaten im Speicher; der Import läuft als eigener Prozess neben der API                                                            |
-| CPU              | 2 Kerne                                | Die API nutzt einen Kern; der zweite hält Import und Update von der API fern                                                                                          |
-| Dauer Erstimport | ca. 15–30 min plus Download            | Regierungsbezirk Düsseldorf: 45 s für 1,4 Mio. Einträge                                                                                                               |
+| Resource          | Germany (estimate)                     | Note                                                                                                                                                         |
+| ----------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Disk (volume)     | **at least 30 GB free**                | Extract about 4.5 GB, index about 8 GB. During an update, the filtered intermediate file, `index.next.sqlite` and its staging file are on the volume as well |
+| RAM, API          | 1 GB for the process, **better 8 GB+** | The process itself needs little; SQLite reads the index from disk. For response times below 50 ms, the index should fit into the system's page cache         |
+| RAM, import       | **4–8 GB**                             | `osmium export` keeps the node coordinates in memory; the import runs as a separate process next to the API                                                  |
+| CPU               | 2 cores                                | The API uses one core; the second keeps import and update away from the API                                                                                  |
+| First import time | about 15–30 min plus download          | Düsseldorf administrative region: 45 s for 1.4 million entries                                                                                               |
 
-## Betrieb
+## Operations
 
-### Updates ohne Ausfall
+### Updates without downtime
 
-Ein Update lädt den Extrakt neu (nur wenn sich die Geofabrik-MD5 geändert hat), baut
-`index.next.sqlite` neben dem laufenden Index und ersetzt `index.sqlite` per atomarem `rename`.
-Die API liest bis dahin unverändert den alten Index. Sie prüft alle 5 Sekunden, ob unter
-`index.sqlite` eine neue Datei liegt, öffnet sie, wechselt um und leert den Cache. Kein Neustart,
-keine fehlgeschlagenen Anfragen. Ist die neue Datei unbrauchbar, bleibt der alte Index aktiv und
-im Log steht ein Fehler.
+An update downloads the extract again (only if the Geofabrik MD5 has changed), builds
+`index.next.sqlite` next to the running index and replaces `index.sqlite` with an atomic `rename`.
+Until then the API keeps reading the old index unchanged. Every 5 seconds it checks whether a new
+file lies at `index.sqlite`, opens it, switches over and clears the cache. No restart, no failed
+requests. If the new file is unusable, the old index stays active and the log shows an error.
 
-Zwei Wege, ein Update auszulösen:
+Two ways to trigger an update:
 
 ```bash
-# Automatisch nach Zeitplan (Cron-Format, Zeitzone des Containers, Default UTC)
+# Automatically on a schedule (cron format, container time zone, default UTC)
 docker run … -e UPDATE_CRON='0 3 * * *' meine-api
 
-# Von Hand im laufenden Container
+# By hand in the running container
 docker exec doorstep doorstep update
 ```
 
-- `UPDATE_CRON` versteht fünf Felder (Minute, Stunde, Tag, Monat, Wochentag) mit `*`, Zahlen,
-  Listen (`1,15`), Bereichen (`1-5`) und Schritten (`*/15`). Namen wie `mon` gehen nicht.
-  Andere Zeitzone: `-e TZ=Europe/Berlin`.
-- Es läuft nie mehr als ein Import gleichzeitig: Eine Dateisperre auf `/data/import.lock.sqlite`
-  verhindert, dass sich ein geplantes und ein manuelles Update in die Quere kommen. Das zweite
-  bricht mit Exit-Code 75 und einer Meldung ab. Endet der importierende Prozess, gibt das
-  Betriebssystem die Sperre sofort frei, auch wenn der Container mitten im Import ersetzt wird.
-  Die Datei selbst bleibt liegen und muss nie gelöscht werden. Eine `import.lock` älterer
-  Versionen wird beim nächsten Import entfernt. Das Volume muss POSIX-Dateisperren
-  unterstützen (lokales Docker-Volume oder Bind-Mount, kein NFS).
-- Sofort neu laden statt bis zu 5 Sekunden zu warten: `docker kill -s HUP doorstep`.
-- Kontrolle: `/health` zeigt in `importedAt`, wann der aktive Index gebaut wurde; `/metrics`
-  zählt `doorstep_index_reloads_total` und `doorstep_updates_total`.
+- `UPDATE_CRON` understands five fields (minute, hour, day, month, weekday) with `*`, numbers,
+  lists (`1,15`), ranges (`1-5`) and steps (`*/15`). Names like `mon` do not work.
+  Different time zone: `-e TZ=Europe/Berlin`.
+- Never more than one import at a time: a file lock on `/data/import.lock.sqlite` keeps a
+  scheduled and a manual update from getting in each other's way. The second one stops with exit
+  code 75 and a message. When the importing process ends, the operating system releases the lock
+  immediately, even if the container is replaced in the middle of an import. The file itself stays
+  and never needs to be deleted. An `import.lock` from older versions is removed on the next
+  import. The volume must support POSIX file locks (local Docker volume or bind mount, not NFS).
+- Reload right away instead of waiting up to 5 seconds: `docker kill -s HUP doorstep`.
+- Checking: `/health` shows in `importedAt` when the active index was built; `/metrics` counts
+  `doorstep_index_reloads_total` and `doorstep_updates_total`.
 
-Geofabrik aktualisiert die Extrakte täglich; ein tägliches oder wöchentliches Update reicht.
+Geofabrik updates the extracts daily; a daily or weekly update is enough.
 
-### Rate-Limiting und API-Keys
+### Rate limiting and API keys
 
-- Ohne API-Key: höchstens `RATE_LIMIT` Anfragen pro Minute und IP auf `/api` und `/reverse`.
-- Mit gültigem API-Key (Header `X-API-Key: <key>` oder Parameter `api_key=<key>`): höchstens
-  `RATE_LIMIT_API_KEY` Anfragen pro Minute und Key, unabhängig von der IP. Unbekannte Keys
-  zählen wie Anfragen ohne Key.
-- Darüber antwortet die API mit `429` und `Retry-After`. Jede Antwort trägt
-  `X-RateLimit-Limit`, `X-RateLimit-Remaining` und `X-RateLimit-Reset`.
-- `/health` und `/metrics` zählen nicht mit.
-- Abschalten: `RATE_LIMIT_ENABLED=false` (oder `RATE_LIMIT=0`).
-- **Hinter einem Reverse-Proxy** (nginx, Traefik, Caddy) `TRUST_PROXY=true` setzen, sonst
-  zählen alle Anfragen für die IP des Proxys. Ohne Proxy `TRUST_PROXY` aus lassen, sonst kann
-  jeder Client über `X-Forwarded-For` eine beliebige IP angeben.
+- Without an API key: at most `RATE_LIMIT` requests per minute and IP on `/api` and `/reverse`.
+- With a valid API key (header `X-API-Key: <key>` or parameter `api_key=<key>`): at most
+  `RATE_LIMIT_API_KEY` requests per minute and key, regardless of the IP. Unknown keys count like
+  requests without a key.
+- Above that, the API answers `429` with `Retry-After`. Every response carries
+  `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset`.
+- `/health` and `/metrics` do not count.
+- Turning it off: `RATE_LIMIT_ENABLED=false` (or `RATE_LIMIT=0`).
+- **Behind a reverse proxy** (nginx, Traefik, Caddy), set `TRUST_PROXY=true`; otherwise all
+  requests count for the proxy's IP. Without a proxy, leave `TRUST_PROXY` off; otherwise any
+  client can claim any IP via `X-Forwarded-For`.
 
-Die Zähler liegen im Speicher des Prozesses und beginnen nach einem Neustart neu.
+The counters live in the process's memory and start over after a restart.
 
 ### Cache
 
-Ergebnisse von Suchanfragen hält ein LRU-Cache im Speicher (`CACHE_SIZE` Einträge, Default 10.000,
-grob 20–50 MB). Schlüssel sind die normalisierte Anfrage, `limit`, `lang` und der Standort. Kurze
-Präfixe („Ha“, „Kö“) kommen beim Tippen am häufigsten wieder und bleiben deshalb im Cache; lange
-Anfragen mit Standort sind auf großen Indizes am teuersten und werden ebenfalls gecacht. Der Header
-`X-Cache` zeigt `HIT` oder `MISS`. Nach einem Update wird der Cache geleert.
+An in-memory LRU cache keeps the results of search requests (`CACHE_SIZE` entries, default
+10,000, roughly 20–50 MB). Keys are the normalized query, `limit`, `lang` and the location. Short
+prefixes ("Ha", "Kö") recur most often while typing and therefore stay in the cache; long queries
+with a location are the most expensive on large indexes and are cached as well. The `X-Cache`
+header shows `HIT` or `MISS`. The cache is cleared after an update.
 
 ### Logs
 
-Alle Logs sind JSON-Zeilen im pino-Format auf stdout (`level`, `time`, `pid`, `hostname`,
-`msg`), auch die von `import` und `update` (mit `component`). Pro Anfrage gibt es eine Zeile
-mit `method`, `route`, `status`, `durationMs` und `cache`. Suchtexte und IP-Adressen werden
-nicht geloggt, da Adresseingaben personenbezogen sein können. `LOG_LEVEL=warn` schaltet die
-Zeilen pro Anfrage ab.
+All logs are JSON lines in pino format on stdout (`level`, `time`, `pid`, `hostname`, `msg`),
+including those of `import` and `update` (with `component`). There is one line per request with
+`method`, `route`, `status`, `durationMs` and `cache`. Search texts and IP addresses are not
+logged, because address input can be personal data. `LOG_LEVEL=warn` turns off the per-request
+lines.
 
 ### Metrics
 
-`GET /metrics` liefert Kennzahlen im Prometheus-Format:
+`GET /metrics` returns metrics in Prometheus format:
 
-| Metrik                                                                                  | Typ       | Inhalt                                                   |
-| --------------------------------------------------------------------------------------- | --------- | -------------------------------------------------------- |
-| `doorstep_http_requests_total`                                                          | counter   | Anfragen nach `method`, `route`, `status`                |
-| `doorstep_http_request_duration_seconds`                                                | histogram | Antwortzeit nach `route`                                 |
-| `doorstep_search_cache_hits_total`, `…misses_total`                                     | counter   | Cache-Treffer und -Fehlschläge                           |
-| `doorstep_rate_limited_total`                                                           | counter   | Mit `429` abgewiesene Anfragen                           |
-| `doorstep_index_available`                                                              | gauge     | 1, wenn ein nutzbarer Index geladen ist                  |
-| `doorstep_index_places`                                                                 | gauge     | Einträge im aktiven Index                                |
-| `doorstep_index_imported_timestamp_seconds`                                             | gauge     | Bauzeitpunkt des aktiven Index (Alarm, wenn zu alt)      |
-| `doorstep_index_reloads_total`, `…reload_errors_total`                                  | counter   | Index-Wechsel ohne Neustart und gescheiterte             |
-| `doorstep_updates_total`                                                                | counter   | Geplante Updates nach `result` (success/failure/skipped) |
-| `process_resident_memory_bytes`, `nodejs_heap_used_bytes`, `process_start_time_seconds` | gauge     | Prozess                                                  |
+| Metric                                                                                  | Type      | Content                                                 |
+| --------------------------------------------------------------------------------------- | --------- | ------------------------------------------------------- |
+| `doorstep_http_requests_total`                                                          | counter   | Requests by `method`, `route`, `status`                 |
+| `doorstep_http_request_duration_seconds`                                                | histogram | Response time by `route`                                |
+| `doorstep_search_cache_hits_total`, `…misses_total`                                     | counter   | Cache hits and misses                                   |
+| `doorstep_rate_limited_total`                                                           | counter   | Requests rejected with `429`                            |
+| `doorstep_index_available`                                                              | gauge     | 1 if a usable index is loaded                           |
+| `doorstep_index_places`                                                                 | gauge     | Entries in the active index                             |
+| `doorstep_index_imported_timestamp_seconds`                                             | gauge     | Build time of the active index (alert if too old)       |
+| `doorstep_index_reloads_total`, `…reload_errors_total`                                  | counter   | Index switches without a restart, and failed ones       |
+| `doorstep_updates_total`                                                                | counter   | Scheduled updates by `result` (success/failure/skipped) |
+| `process_resident_memory_bytes`, `nodejs_heap_used_bytes`, `process_start_time_seconds` | gauge     | Process                                                 |
 
-`/metrics` ist nicht geschützt. Soll es nicht öffentlich erreichbar sein, im Reverse-Proxy
-sperren.
+`/metrics` is not protected. If it should not be publicly reachable, block it in the reverse
+proxy.
 
 ### Healthcheck
 
-`GET /health` antwortet mit `200`, sobald die API läuft, auch während des ersten Imports:
-`status`, `version`, `uptime`, `index` (nutzbarer Index vorhanden), `importing` (Import oder
-Update läuft), `importedAt` (Bauzeitpunkt des aktiven Index) und `attribution`. Das Image nutzt
-das für seinen `HEALTHCHECK`.
+`GET /health` answers `200` as soon as the API is running, also during the first import:
+`status`, `version`, `uptime`, `index` (usable index available), `importing` (import or update
+running), `importedAt` (build time of the active index) and `attribution`. The image uses this for
+its `HEALTHCHECK`.
 
-## Konfiguration (Umgebungsvariablen)
+## Configuration (environment variables)
 
-Die Konfiguration erfolgt ausschließlich über Umgebungsvariablen. Ungültige Werte führen beim
-Start zu einer Fehlermeldung mit allen betroffenen Variablen.
+Configuration happens exclusively via environment variables. Invalid values lead to an error
+message at startup listing all affected variables.
 
-| Variable             | Default                                                       | Beschreibung                                                                |
-| -------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `REGION_URL`         | `https://download.geofabrik.de/europe/germany-latest.osm.pbf` | Geofabrik-Extrakt für Import und Update                                     |
-| `HOST`               | `0.0.0.0`                                                     | Bind-Adresse der API                                                        |
-| `PORT`               | `2322`                                                        | Port der API                                                                |
-| `DATA_DIR`           | `/data`                                                       | Verzeichnis für Extrakt und Index (absoluter Pfad)                          |
-| `DEFAULT_LANG`       | `de`                                                          | Standardsprache (zweistelliger Code)                                        |
-| `AUTO_IMPORT`        | `false` (im Docker-Image `true`)                              | `serve` importiert im Hintergrund, falls kein Index existiert               |
-| `UPDATE_CRON`        | – (keine Updates)                                             | Zeitplan für automatische Updates im Cron-Format, z. B. `0 3 * * *`         |
-| `RATE_LIMIT_ENABLED` | `true`                                                        | Rate-Limiting an oder aus                                                   |
-| `RATE_LIMIT`         | `60`                                                          | Anfragen pro Minute und IP, `0` = aus                                       |
-| `API_KEYS`           | –                                                             | Kommagetrennte API-Keys                                                     |
-| `RATE_LIMIT_API_KEY` | `600`                                                         | Anfragen pro Minute und API-Key                                             |
-| `TRUST_PROXY`        | `false`                                                       | Client-IP aus `X-Forwarded-For` übernehmen (nur hinter einem Reverse-Proxy) |
-| `CACHE_SIZE`         | `10000`                                                       | Einträge im Cache für Suchanfragen, `0` = aus                               |
-| `CORS_ORIGINS`       | `*`                                                           | Kommagetrennte Liste erlaubter Origins                                      |
-| `LOG_LEVEL`          | `info`                                                        | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                |
-| `TZ`                 | `UTC` (Container)                                             | Zeitzone für `UPDATE_CRON`                                                  |
+| Variable             | Default                                                       | Description                                                             |
+| -------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `REGION_URL`         | `https://download.geofabrik.de/europe/germany-latest.osm.pbf` | Geofabrik extract for import and update                                 |
+| `HOST`               | `0.0.0.0`                                                     | Bind address of the API                                                 |
+| `PORT`               | `2322`                                                        | Port of the API                                                         |
+| `DATA_DIR`           | `/data`                                                       | Directory for extract and index (absolute path)                         |
+| `DEFAULT_LANG`       | `de`                                                          | Default language (two-letter code)                                      |
+| `AUTO_IMPORT`        | `false` (`true` in the Docker image)                          | `serve` imports in the background if no index exists                    |
+| `UPDATE_CRON`        | – (no updates)                                                | Schedule for automatic updates in cron format, e.g. `0 3 * * *`         |
+| `RATE_LIMIT_ENABLED` | `true`                                                        | Rate limiting on or off                                                 |
+| `RATE_LIMIT`         | `60`                                                          | Requests per minute and IP, `0` = off                                   |
+| `API_KEYS`           | –                                                             | Comma-separated API keys                                                |
+| `RATE_LIMIT_API_KEY` | `600`                                                         | Requests per minute and API key                                         |
+| `TRUST_PROXY`        | `false`                                                       | Take the client IP from `X-Forwarded-For` (only behind a reverse proxy) |
+| `CACHE_SIZE`         | `10000`                                                       | Entries in the cache for search requests, `0` = off                     |
+| `CORS_ORIGINS`       | `*`                                                           | Comma-separated list of allowed origins                                 |
+| `LOG_LEVEL`          | `info`                                                        | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`            |
+| `TZ`                 | `UTC` (container)                                             | Time zone for `UPDATE_CRON`                                             |
 
-Schalter (`AUTO_IMPORT`, `RATE_LIMIT_ENABLED`, `TRUST_PROXY`) akzeptieren `true`/`false`,
-`1`/`0` und `yes`/`no`.
+Flags (`AUTO_IMPORT`, `RATE_LIMIT_ENABLED`, `TRUST_PROXY`) accept `true`/`false`, `1`/`0` and
+`yes`/`no`.
 
 ## API
 
-Alle Antworten sind GeoJSON-`FeatureCollection`s und enthalten das Feld
-`attribution` ("© OpenStreetMap contributors"). Erfolgreiche Antworten tragen
-`Cache-Control: public, max-age=3600`, Fehler `no-store`.
+All responses are GeoJSON `FeatureCollection`s and contain the `attribution`
+field ("© OpenStreetMap contributors"). Successful responses carry
+`Cache-Control: public, max-age=3600`, errors `no-store`.
 
-### `GET /api` – Autosuggest
+### `GET /api` – autosuggest
 
-| Parameter    | Pflicht | Beschreibung                                                        |
-| ------------ | ------- | ------------------------------------------------------------------- |
-| `q`          | ja      | Suchtext, mindestens 2 Zeichen                                      |
-| `limit`      | nein    | 1–10, Default 5                                                     |
-| `lat`, `lon` | nein    | Nur gemeinsam; Treffer in der Nähe werden angehoben (Location Bias) |
-| `lang`       | nein    | Zweistelliger Sprachcode, Default `DEFAULT_LANG`                    |
-| `api_key`    | nein    | API-Key (alternativ Header `X-API-Key`)                             |
+| Parameter    | Required | Description                                            |
+| ------------ | -------- | ------------------------------------------------------ |
+| `q`          | yes      | Search text, at least 2 characters                     |
+| `limit`      | no       | 1–10, default 5                                        |
+| `lat`, `lon` | no       | Only together; nearby hits are boosted (location bias) |
+| `lang`       | no       | Two-letter language code, default `DEFAULT_LANG`       |
+| `api_key`    | no       | API key (alternatively the `X-API-Key` header)         |
 
-Das letzte Wort wird als Präfix gesucht, alle anderen exakt. Findet die Anfrage nichts, wird
-der Reihe nach versucht: ohne einzelne Buchstaben (`Frankfurt a.M.`, `Mülheim a.d. Ruhr`), die
-Straße ohne Hausnummer (gibt es die Hausnummer nicht, kommt die Straße zurück) und erst dann das
-letzte Wort um bis zu zwei Zeichen gekürzt (Tippfehler am Wortende). Fehlt eine Hausnummer, kommt
-so die Straße im genannten Ort vor einer Hausnummer in einem ähnlich geschriebenen Ort
-(`… 1 Bonn` liefert nicht `… 1 Bönen`).
+The last word is searched as a prefix, all others exactly. If the query finds nothing, these are
+tried in order: without single letters (`Frankfurt a.M.`, `Mülheim a.d. Ruhr`), the street
+without the house number (if the house number does not exist, the street is returned), and only
+then the last word trimmed by up to two characters (typo at the end of a word). So when a house
+number is missing, the street in the named city comes before a house number in a similarly
+spelled city (`… 1 Bonn` does not return `… 1 Bönen`).
 
-**Felder je Treffer:** `name`, `street`, `housenumber`, `postcode`, `city`, `district`, `state`,
-`country`, `osm_id`, `osm_type`, `type`; fehlende Werte werden weggelassen. `district` ist der
-Ortsteil (`addr:suburb`, sonst `addr:hamlet`), `city` oft die Gemeinde: `Strandstraße 1
-Westerland` findet die Adresse mit `city: "Sylt"`, `district: "Westerland"`. Adressen ohne
-Straße (`addr:place`) tragen den Ortsnamen in `street`. Straßen übernehmen Ort, Ortsteil und PLZ
-von der nächsten Adresse an derselben Straße. `country` (ISO-Code, z. B. `DE`) und `state`
-(Bundesland, z. B. `Nordrhein-Westfalen`) kommen aus den OSM-Verwaltungsgrenzen, siehe unten.
+**Fields per hit:** `name`, `street`, `housenumber`, `postcode`, `city`, `district`, `state`,
+`country`, `osm_id`, `osm_type`, `type`; missing values are left out. `district` is the district
+(`addr:suburb`, otherwise `addr:hamlet`), `city` is often the municipality: `Strandstraße 1
+Westerland` finds the address with `city: "Sylt"`, `district: "Westerland"`. Addresses without a
+street (`addr:place`) carry the place name in `street`. Streets take city, district and postcode
+from the nearest address on the same street. `country` (ISO code, e.g. `DE`) and `state` (federal
+state, e.g. `Nordrhein-Westfalen`) come from the OSM administrative boundaries, see below.
 
-**Normalisierung** (Import und Suche gleich, `src/search/normalize.ts`): Kleinschreibung,
-`ä` ↔ `ae`, `ß` ↔ `ss`, andere Akzente entfernt, `Str.` ↔ `Straße`, `Schlosstr.` ↔
-`Schloßstraße`, `St.` ↔ `Sankt`, `60 d` und `60d` gleichwertig, `Hauptstraße12` →
-`Hauptstraße 12`. Zusätzlich
-wird die Schreibweise ohne Umlaut-e indexiert, sodass auch `Dusseldorf` Düsseldorf findet.
-Namen mit den Grundwörtern `Straße`, `Allee`, `Platz`, `Gasse`, `Damm`, `Ring` und `Weg` werden
-außerdem getrennt und zusammengeschrieben indexiert: `Friedrich Straße` findet die Friedrichstraße,
-`Konrad-Adenauerstraße` die Konrad-Adenauer-Straße.
+**Normalization** (the same for import and search, `src/search/normalize.ts`): lowercase,
+`ä` ↔ `ae`, `ß` ↔ `ss`, other accents removed, `Str.` ↔ `Straße`, `Schlosstr.` ↔
+`Schloßstraße`, `St.` ↔ `Sankt`, `60 d` and `60d` equivalent, `Hauptstraße12` →
+`Hauptstraße 12`. In addition, the spelling without umlaut e is indexed, so `Dusseldorf` also
+finds Düsseldorf. Names with the base words `Straße`, `Allee`, `Platz`, `Gasse`, `Damm`, `Ring`
+and `Weg` are also indexed split and joined: `Friedrich Straße` finds Friedrichstraße,
+`Konrad-Adenauerstraße` finds Konrad-Adenauer-Straße.
 
-**Ranking** (`src/search/ranking.ts`): Aus bis zu 200 Kandidaten (bei `lat/lon` zusätzlich bis zu
-200 im Umkreis von 25 km, gefunden über eine Rasterzelle je Eintrag im FTS-Index) wird ein Score aus FTS-Relevanz (`bm25`), Übereinstimmung mit dem Namen,
-`importance` (Stadt vor Ortsteil vor Straße vor Hausnummer) und – falls angegeben – der Nähe zum
-Standort berechnet. Gleichnamige Treffer im Abstand bis 2 km (z. B. die Abschnitte einer Straße)
-werden zu einem zusammengefasst.
+**Ranking** (`src/search/ranking.ts`): from up to 200 candidates (with `lat/lon` also up to 200
+within 25 km, found via one grid cell per entry in the FTS index), a score is computed from FTS
+relevance (`bm25`), match with the name, `importance` (city before district before street before
+house number) and – if given – proximity to the location. Hits with the same name within 2 km
+(e.g. the segments of a street) are merged into one.
 
-**Sprachen:** `name:de` und `name:en` werden beim Import getrennt gespeichert und alle Varianten
-durchsucht. `lang=de|en` wählt den angezeigten Namen, sonst gilt `name`.
+**Languages:** `name:de` and `name:en` are stored separately during the import, and all variants
+are searched. `lang=de|en` selects the displayed name; otherwise `name` applies.
 
-Die Suchdauer steht im Antwort-Header `Server-Timing` (z. B. `search;dur=1.84`).
+The search duration is in the `Server-Timing` response header (e.g. `search;dur=1.84`).
 
 ```bash
 curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
 ```
 
-**Grenzen bei der Prüfung von Lieferadressen** (gemessen am Deutschland-Extrakt):
+**Limits when checking delivery addresses** (measured on the Germany extract):
 
-- **Land und Bundesland kommen aus den Verwaltungsgrenzen**, nicht aus `addr:country`/`addr:state`
-  (fehlen bei 29 % bzw. fast allen Adressen, teils falsch: Riezlern und Jungholz sind oft als
-  `DE` getaggt). Der Import lädt die Grenzen (`boundary=administrative`, `admin_level=2` und `4`)
-  und ordnet jedem Eintrag, auch Straßen ohne Adressen, Land und Bundesland per Punkt-in-Polygon
-  zu. Ein Shop prüft also `country == "DE"` und bei Bedarf `state`.
-  - Der Geofabrik-Extrakt enthält Adressen aus den Nachbarländern (Kerkrade, Zgorzelec,
-    Straßburg, Kreuzlingen …), deren Grenzen aber nur angeschnitten. Liegt ein Punkt außerhalb
-    Deutschlands, bestimmt der nächste Grenzweg das Nachbarland; `state` bleibt dann leer
-    (außer das Land stimmt mit `addr:country` überein, dann gilt `addr:state`).
-  - Unsicher nur nahe einem Dreiländereck (z. B. Vaals/Aachen/Kelmis): Dort kann ein Punkt im
-    Nachbarland dem falschen Nachbarn zugeordnet werden. Deutsche Adressen sind davon nicht
-    betroffen, sie liegen in der vollständigen Fläche Deutschlands.
-  - Mit einem Extrakt, der kein Land vollständig enthält (z. B. ein Regierungsbezirk), gibt es
-    keine Flächen; dann gelten wie früher `addr:country`/`addr:state`.
-  - Am Deutschland-Extrakt geprüft: Alle Abweichungen von einem vorhandenen `addr:country` sind
-    Korrekturen; bei Adressen ohne `addr:country` passt das PLZ-Format immer zum ermittelten Land.
-- **Sonderfälle mit deutscher PLZ:** Büsingen am Hochrhein (78266, Schweizer Zollgebiet),
-  Helgoland (27498, außerhalb des EU-Zollgebiets), Kleinwalsertal (87567–87569) und Jungholz
-  (87491) gehören zu Österreich. Solche Regeln prüft der Shop am besten über die PLZ.
-- **Tippfehler mitten im Wort** (`Friedrichstrase`, `Kastanineallee`) werden nicht erkannt, nur am
-  Wortende.
+- **Country and state come from the administrative boundaries**, not from
+  `addr:country`/`addr:state` (missing on 29 % and almost all addresses respectively, sometimes
+  wrong: Riezlern and Jungholz are often tagged `DE`). The import loads the boundaries
+  (`boundary=administrative`, `admin_level=2` and `4`) and assigns country and state to every
+  entry, including streets without addresses, via point in polygon. So a shop checks
+  `country == "DE"` and `state` if needed.
+  - The Geofabrik extract contains addresses from neighboring countries (Kerkrade, Zgorzelec,
+    Strasbourg, Kreuzlingen …), but their boundaries are only cut off. If a point lies outside
+    Germany, the nearest boundary way determines the neighboring country; `state` then stays empty
+    (unless the country matches `addr:country`, in which case `addr:state` applies).
+  - Uncertain only near a tripoint (e.g. Vaals/Aachen/Kelmis): there a point in a neighboring
+    country can be assigned to the wrong neighbor. German addresses are not affected; they lie in
+    the complete area of Germany.
+  - With an extract that contains no complete country (e.g. an administrative region), there are
+    no areas; then `addr:country`/`addr:state` apply as before.
+  - Checked on the Germany extract: all deviations from an existing `addr:country` are
+    corrections; for addresses without `addr:country`, the postcode format always matches the
+    determined country.
+- **Special cases with German postcodes:** Büsingen am Hochrhein (78266, Swiss customs territory),
+  Helgoland (27498, outside the EU customs territory), Kleinwalsertal (87567–87569) and Jungholz
+  (87491) belong to Austria. A shop is best off checking such rules by postcode.
+- **Typos in the middle of a word** (`Friedrichstrase`, `Kastanineallee`) are not recognized,
+  only at the end of a word.
 
-### `GET /reverse` – nächstes Objekt zu einem Punkt
+### `GET /reverse` – nearest object to a point
 
-| Parameter    | Pflicht | Beschreibung                            |
-| ------------ | ------- | --------------------------------------- |
-| `lat`, `lon` | ja      | Koordinate in WGS84                     |
-| `limit`      | nein    | 1–10, Default 1                         |
-| `radius`     | nein    | Suchradius in km, > 0 bis 10, Default 1 |
-| `lang`       | nein    | Wie bei `/api`                          |
+| Parameter    | Required | Description                               |
+| ------------ | -------- | ----------------------------------------- |
+| `lat`, `lon` | yes      | Coordinate in WGS84                       |
+| `limit`      | no       | 1–10, default 1                           |
+| `radius`     | no       | Search radius in km, > 0 to 10, default 1 |
+| `lang`       | no       | As for `/api`                             |
 
-Ungültige Parameter liefern `400` mit einer Meldung wie `q: muss mindestens 2 Zeichen lang sein`.
-Solange noch kein Index unter `$DATA_DIR/index.sqlite` liegt, antworten beide Endpunkte mit `503`.
-Das gilt auch für einen Index mit altem Schema (aktuell Version 7, seit getrennt und
-zusammengeschriebenen Straßennamen; Version 6 brachte die Wortstatistik für bm25, Version 5 Land
-und Bundesland aus Verwaltungsgrenzen): dann bitte neu importieren bzw. das nächste Update
-abwarten.
+Invalid parameters return `400` with a message like `q: must be at least 2 characters long`.
+As long as there is no index at `$DATA_DIR/index.sqlite`, both endpoints answer `503`. This also
+applies to an index with an old schema (currently version 7, since split and joined street names;
+version 6 brought the word statistics for bm25, version 5 country and state from administrative
+boundaries): then please import again or wait for the next update.
 
-### Weitere Endpunkte
+### Other endpoints
 
-- `GET /health` – Status, siehe [Healthcheck](#healthcheck)
-- `GET /metrics` – Prometheus-Kennzahlen, siehe [Metrics](#metrics)
+- `GET /health` – status, see [Healthcheck](#healthcheck)
+- `GET /metrics` – Prometheus metrics, see [Metrics](#metrics)
 
 ## Docker
 
-Das `Dockerfile` baut in mehreren Stufen: TypeScript-Build, Produktions-Abhängigkeiten und ein
-schlankes Laufzeit-Image auf `node:24.22.1-trixie-slim` (Debian 13) mit `osmium-tool`. SQLite ist
-als `node:sqlite` in Node enthalten (mit FTS5 und R\*Tree); native Module werden nicht gebaut.
+The `Dockerfile` builds in several stages: TypeScript build, production dependencies and a slim
+runtime image on `node:24.22.1-trixie-slim` (Debian 13) with `osmium-tool`. SQLite is built into
+Node as `node:sqlite` (with FTS5 and R\*Tree); no native modules are compiled.
 
-- Läuft als Nutzer `node` (uid 1000), nicht als root.
-- `/data` ist ein `VOLUME` und enthält `extract.osm.pbf`, `index.sqlite` und während eines
-  Updates `index.next.sqlite`; dazu die Sperrdatei `import.lock.sqlite` (mit `import.lock.sqlite.json`, solange ein Import läuft). Bei einem Bind-Mount (`-v $PWD/data:/data`)
-  muss das Verzeichnis für uid 1000 beschreibbar sein.
-- Port `2322`, `HEALTHCHECK` gegen `/health` (alle 30 s).
-- Schlägt der automatische Erstimport fehl, beendet sich der Container mit Exit-Code 1. Mit
-  `--restart unless-stopped` startet Docker ihn neu, und der Import wird wiederholt; ein
-  abgebrochener Download wird dabei fortgesetzt. Ein gescheitertes geplantes Update beendet den
-  Container nicht, der bisherige Index bleibt aktiv.
+- Runs as user `node` (uid 1000), not as root.
+- `/data` is a `VOLUME` and contains `extract.osm.pbf`, `index.sqlite` and, during an update,
+  `index.next.sqlite`; also the lock file `import.lock.sqlite` (with `import.lock.sqlite.json`
+  while an import is running). With a bind mount (`-v $PWD/data:/data`), the directory must be
+  writable for uid 1000.
+- Port `2322`, `HEALTHCHECK` against `/health` (every 30 s).
+- If the automatic first import fails, the container exits with code 1. With
+  `--restart unless-stopped`, Docker restarts it and the import is repeated; an interrupted
+  download is resumed. A failed scheduled update does not stop the container; the current index
+  stays active.
 
-### Kommandos
+### Commands
 
-| Kommando                                    | Beschreibung                                                                                        |
-| ------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `serve` (Standard)                          | API starten; ohne Index läuft der Import im Hintergrund (`AUTO_IMPORT`), Updates nach `UPDATE_CRON` |
-| `import [--region <url>] [--input <datei>]` | Index bauen (Download, Filter, Import) und atomar austauschen                                       |
-| `update`                                    | Extrakt neu laden (nur wenn die Geofabrik-MD5 sich geändert hat), Index neu bauen und austauschen   |
+| Command                                    | Description                                                                                                   |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `serve` (default)                          | Start the API; without an index, the import runs in the background (`AUTO_IMPORT`), updates per `UPDATE_CRON` |
+| `import [--region <url>] [--input <file>]` | Build the index (download, filter, import) and swap it in atomically                                          |
+| `update`                                   | Download the extract again (only if the Geofabrik MD5 changed), rebuild the index and swap it in              |
 
 ```bash
-# Import vorab, ohne die API zu starten
+# Import up front, without starting the API
 docker run --rm -v data:/data meine-api import --region https://download.geofabrik.de/europe/germany/bremen-latest.osm.pbf
 
-# Update im laufenden Container; die API wechselt von selbst auf den neuen Index
+# Update in the running container; the API switches to the new index by itself
 docker exec doorstep doorstep update
 ```
 
-### Smoke-Test
+### Smoke test
 
 ```bash
 npm run smoke
 ```
 
-Baut das Image, startet es mit leerem Volume und dem Mini-Extrakt aus `test/fixtures/`
-(automatischer Import über `REGION_URL`, ausgeliefert von einem Hilfscontainer), fragt `/health`,
-`/api`, `/reverse` und `/metrics` ab, prüft den `HEALTHCHECK`, führt `update` im laufenden
-Container unter ständigen Anfragen aus und prüft, dass keine fehlschlägt und die API den neuen
-Index ohne Neustart lädt. Braucht nur Docker und `curl`, keinen Internetzugriff außer für den
-Image-Build.
+Builds the image, starts it with an empty volume and the mini extract from `test/fixtures/`
+(automatic import via `REGION_URL`, served by a helper container), queries `/health`, `/api`,
+`/reverse` and `/metrics`, checks the `HEALTHCHECK`, runs `update` in the running container under
+constant requests and checks that none fails and that the API loads the new index without a
+restart. Needs only Docker and `curl`, no internet access except for the image build.
 
-## Lasttest
+## Load test
 
 ```bash
 npm run loadtest -- --url http://127.0.0.1:2322 --duration 20 --connections 50 [--location]
 ```
 
-Schickt mit [autocannon](https://github.com/mcollina/autocannon) jedes Tipp-Präfix typischer
-Eingaben („Kö“, „Kön“, „Köni“, …), reihum über alle Verbindungen. Endet mit Exit-Code 1, wenn
-eine Anfrage fehlschlägt. Am Server dafür `RATE_LIMIT_ENABLED=false` setzen oder mit
-`--api-key` einen Key mit hohem Limit verwenden.
+Sends every typing prefix of typical inputs ("Kö", "Kön", "Köni", …) with
+[autocannon](https://github.com/mcollina/autocannon), in turn across all connections. Exits with
+code 1 if a request fails. For this, set `RATE_LIMIT_ENABLED=false` on the server or use a key
+with a high limit via `--api-key`.
 
-Ergebnisse (Apple M3, Node 24, ein API-Prozess, Index aus
-`test/fixtures/duesseldorf.geojsonseq` mit 17.618 Einträgen, 50 Verbindungen, 234 verschiedene
-Anfragen, `LOG_LEVEL=info`):
+Results (Apple M3, Node 24, one API process, index from `test/fixtures/duesseldorf.geojsonseq`
+with 17,618 entries, 50 connections, 234 different requests, `LOG_LEVEL=info`):
 
-| Szenario                                          | Anfragen/s | p50   | p90   | p99    | Fehler |
-| ------------------------------------------------- | ---------- | ----- | ----- | ------ | ------ |
-| Ohne Cache (`CACHE_SIZE=0`), ohne Standort        | 1.200      | 40 ms | 69 ms | 96 ms  | 0      |
-| Ohne Cache, mit Standort                          | 1.033      | 50 ms | 84 ms | 128 ms | 0      |
-| Mit Cache, mit Standort                           | 4.090      | 2 ms  | 45 ms | 71 ms  | 0      |
-| Mit Cache, `update` läuft währenddessen (20 s)    | 6.628      | 2 ms  | 23 ms | 67 ms  | 0      |
-| Ohne Cache, zwei Updates per `UPDATE_CRON` (75 s) | 2.072      | 6 ms  | 75 ms | 93 ms  | 0      |
+| Scenario                                            | Requests/s | p50   | p90   | p99    | Errors |
+| --------------------------------------------------- | ---------- | ----- | ----- | ------ | ------ |
+| Without cache (`CACHE_SIZE=0`), without location    | 1,200      | 40 ms | 69 ms | 96 ms  | 0      |
+| Without cache, with location                        | 1,033      | 50 ms | 84 ms | 128 ms | 0      |
+| With cache, with location                           | 4,090      | 2 ms  | 45 ms | 71 ms  | 0      |
+| With cache, `update` running meanwhile (20 s)       | 6,628      | 2 ms  | 23 ms | 67 ms  | 0      |
+| Without cache, two updates via `UPDATE_CRON` (75 s) | 2,072      | 6 ms  | 75 ms | 93 ms  | 0      |
 
-So lesen: Die API bearbeitet Anfragen auf einem Kern nacheinander. Bei 50 gleichzeitigen
-Verbindungen ist die Latenz daher vor allem Wartezeit; eine einzelne Suche dauert ohne Cache
-im Mittel unter 1 ms (siehe `Server-Timing`). Der Cache-Anteil liegt bei nur 234 verschiedenen
-Anfragen höher als im echten Betrieb. In beiden Update-Szenarien schlug keine einzige von
-132.549 bzw. 155.411 Anfragen fehl.
+How to read this: the API handles requests one after another on one core. With 50 concurrent
+connections, the latency is therefore mostly waiting time; a single search without cache takes
+under 1 ms on average (see `Server-Timing`). With only 234 different requests, the cache share is
+higher than in real operation. In both update scenarios, not a single one of 132,549 and 155,411
+requests respectively failed.
 
-**Deutschland-Index** (Schema 7, 25,6 Mio. Einträge, 9,3 GB, sonst wie oben, warmer Page-Cache):
+**Germany index** (schema 7, 25.6 million entries, 9.3 GB, otherwise as above, warm page cache):
 
-| Szenario                                   | Anfragen/s | p50    | p90    | p99    | Fehler |
-| ------------------------------------------ | ---------- | ------ | ------ | ------ | ------ |
-| Ohne Cache (`CACHE_SIZE=0`), ohne Standort | 411        | 81 ms  | 258 ms | 584 ms | 0      |
-| Ohne Cache, mit Standort                   | 221        | 169 ms | 429 ms | 927 ms | 0      |
-| Mit Cache, ohne Standort                   | 40.163     | 1 ms   | 1 ms   | 2 ms   | 0      |
-| Mit Cache, mit Standort                    | 31.397     | 1 ms   | 1 ms   | 4 ms   | 0      |
+| Scenario                                         | Requests/s | p50    | p90    | p99    | Errors |
+| ------------------------------------------------ | ---------- | ------ | ------ | ------ | ------ |
+| Without cache (`CACHE_SIZE=0`), without location | 411        | 81 ms  | 258 ms | 584 ms | 0      |
+| Without cache, with location                     | 221        | 169 ms | 429 ms | 927 ms | 0      |
+| With cache, without location                     | 40,163     | 1 ms   | 1 ms   | 2 ms   | 0      |
+| With cache, with location                        | 31,397     | 1 ms   | 1 ms   | 4 ms   | 0      |
 
-Eine Suche dauert hier im Mittel 2,4 ms ohne und 4,5 ms mit Standort; bei 50 Verbindungen
-warten die Anfragen ohne Cache vor allem aufeinander. Die Werte mit Cache sind eine Obergrenze:
-Der Test wiederholt 234 Anfragen, 99,98 % kommen aus dem Cache (Prozess danach 264 MB RSS). Im
-echten Betrieb sind lange Anfragen meist einmalig, dort liegt der Durchsatz zwischen beiden
-Zeilen. Bis zum 28.10.2026 nahm der Cache nur Anfragen bis 10 Zeichen auf; damit kam der Test
-mit Standort auf 545 Anfragen/s. Für mehr Durchsatz ohne Cache siehe ROADMAP („Durchsatz auf
-großen Indizes“).
+A search takes 2.4 ms on average here without and 4.5 ms with a location; with 50 connections,
+the requests without cache mostly wait for each other. The values with cache are an upper bound:
+the test repeats 234 requests, 99.98 % come from the cache (process at 264 MB RSS afterwards). In
+real operation, long queries are mostly unique, so the throughput lies between both rows. Until
+2026-10-28 the cache only took queries up to 10 characters; with that, the test with a location
+reached 545 requests/s. For more throughput without cache, see the ROADMAP ("Throughput on large
+indexes").
 
-## Qualität und Latenz der Suche
+## Search quality and latency
 
-- **Golden-Queries:** `test/golden/duesseldorf.json` enthält Suchanfragen mit erwarteten
-  Top-Treffern gegen einen Ausschnitt aus Düsseldorf und Neuss. Sie laufen mit `npm test`.
-- **Benchmark:** misst die Suchdauer direkt auf einem Index ohne HTTP (Golden-Queries plus jedes
-  Tipp-Präfix typischer Eingaben, mit und ohne Standort). Ziel: p95 unter 50 ms.
+- **Golden queries:** `test/golden/duesseldorf.json` contains search queries with expected top
+  hits against an excerpt of Düsseldorf and Neuss. They run with `npm test`.
+- **Benchmark:** measures the search duration directly on an index without HTTP (golden queries
+  plus every typing prefix of typical inputs, with and without a location). Target: p95 below
+  50 ms.
 
 ```bash
 npm run bench -- --index $PWD/data/index.sqlite
 ```
 
-Messung (MacBook, Node 24, 5 Runden). **Deutschland** (Geofabrik-Extrakt vom 27.10.2026, 4,9 GB
-PBF → 25,6 Mio. Einträge, gemessen mit Schema 5 ohne Grenzen: 8,5 GB Index, Import 30 min, max. 5,4 GB RAM; mit Grenzen 8,8 GB, 39 min, max. 4,2 GB RAM; Schema 7 mit Grenzen und Schreibvarianten 9,3 GB, 28 min, max. 4,2 GB RAM, Suche p50 2,5 ms, p95 16,9 ms, max. 56 ms bei warmem Cache): **p50 2,8 ms, p95 16,5 ms,
-p99 29 ms**, max. 41–91 ms. Vorher (bis Schema 4) p95 194 ms. Am langsamsten ist die Suche mit
-Standort bei sehr häufigen Wörtern (`Am Markt 1` 41 ms, `Friedrichstraße 3` 20–90 ms). Regierungsbezirk
-Düsseldorf (217 MB PBF → 1,4 Mio. Einträge, 389 MB Index, Import 45 s), gemessen mit Schema 4: p50 2,0 ms,
-p95 10,1 ms, p99 16,6 ms.
+Measured on a MacBook, Node 24, 5 rounds. **Germany** (Geofabrik extract from 2026-10-27, 4.9 GB
+PBF → 25.6 million entries): **p50 2.8 ms, p95 16.5 ms, p99 29 ms**, max 41–91 ms, measured with
+schema 5 without boundaries; before that (up to schema 4) p95 was 194 ms. Schema 7 with boundaries
+and spelling variants: p50 2.5 ms, p95 16.9 ms, max 56 ms with a warm cache. Import sizes: schema
+5 without boundaries 8.5 GB index, 30 min, max 5.4 GB RAM; with boundaries 8.8 GB, 39 min, max
+4.2 GB RAM; schema 7 9.3 GB, 28 min, max 4.2 GB RAM. The slowest case is a search with a location
+for very frequent words (`Am Markt 1` 41 ms, `Friedrichstraße 3` 20–90 ms). Düsseldorf
+administrative region (217 MB PBF → 1.4 million entries, 389 MB index, import 45 s), measured
+with schema 4: p50 2.0 ms, p95 10.1 ms, p99 16.6 ms.
 
-Was die Suche schnell hält: Die Trefferliste in FTS5 ist nach Wichtigkeit sortiert, und je Anfrage
-werden nur die ersten 200 Kandidaten gelesen. `bm25` rechnet in JS mit einer beim Import
-vorberechneten Wortstatistik (Tabellen `terms` und `prefixes`), statt bei jeder Anfrage alle
-Dokumente jedes Suchworts zu zählen. Lange Präfixe mit einem sehr häufigen Wort („stras…“ →
-„strasse“) werden in das exakte Wort und längere Teilpräfixe zerlegt, weil FTS5 Präfixe über
-4 Zeichen sonst vorab komplett zusammenführt. Die Standort-Suche liest über die Rasterzellen nur
-Treffer im Umkreis.
+What keeps the search fast: the hit list in FTS5 is sorted by importance, and only the first 200
+candidates are read per query. `bm25` is computed in JS with word statistics precomputed during
+the import (tables `terms` and `prefixes`), instead of counting all documents of every search word
+on every query. Long prefixes with a very frequent word ("stras…" → "strasse") are expanded into
+the exact word and longer sub-prefixes, because FTS5 otherwise merges prefixes over 4 characters
+completely up front. The nearby search reads only hits within the radius, via the grid cells.
 
-## Entwicklung
+## Development
 
-Voraussetzung: Node.js ≥ 24 (eingebautes `node:sqlite` mit FTS5 und R\*Tree) und für den Import
-[`osmium-tool`](https://osmcode.org/osmium-tool/) (macOS: `brew install osmium-tool`, Debian: `apt install osmium-tool`).
+Requirements: Node.js ≥ 24 (built-in `node:sqlite` with FTS5 and R\*Tree) and, for the import,
+[`osmium-tool`](https://osmcode.org/osmium-tool/) (macOS: `brew install osmium-tool`, Debian:
+`apt install osmium-tool`).
 
 ```bash
 npm install
-npm run dev        # API mit Auto-Reload auf Port 2322
+npm run dev        # API with auto-reload on port 2322
 npm test           # Vitest
-npm run lint       # ESLint + Prettier-Check
-npm run build      # TypeScript nach dist/
+npm run lint       # ESLint + Prettier check
+npm run build      # TypeScript to dist/
 npm run ci         # lint, typecheck, test, build
 ```
 
@@ -439,30 +439,31 @@ npm run ci         # lint, typecheck, test, build
 
 ```bash
 DATA_DIR=$PWD/data npm run import -- --region https://download.geofabrik.de/europe/germany/bremen-latest.osm.pbf
-DATA_DIR=$PWD/data npm run import -- --input ./mein-extrakt.osm.pbf   # lokale Datei, ohne Download
+DATA_DIR=$PWD/data npm run import -- --input ./my-extract.osm.pbf   # local file, no download
 ```
 
-Ohne `--region` gilt `REGION_URL`. Ablauf:
+Without `--region`, `REGION_URL` applies. Steps:
 
-1. Sperre `$DATA_DIR/import.lock.sqlite` setzen (nie zwei Imports gleichzeitig).
-2. Download nach `$DATA_DIR/extract.osm.pbf`. Abgebrochene Downloads werden fortgesetzt
-   (`extract.osm.pbf.part`), die Geofabrik-`.md5` wird geprüft. Passt eine vorhandene Datei
-   zur `.md5`, wird nicht neu geladen.
-3. Verwaltungsgrenzen laden: `osmium tags-filter` auf `admin_level=2,4`, dann Flächen und
-   Grenzwege per `osmium export`, Relationsmitglieder per `osmium cat` (OPL). Länder und
-   Bundesländer liegen danach im Speicher (Deutschland: ca. 300 MB, 30 s).
-4. `osmium tags-filter` auf Adressen, Orte (`place=*`), Straßen (`highway` mit Namen) und
-   benannte `amenity`-Objekte.
-5. `osmium export` als GeoJSON-Sequenz, die zeilenweise gelesen wird (konstanter Speicherbedarf).
-   Jeder Eintrag bekommt beim Einfügen Land und Bundesland aus den Grenzen.
-6. Aufbau von `index.next.sqlite` (Tabelle `places`, FTS5-Tabelle `places_fts` mit Präfix-Index
-   und Rasterzelle (0,25°) je Eintrag, R\*Tree `places_rtree`, Tabelle `meta`) und atomarer Austausch gegen `index.sqlite`.
+1. Take the lock `$DATA_DIR/import.lock.sqlite` (never two imports at the same time).
+2. Download to `$DATA_DIR/extract.osm.pbf`. Interrupted downloads are resumed
+   (`extract.osm.pbf.part`), the Geofabrik `.md5` is verified. If an existing file matches the
+   `.md5`, it is not downloaded again.
+3. Load the administrative boundaries: `osmium tags-filter` on `admin_level=2,4`, then areas and
+   boundary ways via `osmium export`, relation members via `osmium cat` (OPL). Countries and
+   states are then in memory (Germany: about 300 MB, 30 s).
+4. `osmium tags-filter` on addresses, places (`place=*`), streets (`highway` with a name) and named
+   `amenity` objects.
+5. `osmium export` as a GeoJSON sequence that is read line by line (constant memory use). Every
+   entry gets country and state from the boundaries on insert.
+6. Build `index.next.sqlite` (table `places`, FTS5 table `places_fts` with a prefix index and a
+   grid cell (0.25°) per entry, R\*Tree `places_rtree`, table `meta`) and swap it in atomically
+   for `index.sqlite`.
 
-Richtwert: Der Bremen-Extrakt (21 MB) ergibt rund 177.000 Einträge in etwa 5 Sekunden.
+Guide value: the Bremen extract (21 MB) yields about 177,000 entries in about 5 seconds.
 
-## Lizenz der Daten
+## Data license
 
-Die Daten stammen von OpenStreetMap: © OpenStreetMap contributors, verfügbar unter der
-[Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/). Wer die API
-öffentlich anbietet oder Ergebnisse anzeigt, muss diesen Hinweis sichtbar machen; das Feld
-`attribution` in jeder Antwort liefert ihn mit.
+The data comes from OpenStreetMap: © OpenStreetMap contributors, available under the
+[Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/). Anyone who offers the
+API publicly or displays results must make this notice visible; the `attribution` field in every
+response carries it.

@@ -4,7 +4,7 @@ import { readLines } from './lines.js';
 
 const OSMIUM = 'osmium';
 
-/** Tag-Filter für `osmium tags-filter`; Straßen ohne Namen werden erst beim Import verworfen. */
+/** Tag filters for `osmium tags-filter`; streets without a name are dropped later, during the import. */
 export const TAG_FILTERS = [
   'nwr/addr:housenumber',
   'nwr/addr:street',
@@ -14,8 +14,8 @@ export const TAG_FILTERS = [
 ];
 
 /**
- * Verwaltungsgrenzen für Land und Bundesland (`src/import/boundaries.ts`). Osmium nimmt die
- * Wege und Knoten der Relationen mit; `boundary=administrative` prüft erst der Import.
+ * Administrative boundaries for country and state (`src/import/boundaries.ts`). Osmium keeps the
+ * ways and nodes of the relations; the import checks `boundary=administrative` itself.
  */
 export const BOUNDARY_FILTERS = ['r/admin_level=2,4'];
 
@@ -35,17 +35,17 @@ async function run(args: string[]): Promise<void> {
   const [code] = (await once(child, 'close')) as [number | null];
   if (code !== 0) {
     throw new OsmiumError(
-      `osmium ${args[0] ?? ''} fehlgeschlagen (Code ${String(code)}): ${stderr.trim()}`,
+      `osmium ${args[0] ?? ''} failed (code ${String(code)}): ${stderr.trim()}`,
     );
   }
 }
 
-/** Reduziert den Extrakt auf adress-, orts- und straßenrelevante Objekte. */
+/** Reduces the extract to objects relevant for addresses, places and streets. */
 export async function filterExtract(input: string, output: string): Promise<void> {
   await run(['tags-filter', input, ...TAG_FILTERS, '-o', output, '--overwrite']);
 }
 
-/** Reduziert den Extrakt auf die Verwaltungsgrenzen (Länder, Bundesländer). */
+/** Reduces the extract to the administrative boundaries (countries, states). */
 export async function filterBoundaries(input: string, output: string): Promise<void> {
   await run(['tags-filter', input, ...BOUNDARY_FILTERS, '-o', output, '--overwrite']);
 }
@@ -61,16 +61,16 @@ const GEOJSONSEQ_ARGS = [
 ];
 
 /**
- * Exportiert eine PBF-Datei als GeoJSON-Sequenz und liefert sie zeilenweise,
- * ohne die Datei komplett in den Speicher zu laden.
+ * Exports a PBF file as a GeoJSON sequence and yields it line by line, without
+ * loading the whole file into memory.
  */
 export function exportGeoJsonSeq(input: string): AsyncGenerator<string> {
   return stream(['export', input, ...GEOJSONSEQ_ARGS]);
 }
 
 /**
- * Flächen und Linien der gefilterten Grenzen als GeoJSON-Sequenz. Auch Wege ohne Tags,
- * denn manche Grenzwege tragen ihre Tags nur über die Relation.
+ * Areas and lines of the filtered boundaries as a GeoJSON sequence. Includes ways without
+ * tags, because some boundary ways only carry their tags via the relation.
  */
 export function exportBoundaryGeoJsonSeq(input: string): AsyncGenerator<string> {
   return stream([
@@ -82,12 +82,12 @@ export function exportBoundaryGeoJsonSeq(input: string): AsyncGenerator<string> 
   ]);
 }
 
-/** Relationen als OPL (ohne Metadaten), zeilenweise; für die Mitglieder der Länder. */
+/** Relations as OPL (without metadata), line by line; for the members of the countries. */
 export function exportRelationsOpl(input: string): AsyncGenerator<string> {
   return stream(['cat', input, '-t', 'relation', '-f', 'opl,add_metadata=false', '-o', '-']);
 }
 
-/** Startet osmium und liefert stdout zeilenweise; wirft bei Exit-Code ≠ 0. */
+/** Starts osmium and yields stdout line by line; throws on exit code ≠ 0. */
 async function* stream(args: string[]): AsyncGenerator<string> {
   const child = spawn(OSMIUM, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = '';
@@ -99,15 +99,15 @@ async function* stream(args: string[]): AsyncGenerator<string> {
     yield* readLines(child.stdout);
     completed = true;
   } finally {
-    // Nur bei vorzeitigem Abbruch beenden; nach dem Dateiende darf osmium sich
-    // noch regulär beenden (sonst ist der Exit-Code null und der Import scheitert).
+    // Only kill on early abort; after the end of the file, osmium may still exit
+    // normally (otherwise the exit code is null and the import fails).
     if (!completed && child.exitCode === null) child.kill();
   }
 
   const [code] = await closed;
   if (code !== 0) {
     throw new OsmiumError(
-      `osmium ${args[0] ?? ''} fehlgeschlagen (Code ${String(code)}): ${stderr.trim()}`,
+      `osmium ${args[0] ?? ''} failed (code ${String(code)}): ${stderr.trim()}`,
     );
   }
 }

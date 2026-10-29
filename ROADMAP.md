@@ -1,147 +1,147 @@
-# Roadmap: Self-hosted Autosuggest-API
+# Roadmap: self-hosted autosuggest API
 
 Oct 28, 2026 · @Alex
 
-## Ziel und Rahmenbedingungen
+## Goal and constraints
 
-Ziel ist eine Adress-Autosuggest-API auf OSM-Basis, die als ein einziges Docker-Image läuft und per `docker run` gestartet wird, ohne docker-compose und ohne externe Dienste.
+The goal is an address autosuggest API based on OSM that runs as a single Docker image and is started with `docker run`, without docker-compose and without external services.
 
-Daraus folgt eine Änderung gegenüber der ersten Empfehlung (Typesense/OpenSearch als eigener Server): Ein separater Suchserver bräuchte einen zweiten Container. Deshalb wird der Index in die Anwendung eingebettet.
+This changes the first recommendation (Typesense/OpenSearch as a separate server): a separate search server would need a second container. So the index is embedded in the application.
 
-| Entscheidung        | Wahl                                                                         | Grund                                                              |
-| ------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| Deployment          | Ein Multi-Stage-`Dockerfile`, Start per `docker run`, Daten auf einem Volume | Vorgabe: kein docker-compose                                       |
-| Sprache / Framework | TypeScript, Fastify                                                          | Passt zum vorhandenen Stack (NestJS, Next.js), schnell und schlank |
-| Index               | SQLite mit FTS5 (Prefix-Suche) und R\*Tree (Geo)                             | Eingebettet, eine Datei, keine zweite Prozessverwaltung            |
-| OSM-Aufbereitung    | `osmium-tool` im Image, Import-Skript in TypeScript                          | Bewährtes Filtern, Import bleibt im Projekt                        |
-| Datenquelle         | Geofabrik-Extrakt, per ENV konfigurierbar                                    | Start mit Deutschland, später Europa möglich                       |
-| Ausgabeformat       | GeoJSON                                                                      | Bestehende Clients lassen sich später umstellen                    |
+| Decision             | Choice                                                                        | Reason                                                            |
+| -------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Deployment           | One multi-stage `Dockerfile`, started with `docker run`, data on a volume     | Requirement: no docker-compose                                    |
+| Language / framework | TypeScript, Fastify                                                           | Fits the existing stack (NestJS, Next.js), fast and lean          |
+| Index                | SQLite with FTS5 (prefix search) and R\*Tree (geo)                            | Embedded, one file, no second process to manage                   |
+| OSM preparation      | `osmium-tool` in the image, import script in TypeScript                       | Proven filtering, the import stays in the project                 |
+| Data source          | Geofabrik extract, configurable via env                                       | Start with Germany, Europe possible later                         |
+| Output format        | GeoJSON                                                                       | Existing clients can be switched over later                       |
 
-## Architektur im einen Container
+## Architecture in one container
 
-Der Container enthält die API, den Importer und `osmium-tool`; der Index liegt als SQLite-Datei auf einem gemounteten Volume.
+The container holds the API, the importer and `osmium-tool`; the index is a SQLite file on a mounted volume.
 
-- **Ein Image, zwei Kommandos:** `serve` startet die API, `import` lädt den Extrakt und baut den Index. Der Standardstart führt beim ersten Mal automatisch `import` aus, falls auf dem Volume noch kein Index liegt.
-- **Volume `/data`:** enthält `extract.osm.pbf`, `index.sqlite` und beim Update die neue Datei `index.next.sqlite`.
-- **Konfiguration per ENV:** `REGION_URL` (Geofabrik-Link), `PORT`, `DEFAULT_LANG`, `RATE_LIMIT`, `CORS_ORIGINS`.
+- **One image, two commands:** `serve` starts the API, `import` downloads the extract and builds the index. On the first start, the default start runs `import` automatically if there is no index on the volume yet.
+- **Volume `/data`:** contains `extract.osm.pbf`, `index.sqlite` and, during an update, the new file `index.next.sqlite`.
+- **Configuration via env:** `REGION_URL` (Geofabrik link), `PORT`, `DEFAULT_LANG`, `RATE_LIMIT`, `CORS_ORIGINS`.
 - **Start:** `docker run -p 2322:2322 -v data:/data meine-api`
-- **Ein Prozess:** Die API liest den Index nur lesend; Updates bauen eine neue Datei und tauschen sie atomar aus (Phase 6).
+- **One process:** the API only reads the index; updates build a new file and swap it in atomically (phase 6).
 
-## Phase 1: Projekt-Setup
+## Phase 1: project setup
 
-**Ziel:** Ein lauffähiges Grundgerüst mit Tests, an dem Claude Code jede spätere Phase sauber ansetzen kann.
+**Goal:** A working skeleton with tests that Claude Code can cleanly build every later phase on.
 
-- [ ] Repository anlegen mit TypeScript (strict), Fastify, ESLint, Prettier und Vitest
-- [ ] Ordnerstruktur: `src/api`, `src/import`, `src/search`, `src/config`, `test/`, `docker/`
-- [ ] Konfigurationsmodul, das alle ENV-Variablen validiert (z. B. mit zod) und Defaults setzt
-- [ ] `GET /health` liefert `200` mit Status
-- [ ] `CLAUDE.md` mit Architekturregeln und Befehlen (Vorlage weiter unten)
-- [ ] CI-Skript: `npm run lint`, `npm run test`, `npm run build`
+- [ ] Create the repository with TypeScript (strict), Fastify, ESLint, Prettier and Vitest
+- [ ] Folder structure: `src/api`, `src/import`, `src/search`, `src/config`, `test/`, `docker/`
+- [ ] Configuration module that validates all env variables (e.g. with zod) and sets defaults
+- [ ] `GET /health` returns `200` with a status
+- [ ] `CLAUDE.md` with architecture rules and commands (template below)
+- [ ] CI script: `npm run lint`, `npm run test`, `npm run build`
 
-**Fertig, wenn:** `npm test` und `npm run build` laufen grün und `/health` antwortet lokal.
+**Done when:** `npm test` and `npm run build` pass and `/health` answers locally.
 
-## Phase 2: Import-Pipeline
+## Phase 2: import pipeline
 
-**Ziel:** Aus einem OSM-Extrakt entsteht eine durchsuchbare SQLite-Datei mit Adressen, Straßen und Orten.
+**Goal:** An OSM extract becomes a searchable SQLite file with addresses, streets and places.
 
-- [ ] Download des Extrakts von `REGION_URL` nach `/data` (mit Fortschritt, Wiederaufnahme und Prüfsumme, falls Geofabrik eine `.md5` bereitstellt)
-- [ ] `osmium tags-filter` auf relevante Objekte: `addr:housenumber`, `addr:street`, `place=*`, `highway` mit Namen, optional `amenity`
-- [ ] Export per `osmium export` als GeoJSON-Sequenz und Streaming-Import, damit der Speicherbedarf konstant bleibt
-- [ ] Datenmodell einer Zeile: `id`, `osm_type`, `osm_id`, `type`, `name`, `street`, `housenumber`, `postcode`, `city`, `state`, `country`, `lat`, `lon`, `importance`
-- [ ] Tabelle `places` plus FTS5-Tabelle mit Präfix-Index (`prefix='2 3 4'`) und R\*Tree-Tabelle für Koordinaten
-- [ ] `importance` aus dem `place`-Typ ableiten (Stadt vor Dorf vor Straße vor Hausnummer)
-- [ ] CLI: `npm run import -- --region <url>` und das Docker-Kommando `import`
-- [ ] Tests mit einem kleinen Beispiel-Extrakt (z. B. ein Stadtteil), der im Repo liegt
+- [ ] Download the extract from `REGION_URL` to `/data` (with progress, resume and checksum, if Geofabrik provides an `.md5`)
+- [ ] `osmium tags-filter` on relevant objects: `addr:housenumber`, `addr:street`, `place=*`, `highway` with a name, optionally `amenity`
+- [ ] Export via `osmium export` as a GeoJSON sequence and streaming import, so memory use stays constant
+- [ ] Data model of a row: `id`, `osm_type`, `osm_id`, `type`, `name`, `street`, `housenumber`, `postcode`, `city`, `state`, `country`, `lat`, `lon`, `importance`
+- [ ] Table `places` plus an FTS5 table with a prefix index (`prefix='2 3 4'`) and an R\*Tree table for coordinates
+- [ ] Derive `importance` from the `place` type (city before village before street before house number)
+- [ ] CLI: `npm run import -- --region <url>` and the Docker command `import`
+- [ ] Tests with a small sample extract (e.g. a district) that lives in the repo
 
-**Fertig, wenn:** Der Import eines kleinen Extrakts läuft in Tests durch und erzeugt eine Datei, in der Stichproben-Adressen per SQL auffindbar sind.
+**Done when:** importing a small extract passes in tests and produces a file in which sample addresses can be found via SQL.
 
-## Phase 3: Such-API
+## Phase 3: search API
 
-**Ziel:** Autosuggest und Reverse-Geocoding über HTTP, als GeoJSON.
+**Goal:** Autosuggest and reverse geocoding over HTTP, as GeoJSON.
 
-- [ ] `GET /api?q=&lat=&lon=&limit=&lang=` liefert eine GeoJSON-`FeatureCollection`
-- [ ] Jedes Feature hat `geometry` (Point) und `properties` mit `name`, `street`, `housenumber`, `postcode`, `city`, `state`, `country`, `osm_id`, `osm_type`
-- [ ] Die Suchanfrage wird in eine FTS5-Query übersetzt: letztes Token als Präfix, vorherige Token exakt
-- [ ] `GET /reverse?lat=&lon=` findet das nächste Objekt über den R\*Tree
-- [ ] Validierung der Parameter (Mindestlänge von `q`, `limit` höchstens 10) mit klaren `400`-Fehlern
-- [ ] CORS per ENV, Antwort-Header `Cache-Control` für identische Queries
-- [ ] OpenAPI-Beschreibung unter `/docs` (optional)
-- [ ] Tests: Suche nach Straße, Straße mit Hausnummer, Ort, Tippfehler am Wortende
+- [ ] `GET /api?q=&lat=&lon=&limit=&lang=` returns a GeoJSON `FeatureCollection`
+- [ ] Every feature has `geometry` (Point) and `properties` with `name`, `street`, `housenumber`, `postcode`, `city`, `state`, `country`, `osm_id`, `osm_type`
+- [ ] The search query is translated into an FTS5 query: last token as a prefix, preceding tokens exact
+- [ ] `GET /reverse?lat=&lon=` finds the nearest object via the R\*Tree
+- [ ] Parameter validation (minimum length of `q`, `limit` at most 10) with clear `400` errors
+- [ ] CORS via env, `Cache-Control` response header for identical queries
+- [ ] OpenAPI description under `/docs` (optional)
+- [ ] Tests: search for a street, a street with a house number, a place, a typo at the end of a word
 
-**Fertig, wenn:** Gegen den Test-Index liefert `/api?q=Königsall` die Königsallee als Treffer in den ersten Ergebnissen und `/reverse` einen plausiblen Treffer.
+**Done when:** against the test index, `/api?q=Königsall` returns the Königsallee among the first results and `/reverse` returns a plausible hit.
 
-## Phase 4: Ranking und Qualität
+## Phase 4: ranking and quality
 
-**Ziel:** Die Vorschläge fühlen sich wie bei einer guten Autosuggest-API an: richtige Reihenfolge, tolerant bei Schreibweisen, nahe Treffer zuerst.
+**Goal:** The suggestions feel like a good autosuggest: the right order, tolerant of spelling, nearby hits first.
 
-- [ ] Normalisierung beim Import und bei der Suche: Kleinschreibung, Umlaute (ä ↔ ae), `ß` ↔ `ss`, "str." ↔ "straße"
-- [ ] Ranking-Formel aus FTS-Score (`bm25`), `importance` und Entfernung zu `lat/lon`, als reine Funktion mit Unit-Tests
-- [ ] Location Bias: Treffer im Umkreis des mitgegebenen Punkts werden angehoben
-- [ ] Fallback: Hausnummer fehlt in OSM → Treffer auf Straßenebene zurückgeben
-- [ ] Mehrsprachigkeit: `name:de`, `name:en` getrennt speichern und nach `lang` auswählen
-- [ ] Golden-Queries: eine Datei mit 30 bis 50 Suchanfragen und erwarteten Top-Treffern, die in der Test-Suite läuft
-- [ ] Messung der Antwortzeit pro Anfrage, Ziel unter 50 ms bei einem Deutschland-Index
+- [ ] Normalization during import and search: lowercase, umlauts (ä ↔ ae), `ß` ↔ `ss`, "str." ↔ "straße"
+- [ ] Ranking formula from the FTS score (`bm25`), `importance` and the distance to `lat/lon`, as a pure function with unit tests
+- [ ] Location bias: hits around the given point are boosted
+- [ ] Fallback: house number missing in OSM → return hits at street level
+- [ ] Multiple languages: store `name:de`, `name:en` separately and select by `lang`
+- [ ] Golden queries: a file with 30 to 50 search queries and expected top hits that runs in the test suite
+- [ ] Measure the response time per request, target below 50 ms on a Germany index
 
-**Fertig, wenn:** Alle Golden-Queries bestehen und die Latenz auf dem vollen Deutschland-Index im Zielbereich liegt. (Latenz erreicht am 28.10.2026: p95 16,5 ms, siehe unten.)
+**Done when:** all golden queries pass and the latency on the full Germany index is within the target range. (Latency reached on 2026-10-28: p95 16.5 ms, see below.)
 
-### Offene Punkte aus Phase 4
+### Open items from phase 4
 
-- [x] **Latenz auf dem Deutschland-Index senken** (28.10.2026, 25,6 Mio. Einträge, `npm run bench`, 5 Runden, MacBook): vorher (Schema 4) p50 22 ms, p95 194 ms, p99 548 ms; jetzt (Schema 5 im Branch, auf main Schema 6) **p50 2,8 ms, p95 16,5 ms, p99 29 ms**, max. 41–91 ms. Profil der langsamsten Anfragen: Ohne `bm25()` dauerte „breite strasse*“ 170 statt 400 ms, „am markt 1*“ 2 statt 240 ms; exakt „strasse“ statt Präfix „strasse*“ 0,3 statt 170 ms. Beide vermuteten Ursachen bestätigt, beide behoben:
-  - **Entscheidung: bm25 in JS statt `bm25()` von FTS5** (weicht von „FTS-Score (`bm25`)“ oben ab, die Formel bleibt dieselbe). FTS5 zählt für `bm25()` bei jeder Anfrage alle Dokumente jedes Suchworts. Der Import legt jetzt eine Wortstatistik an (`terms`: Dokumente je Wort, `prefixes`: je Präfix bis 4 Zeichen, Meta `fts_tokens`; 826.000 Wörter, ca. 12 s beim Import). `src/search/bm25.ts` rechnet damit dieselbe Formel (k1 = 1,2, b = 0,75, Spaltengewichte 4/2/1/1/1); die Treffer im Dokument kommen aus dessen Spalten, die wie beim Import erzeugt werden. Ein Test vergleicht das Ergebnis mit `bm25()` von FTS5. Abweichung: Für Präfixe ist die Dokumentzahl die Summe über die passenden Wörter (ein Dokument mit „koelner“ und „kolner“ zählt doppelt).
-  - **Lange Präfixe häufiger Wörter werden zerlegt** (`expandPrefix`): FTS5 führt die Trefferlisten aller Wörter eines Präfixes über 4 Zeichen vorab vollständig zusammen. Hat ein Präfix mehr als 50.000 Dokumente, wird es zeichenweise in ODER-verknüpfte Teile zerlegt: das häufige Wort exakt („strasse“), der Rest als längere Präfixe („strassen“*, …). Die Teile decken genau dieselben Wörter ab (Test: gleiche Treffer mit und ohne Zerlegung). „breite strasse*“ 169 → 0,5 ms, „graf adolf strasse*“ 180 → 3 ms.
-- [ ] **Umkreissuche mit sehr häufigen Wörtern** ist jetzt der langsamste Fall (alle langsamsten zehn Anfragen haben einen Standort): „Am Markt 1“ 41 ms, „Friedrichstraße 3“ 20–90 ms, „Berliner A“ 27 ms. FTS5 muss die ganze Trefferliste des seltensten Worts („markt“, 47.000 Dokumente) mit „am“ und den Rasterzellen verschneiden, wenn es im Umkreis weniger als 200 Treffer gibt. Verbesserung nur mit räumlich aufgeteiltem Index (z. B. Wort + Zelle als Token, deutlich größerer Index); bei p95 16,5 ms vorerst nicht nötig.
-- [ ] **Bekanntheitssignal für `importance`:** Bisher zählt nur der Typ. Mit `wikidata`/`wikipedia` oder Einwohnerzahl ließen sich bekannte Objekte nach vorn holen (z. B. „Kö“ → Königsallee; die Golden-Query ist deshalb auf Top 5 gelockert).
-- [ ] **Sehenswürdigkeiten fehlen im Index:** `tourism`, `man_made` u. Ä. sind nicht im Import-Filter (Phase 2), z. B. findet „Rheinturm“ nichts.
-- [ ] **Straßenabschnitte beim Import zusammenfassen:** Gleichnamige Abschnitte werden bisher erst bei der Suche zusammengefasst (Umkreis 2 km). Beim Import wäre der Index kleiner und die Kandidatenmenge aussagekräftiger.
+- [x] **Lower the latency on the Germany index** (2026-10-28, 25.6 million entries, `npm run bench`, 5 rounds, MacBook): before (schema 4) p50 22 ms, p95 194 ms, p99 548 ms; now (schema 5 on the branch, schema 6 on main) **p50 2.8 ms, p95 16.5 ms, p99 29 ms**, max 41–91 ms. Profile of the slowest queries: without `bm25()`, "breite strasse\*" took 170 instead of 400 ms, "am markt 1\*" 2 instead of 240 ms; exact "strasse" instead of the prefix "strasse\*" 0.3 instead of 170 ms. Both suspected causes confirmed, both fixed:
+  - **Decision: bm25 in JS instead of FTS5's `bm25()`** (deviates from "FTS score (`bm25`)" above; the formula stays the same). For `bm25()`, FTS5 counts all documents of every search word on every query. The import now builds word statistics (`terms`: documents per word, `prefixes`: per prefix up to 4 characters, meta `fts_tokens`; 826,000 words, about 12 s during the import). `src/search/bm25.ts` computes the same formula with them (k1 = 1.2, b = 0.75, column weights 4/2/1/1/1); the hits in the document come from its columns, generated as during the import. A test compares the result with FTS5's `bm25()`. Deviation: for prefixes, the document count is the sum over the matching words (a document with "koelner" and "kolner" counts twice).
+  - **Long prefixes of frequent words are expanded** (`expandPrefix`): FTS5 merges the hit lists of all words of a prefix over 4 characters completely up front. If a prefix has more than 50,000 documents, it is split character by character into OR-joined parts: the frequent word exactly ("strasse"), the rest as longer prefixes ("strassen"\*, …). The parts cover exactly the same words (test: same hits with and without expansion). "breite strasse\*" 169 → 0.5 ms, "graf adolf strasse\*" 180 → 3 ms.
+- [ ] **Nearby search with very frequent words** is now the slowest case (all ten slowest queries have a location): "Am Markt 1" 41 ms, "Friedrichstraße 3" 20–90 ms, "Berliner A" 27 ms. FTS5 has to intersect the whole hit list of the rarest word ("markt", 47,000 documents) with "am" and the grid cells when there are fewer than 200 hits within the radius. Only a spatially partitioned index would improve this (e.g. word + cell as a token, a much larger index); not needed for now at p95 16.5 ms.
+- [ ] **Popularity signal for `importance`:** so far only the type counts. With `wikidata`/`wikipedia` or population, well-known objects could be moved ahead (e.g. "Kö" → Königsallee; the golden query is relaxed to the top 5 for this reason).
+- [ ] **Landmarks are missing from the index:** `tourism`, `man_made` and similar are not in the import filter (phase 2); e.g. "Rheinturm" finds nothing.
+- [ ] **Merge street segments during the import:** segments with the same name are only merged during the search so far (2 km radius). During the import, the index would be smaller and the candidate set more meaningful.
 
 ## Phase 5: Docker
 
-**Ziel:** Ein einziges `Dockerfile`, das ein schlankes, sofort startbares Image baut. Kein docker-compose, weder im Repo noch in der README.
+**Goal:** A single `Dockerfile` that builds a slim image that starts right away. No docker-compose, neither in the repo nor in the README.
 
-- [ ] Multi-Stage-Build: Stage 1 baut TypeScript (`npm ci`, `npm run build`), Stage 2 enthält nur Produktions-Abhängigkeiten, das Build-Ergebnis und `osmium-tool`
-- [ ] Basis-Image mit Debian oder Alpine, je nachdem, was das native SQLite-Modul (`better-sqlite3`) problemlos baut; SQLite muss mit FTS5 kompiliert sein
-- [ ] Lauf als Nicht-Root-Nutzer, `/data` als `VOLUME`
-- [ ] `ENTRYPOINT` mit Kommandos `serve` (Standard), `import` und `update`; beim ersten `serve` ohne Index wird automatisch importiert
-- [ ] `HEALTHCHECK` gegen `/health`; `/health` meldet auch, ob ein Index vorhanden ist
-- [ ] `.dockerignore`, feste Versionen der Basis-Images, `EXPOSE 2322`
-- [ ] Konfiguration ausschließlich per ENV, Beispiele in der README
-- [ ] Smoke-Test-Skript: Image bauen, mit Mini-Extrakt starten, `/api` abfragen
+- [ ] Multi-stage build: stage 1 builds TypeScript (`npm ci`, `npm run build`), stage 2 contains only production dependencies, the build output and `osmium-tool`
+- [ ] Base image with Debian or Alpine, depending on what the native SQLite module (`better-sqlite3`) builds without trouble; SQLite must be compiled with FTS5
+- [ ] Run as a non-root user, `/data` as a `VOLUME`
+- [ ] `ENTRYPOINT` with the commands `serve` (default), `import` and `update`; the first `serve` without an index imports automatically
+- [ ] `HEALTHCHECK` against `/health`; `/health` also reports whether an index exists
+- [ ] `.dockerignore`, pinned versions of the base images, `EXPOSE 2322`
+- [ ] Configuration exclusively via env, examples in the README
+- [ ] Smoke test script: build the image, start it with a mini extract, query `/api`
 
-**Fertig, wenn:** `docker build -t meine-api .` und `docker run -p 2322:2322 -v data:/data meine-api` auf einer frischen Maschine zu funktionierenden Vorschlägen führen.
+**Done when:** `docker build -t meine-api .` and `docker run -p 2322:2322 -v data:/data meine-api` lead to working suggestions on a fresh machine.
 
-## Phase 6: Updates und Betrieb
+## Phase 6: updates and operations
 
-**Ziel:** Die API läuft dauerhaft, aktualisiert ihre Daten ohne Ausfall und ist für den öffentlichen Betrieb abgesichert.
+**Goal:** The API runs permanently, updates its data without downtime and is secured for public operation.
 
-- [ ] Update-Kommando: baut `index.next.sqlite` neben dem laufenden Index und tauscht beide per atomarem `rename` aus
-- [ ] Die API öffnet den Index nach dem Tausch neu, ohne Neustart (Signal oder interner Zeitplan per `UPDATE_CRON`)
-- [ ] Rate-Limiting pro IP, optional pro API-Key (`@fastify/rate-limit`), steuerbar über ENV ob aktiv oder nicht
-- [ ] In-Memory-Cache (LRU) für häufige kurze Prefix-Queries
-- [ ] Strukturierte Logs und ein `/metrics`-Endpoint im Prometheus-Format
-- [ ] Attribution: Antworten und README nennen "© OpenStreetMap contributors" (ODbL)
-- [ ] README mit Schnellstart, ENV-Tabelle, Hinweisen zu RAM und Plattenbedarf (Deutschland ca. 4 GB PBF)
-- [ ] Lasttest (z. B. mit `autocannon`) und dokumentierte Ergebnisse
+- [ ] Update command: builds `index.next.sqlite` next to the running index and swaps both via an atomic `rename`
+- [ ] The API reopens the index after the swap, without a restart (signal or internal schedule via `UPDATE_CRON`)
+- [ ] Rate limiting per IP, optionally per API key (`@fastify/rate-limit`), switchable via env
+- [ ] In-memory cache (LRU) for frequent short prefix queries
+- [ ] Structured logs and a `/metrics` endpoint in Prometheus format
+- [ ] Attribution: responses and README name "© OpenStreetMap contributors" (ODbL)
+- [ ] README with a quick start, env table, notes on RAM and disk needs (Germany about 4 GB PBF)
+- [ ] Load test (e.g. with `autocannon`) and documented results
 
-**Fertig, wenn:** Ein Update läuft im Betrieb durch, ohne dass währenddessen Anfragen fehlschlagen, und die README reicht für eine Installation ohne Rückfragen.
+**Done when:** an update runs through in production without any request failing meanwhile, and the README is enough for an installation without further questions.
 
-### Offene Punkte aus dem Code-Review (28.10.2026)
+### Open items from the code review (2026-10-28)
 
-- [x] **Standort-Suche bei sehr häufigen Wörtern:** Jeder Eintrag trägt seine Rasterzelle (0,25°) als Token in der FTS-Spalte `cell` (Schema-Version 3). Die Umkreissuche verlangt eine der Zellen der Box, FTS5 verschneidet die Trefferlisten; liegen schon unter den 200 globalen Kandidaten mindestens 10 im Umkreis, wird ohne Zellen gesucht (beide Wege liefern dieselben Zeilen). Synthetisch (1 Mio. ferne Treffer, 500.000 Adressen im Umkreis), ganze Suche mit Standort: „Ha“ 108 → 51 ms, „Hauptstr“ 76 → 38 ms, „Hafen“ 68 → 18 ms; dichte Anfragen („Be“, „Hasenheide 12“) unverändert. Die Dauer hängt jetzt von der Dichte im Umkreis ab, nicht mehr von der Trefferzahl im ganzen Index. Verworfen: Suche vom R\*Tree aus (1–20 s, FTS5 startet die Anfrage pro Zeile neu und bm25 zählt jedes Mal alle Treffer), schmale Koordinatentabelle (ca. 15 %). Der größte verbleibende Anteil war das Zählen der Treffer je Phrase für bm25 (8–20 ms bei häufigen Präfixen, auch ohne Standort); seit Schema 5 rechnet bm25 in JS (siehe Phase 4).
-- [ ] **Ort für Straßen ohne Adressen:** Straßen übernehmen Ort und PLZ von der nächsten Adresse an derselben Straße (im Düsseldorf-Test 87 % bzw. 90 %). Straßen ganz ohne Hausnummern bleiben ohne Ort; dafür bräuchte es Verwaltungsgrenzen (`boundary=administrative`).
+- [x] **Location search with very frequent words:** every entry carries its grid cell (0.25°) as a token in the FTS column `cell` (schema version 3). The nearby search requires one of the box's cells, and FTS5 intersects the hit lists; if at least 10 of the 200 global candidates already lie within the radius, the search runs without cells (both ways return the same rows). Synthetic (1 million distant hits, 500,000 addresses within the radius), full search with a location: "Ha" 108 → 51 ms, "Hauptstr" 76 → 38 ms, "Hafen" 68 → 18 ms; dense queries ("Be", "Hasenheide 12") unchanged. The duration now depends on the density within the radius, no longer on the number of hits in the whole index. Rejected: searching from the R\*Tree (1–20 s, FTS5 restarts the query per row and bm25 counts all hits every time), a narrow coordinate table (about 15 %). The largest remaining share was counting the hits per phrase for bm25 (8–20 ms for frequent prefixes, also without a location); since schema 5, bm25 is computed in JS (see phase 4).
+- [ ] **City for streets without addresses:** streets take city and postcode from the nearest address on the same street (87 % and 90 % respectively in the Düsseldorf test). Streets without any house numbers stay without a city; that would need administrative boundaries (`boundary=administrative`).
 
-### Offene Punkte aus Phase 6
+### Open items from phase 6
 
-- [x] **Messungen auf dem Deutschland-Index:** Import gemessen (28.10.2026): Schema 4 30 min, max. 5,4 GB RAM, Index 8,5 GB; Schema 5 (mit Grenzen) 39 min, max. 4,2 GB RAM, Index 8,8 GB. Schema 7 (Grenzen, Wortstatistik, Schreibvarianten) 28 min, max. 4,2 GB RAM, Index 9,3 GB; Suche p95 16,9 ms (warmer Cache; kalt nach dem Import einzelne Anfragen bis 385 ms). Lasttest Schema 7 (`npm run loadtest`, 50 Verbindungen, 20 s, ein Prozess): ohne Cache 411 Anfragen/s (p50 81 ms, p99 584 ms), ohne Cache mit Standort 221/s (p50 169 ms, p99 927 ms), mit Cache und Standort 545/s (p50 24 ms, p99 757 ms), jeweils 0 Fehler. Die Latenz unter Last ist fast nur Wartezeit: Ein Prozess sucht nacheinander, im Mittel 2,4 ms (ohne Standort) bzw. 4,5 ms (mit) je Anfrage. Vorher auf 17.618 Einträgen: ca. 1.100 Anfragen/s ohne Cache, 0 Fehler bei Updates unter Last.
-- [ ] **Durchsatz auf großen Indizes:** Ein Prozess schafft auf dem Deutschland-Index 220–410 Anfragen/s ohne Cache, weil `node:sqlite` synchron auf einem Kern sucht. Mehr Durchsatz über Worker-Threads, die den Index jeweils nur lesen. Erledigt: Der Cache nimmt seit dem 28.10.2026 alle Anfragen auf, nicht nur solche bis 10 Zeichen (auf dem Deutschland-Index sind lange mit Standort am teuersten). Lasttest mit Cache: 545 → 31.397 Anfragen/s mit Standort, 40.163/s ohne, p99 2–4 ms; das ist eine Obergrenze, weil der Test nur 234 verschiedene Anfragen wiederholt. Offen bleibt der Durchsatz bei Cache-Fehlschlägen.
+- [x] **Measurements on the Germany index:** import measured (2026-10-28): schema 4 30 min, max 5.4 GB RAM, index 8.5 GB; schema 5 (with boundaries) 39 min, max 4.2 GB RAM, index 8.8 GB. Schema 7 (boundaries, word statistics, spelling variants) 28 min, max 4.2 GB RAM, index 9.3 GB; search p95 16.9 ms (warm cache; cold right after the import, single queries up to 385 ms). Load test schema 7 (`npm run loadtest`, 50 connections, 20 s, one process): without cache 411 requests/s (p50 81 ms, p99 584 ms), without cache with a location 221/s (p50 169 ms, p99 927 ms), with cache and a location 545/s (p50 24 ms, p99 757 ms), 0 errors each. The latency under load is almost only waiting time: one process searches sequentially, on average 2.4 ms (without location) and 4.5 ms (with) per request. Before, on 17,618 entries: about 1,100 requests/s without cache, 0 errors during updates under load.
+- [ ] **Throughput on large indexes:** one process manages 220–410 requests/s without cache on the Germany index, because `node:sqlite` searches synchronously on one core. More throughput via worker threads that each only read the index. Done: since 2026-10-28 the cache takes all queries, not only those up to 10 characters (on the Germany index, long ones with a location are the most expensive). Load test with cache: 545 → 31,397 requests/s with a location, 40,163/s without, p99 2–4 ms; that is an upper bound, because the test only repeats 234 different requests. The throughput on cache misses remains open.
 
-### Offene Punkte aus dem Test mit Deutschland-Daten (28.10.2026)
+### Open items from the test with Germany data (2026-10-28)
 
-Behoben: Ortsteile (`addr:suburb`/`addr:hamlet` → `district`, 4,8 Mio. Adressen), Adressen ohne Straße (`addr:place`, 226.000), „Schlosstr“ = „Schloßstraße“, „St.“ = „Sankt“, „Hauptstraße12“, Hausnummer „12 a“ = „12a“ (71.000), „Frankfurt a.M.“, Straße im genannten Ort vor Tippfehler-Treffer in anderem Ort, Heap-Überlauf beim Aufbau des FTS-Index (Import auf Deutschland brach mit Schema 3 ab).
+Fixed: districts (`addr:suburb`/`addr:hamlet` → `district`, 4.8 million addresses), addresses without a street (`addr:place`, 226,000), "Schlosstr" = "Schloßstraße", "St." = "Sankt", "Hauptstraße12", house number "12 a" = "12a" (71,000), "Frankfurt a.M.", street in the named city before a typo hit in another city, heap overflow while building the FTS index (the Germany import aborted with schema 3).
 
-- [x] **Land und Bundesland für Lieferprüfungen:** `addr:country` fehlt bei 29 % der Adressen, `addr:state` fast immer. Der Extrakt enthält Adressen aus allen Nachbarländern (ca. 28.000 mit fremdem `addr:country`, dazu viele ohne). Gelöst (Schema 5, `src/import/boundaries.ts`): Der Import lädt die Grenzen (`boundary=administrative`, `admin_level=2` und `4`) und weist jedem Eintrag Land und Bundesland per Punkt-in-Polygon zu (Raster je Fläche: kantenfreie Zellen sind ganz innen oder außen, sonst Strahl nur bis zur nächsten solchen Zelle). Im Deutschland-Extrakt sind nur Deutschland und die 16 Länder vollständig; außerhalb entscheidet der nächste Grenzweg mit genau einem Nachbarland (Mosel: deutsche und luxemburgische Grenze an verschiedenen Ufern). Grenzen laden 34 s, ca. 300 MB. Voller Import Deutschland: 39 min statt 30 min, max. 4,2 GB RAM (vorher 5,4 GB), Index 8,8 GB; 25,5 Mio. Einträge in DE (alle mit Bundesland), 73.000 in Nachbarländern (CH 16.305, NL 14.208, AT 10.470, CZ 9.633, FR 8.800, PL 6.381, LU 3.426, BE 1.272, DK 1.209), 10 ohne Land. Geprüft an 2,1 Mio. Einträgen: Abweichungen von `addr:country` sind nur Korrekturen (Riezlern/Jungholz `DE` → `AT`, Raeren → `BE`), bei Adressen ohne `addr:country` passt das PLZ-Format immer zum Land. Rest: nahe Dreiländerecken kann ein Punkt im Nachbarland dem falschen Nachbarn zufallen. „Ort für Straßen ohne Adressen“ löst das nicht (dafür bräuchte es `admin_level=8`).
-- [x] **Schreibvarianten:** Getrennt geschrieben („Friedrich Straße“) und anders verbunden („Konrad-Adenauerstraße“) werden gefunden (Schema 7): Namen mit Grundwort (Straße, Allee, Platz, Gasse, Damm, Ring, Weg) stehen auch getrennt und zusammengeschrieben im Index.
-- [ ] **Tippfehler mitten im Wort** („Friedrichstrase“) werden nicht gefunden, nur am Wortende. Bräuchte eine unscharfe Suche (z. B. Trigramme), die den Index deutlich vergrößert.
-- [ ] **Browser- und CDN-Cache nach Updates:** Antworten tragen `Cache-Control: max-age=3600`. Nach einem Update können Clients bis zu einer Stunde alte Vorschläge sehen. Akzeptabel bei täglichen Updates, sonst `max-age` per ENV steuerbar machen.
-- [ ] **Update ohne neue Daten:** `update` baut den Index auch dann neu, wenn sich der Extrakt (MD5) nicht geändert hat. Ließe sich überspringen, um Rechenzeit zu sparen.
-- [ ] **`/metrics` ist öffentlich:** Schutz bisher nur über den Reverse-Proxy. Bei Bedarf eigene Variable (z. B. `METRICS_TOKEN`).
-- [ ] **Docker-Smoke-Test nicht in `npm run ci`:** braucht Docker und läuft deshalb separat (`npm run smoke`).
+- [x] **Country and state for delivery checks:** `addr:country` is missing on 29 % of the addresses, `addr:state` almost always. The extract contains addresses from all neighboring countries (about 28,000 with a foreign `addr:country`, plus many without one). Solved (schema 5, `src/import/boundaries.ts`): the import loads the boundaries (`boundary=administrative`, `admin_level=2` and `4`) and assigns country and state to every entry via point in polygon (a grid per area: edge-free cells are entirely inside or outside, otherwise a ray only up to the next such cell). In the Germany extract, only Germany and its 16 states are complete; outside, the nearest boundary way with exactly one neighboring country decides (Moselle: the German and Luxembourg borders run along different banks). Loading the boundaries takes 34 s, about 300 MB. Full Germany import: 39 min instead of 30 min, max 4.2 GB RAM (before 5.4 GB), index 8.8 GB; 25.5 million entries in DE (all with a state), 73,000 in neighboring countries (CH 16,305, NL 14,208, AT 10,470, CZ 9,633, FR 8,800, PL 6,381, LU 3,426, BE 1,272, DK 1,209), 10 without a country. Checked on 2.1 million entries: deviations from `addr:country` are only corrections (Riezlern/Jungholz `DE` → `AT`, Raeren → `BE`); for addresses without `addr:country`, the postcode format always matches the country. Remainder: near tripoints, a point in a neighboring country can fall to the wrong neighbor. This does not solve "City for streets without addresses" (that would need `admin_level=8`).
+- [x] **Spelling variants:** split ("Friedrich Straße") and differently joined ("Konrad-Adenauerstraße") spellings are found (schema 7): names with a base word (Straße, Allee, Platz, Gasse, Damm, Ring, Weg) are also in the index split and joined.
+- [ ] **Typos in the middle of a word** ("Friedrichstrase") are not found, only at the end of a word. Would need a fuzzy search (e.g. trigrams), which makes the index considerably larger.
+- [ ] **Browser and CDN cache after updates:** responses carry `Cache-Control: max-age=3600`. After an update, clients may see suggestions up to an hour old. Acceptable with daily updates; otherwise make `max-age` configurable via env.
+- [ ] **Update without new data:** `update` rebuilds the index even if the extract (MD5) has not changed. Could be skipped to save compute time.
+- [ ] **`/metrics` is public:** so far only protected via the reverse proxy. If needed, a separate variable (e.g. `METRICS_TOKEN`).
+- [ ] **Docker smoke test not in `npm run ci`:** it needs Docker and therefore runs separately (`npm run smoke`).

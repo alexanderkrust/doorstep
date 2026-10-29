@@ -1,28 +1,28 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 
-/** Ein Wort des Volltextindex mit der Zahl der Dokumente, die es enthalten. */
+/** A word of the full-text index with the number of documents containing it. */
 export interface TermDocs {
   term: string;
   docs: number;
 }
 
-/** Präfixe bis zu dieser Länge stehen vorberechnet in `prefixes` (wie `prefix = '1 2 3 4'` in FTS5). */
+/** Prefixes up to this length are precomputed in `prefixes` (like `prefix = '1 2 3 4'` in FTS5). */
 export const MAX_INDEXED_PREFIX = 4;
-/** Größtes Zeichen: Obergrenze für „alle Wörter, die mit … beginnen“. */
+/** Largest character: upper bound for "all words starting with …". */
 const MAX_CHAR = '\u{10FFFF}';
 
-/** Länge in Zeichen (wie FTS5), nicht in UTF-16-Einheiten. */
+/** Length in characters (like FTS5), not in UTF-16 units. */
 export const charLength = (text: string) => Array.from(text).length;
 
 /**
- * Wortstatistik aus dem Import (Tabellen `terms` und `prefixes`, Meta `fts_tokens`):
- * Dokumentzahlen für bm25 und die Wörter eines Präfixes für dessen Zerlegung.
+ * Word statistics from the import (tables `terms` and `prefixes`, meta `fts_tokens`):
+ * document counts for bm25 and the words of a prefix for its expansion.
  */
 export class TermStats {
   private constructor(
-    /** Zeilen im Volltextindex. */
+    /** Rows in the full-text index. */
     readonly rows: number,
-    /** Mittlere Zahl der Wörter je Zeile über alle Spalten. */
+    /** Average number of words per row across all columns. */
     readonly avgTokens: number,
     private readonly term: StatementSync,
     private readonly prefix: StatementSync,
@@ -48,14 +48,14 @@ export class TermStats {
     );
   }
 
-  /** Dokumente mit genau diesem Wort. */
+  /** Documents with exactly this word. */
   docs(term: string): number {
     return (this.term.get(term) as { docs?: number } | undefined)?.docs ?? 0;
   }
 
   /**
-   * Dokumente mit einem Wort, das mit `prefix` beginnt. Summe über die Wörter:
-   * Ein Dokument mit zwei solchen Wörtern zählt doppelt; für bm25 genügt das.
+   * Documents with a word starting with `prefix`. Summed over the words: a document
+   * with two such words counts twice; that is good enough for bm25.
    */
   prefixDocs(prefix: string, completions?: readonly TermDocs[]): number {
     if (charLength(prefix) <= MAX_INDEXED_PREFIX && completions === undefined) {
@@ -64,7 +64,7 @@ export class TermStats {
     return (completions ?? this.completions(prefix)).reduce((sum, t) => sum + t.docs, 0);
   }
 
-  /** Alle Wörter, die mit `prefix` beginnen, alphabetisch. */
+  /** All words starting with `prefix`, in alphabetical order. */
   completions(prefix: string): TermDocs[] {
     return this.range.all(prefix, prefix + MAX_CHAR) as unknown as TermDocs[];
   }

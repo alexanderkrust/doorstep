@@ -12,7 +12,7 @@ describe('GET /health', () => {
     app = undefined;
   });
 
-  it('antwortet mit 200 und Status', async () => {
+  it('answers 200 with a status', async () => {
     app = buildServer(loadConfig({ LOG_LEVEL: 'silent' }));
     const res = await app.inject({ method: 'GET', url: '/health' });
 
@@ -27,7 +27,7 @@ describe('GET /health', () => {
     expect(typeof body['uptime']).toBe('number');
   });
 
-  it('antwortet auch über einen echten Port', async () => {
+  it('also answers on a real port', async () => {
     app = buildServer(loadConfig({ LOG_LEVEL: 'silent', HOST: '127.0.0.1', PORT: '2322' }));
     const address = await app.listen({ host: '127.0.0.1', port: 0 });
     const res = await fetch(`${address}/health`);
@@ -36,16 +36,16 @@ describe('GET /health', () => {
     expect(await res.json()).toMatchObject({ status: 'ok' });
   });
 
-  it('meldet, dass kein Index vorhanden ist und kein Import läuft', async () => {
-    app = buildServer(loadConfig({ LOG_LEVEL: 'silent', DATA_DIR: '/gibt/es/nicht' }));
+  it('reports that there is no index and no import is running', async () => {
+    app = buildServer(loadConfig({ LOG_LEVEL: 'silent', DATA_DIR: '/does/not/exist' }));
     const res = await app.inject({ method: 'GET', url: '/health' });
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ status: 'ok', index: false, importing: false });
   });
 
-  it('meldet einen laufenden Import', async () => {
-    app = buildServer(loadConfig({ LOG_LEVEL: 'silent', DATA_DIR: '/gibt/es/nicht' }), {
+  it('reports a running import', async () => {
+    app = buildServer(loadConfig({ LOG_LEVEL: 'silent', DATA_DIR: '/does/not/exist' }), {
       importing: () => true,
     });
     const res = await app.inject({ method: 'GET', url: '/health' });
@@ -53,7 +53,7 @@ describe('GET /health', () => {
     expect(res.json()).toMatchObject({ index: false, importing: true });
   });
 
-  describe('mit Index', () => {
+  describe('with an index', () => {
     let fixture: FixtureIndex;
 
     beforeAll(async () => {
@@ -64,7 +64,7 @@ describe('GET /health', () => {
       await fixture.cleanup();
     });
 
-    it('meldet einen vorhandenen Index', async () => {
+    it('reports an existing index', async () => {
       app = buildTestServer(fixture.dir);
       const res = await app.inject({ method: 'GET', url: '/health' });
 
@@ -72,9 +72,9 @@ describe('GET /health', () => {
     });
   });
 
-  it('liefert 404 für unbekannte Routen', async () => {
+  it('returns 404 for unknown routes', async () => {
     app = buildServer(loadConfig({ LOG_LEVEL: 'silent' }));
-    const res = await app.inject({ method: 'GET', url: '/gibt-es-nicht' });
+    const res = await app.inject({ method: 'GET', url: '/does-not-exist' });
     expect(res.statusCode).toBe(404);
   });
 });

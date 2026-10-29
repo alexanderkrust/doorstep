@@ -6,11 +6,11 @@ import { loadConfig } from '../../src/config/index.js';
 import { needsAutoImport, startBackgroundImport } from '../../src/import/background.js';
 import { INDEX_FILE } from '../../src/import/pipeline.js';
 
-/** Startet ein kleines Node-Skript als "Import". */
+/** Starts a small Node script as an "import". */
 const node = (script: string) => startBackgroundImport(process.execPath, ['-e', script], 'ignore');
 
 describe('startBackgroundImport', () => {
-  it('meldet "läuft" und danach Erfolg', async () => {
+  it('reports "running" and then success', async () => {
     const job = node('setTimeout(() => process.exit(0), 50)');
     expect(job.running).toBe(true);
 
@@ -18,19 +18,19 @@ describe('startBackgroundImport', () => {
     expect(job.running).toBe(false);
   });
 
-  it('meldet einen Fehler bei Exit-Code ungleich 0', async () => {
+  it('reports a failure on a non-zero exit code', async () => {
     const job = node('process.exit(3)');
     await expect(job.done).resolves.toBe(false);
     expect(job.running).toBe(false);
   });
 
-  it('meldet einen Fehler, wenn das Kommando nicht startet', async () => {
-    const job = startBackgroundImport('/gibt/es/nicht', [], 'ignore');
+  it('reports a failure when the command does not start', async () => {
+    const job = startBackgroundImport('/does/not/exist', [], 'ignore');
     await expect(job.done).resolves.toBe(false);
     expect(job.running).toBe(false);
   });
 
-  it('lässt sich beenden', async () => {
+  it('can be stopped', async () => {
     const job = node('setTimeout(() => {}, 60_000)');
     job.stop();
     await expect(job.done).resolves.toBe(false);
@@ -49,15 +49,15 @@ describe('needsAutoImport', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('ist wahr, wenn AUTO_IMPORT gesetzt ist und kein Index existiert', () => {
+  it('is true when AUTO_IMPORT is set and no index exists', () => {
     expect(needsAutoImport(loadConfig({ DATA_DIR: dir, AUTO_IMPORT: 'true' }))).toBe(true);
   });
 
-  it('ist falsch, wenn AUTO_IMPORT aus ist', () => {
+  it('is false when AUTO_IMPORT is off', () => {
     expect(needsAutoImport(loadConfig({ DATA_DIR: dir }))).toBe(false);
   });
 
-  it('ist falsch, wenn schon ein Index existiert', async () => {
+  it('is false when an index already exists', async () => {
     await writeFile(join(dir, INDEX_FILE), '');
     expect(needsAutoImport(loadConfig({ DATA_DIR: dir, AUTO_IMPORT: 'true' }))).toBe(false);
   });

@@ -18,24 +18,24 @@ import {
 import type { Position } from '../../src/import/place.js';
 
 const FIXTURES = join(import.meta.dirname, '..', 'fixtures');
-const BOUNDARY_GEOJSONSEQ = join(FIXTURES, 'grenzen.geojsonseq');
-const BOUNDARY_OPL = join(FIXTURES, 'grenzen.opl');
+const BOUNDARY_GEOJSONSEQ = join(FIXTURES, 'boundaries.geojsonseq');
+const BOUNDARY_OPL = join(FIXTURES, 'boundaries.opl');
 
-/** Echte Adresspunkte (OSM, Stand 2026-10-27). */
+/** Real address points (OSM, as of 2026-10-27). */
 const KERKRADE = { lat: 50.8517797, lon: 6.075014 }; // Nieuwstraat 60, NL
-const HERZOGENRATH = { lat: 50.8520063, lon: 6.075576 }; // Neustraße 127, DE, ca. 50 m weiter
+const HERZOGENRATH = { lat: 50.8520063, lon: 6.075576 }; // Neustraße 127, DE, about 50 m away
 const RIEZLERN = { lat: 47.3558401, lon: 10.184858 }; // Walserstraße 77, Kleinwalsertal, AT
 const OBERSTDORF = { lat: 47.4097, lon: 10.2793 };
 const VAALS = { lat: 50.7708, lon: 6.0186 };
 const AACHEN = { lat: 50.7753, lon: 6.0839 };
-const BUESINGEN = { lat: 47.6966, lon: 8.6896 }; // deutsche Exklave in der Schweiz
+const BUESINGEN = { lat: 47.6966, lon: 8.6896 }; // German exclave in Switzerland
 const SCHAFFHAUSEN = { lat: 47.6973, lon: 8.6349 };
-// Mosel: deutsche und luxemburgische Grenze verlaufen an verschiedenen Ufern (Kondominium).
+// Moselle: the German and Luxembourg borders run along different banks (condominium).
 const REMICH = { lat: 49.544698, lon: 6.3700205 }; // Esplanade 19, LU
 const MERTERT = { lat: 49.7017366, lon: 6.48399 }; // Rue Basse 35, LU
 const PERL = { lat: 49.4727, lon: 6.3917 };
 
-/** Gerade-ungerade-Regel ohne Raster, als Referenz. */
+/** Even-odd rule without a grid, as a reference. */
 function bruteForce(rings: Position[][], x: number, y: number): boolean {
   let inside = false;
   for (const ring of rings) {
@@ -48,7 +48,7 @@ function bruteForce(rings: Position[][], x: number, y: number): boolean {
   return inside;
 }
 
-/** Reproduzierbare Zufallszahlen (mulberry32). */
+/** Reproducible random numbers (mulberry32). */
 function random(seed: number): () => number {
   let a = seed;
   return () => {
@@ -74,11 +74,11 @@ function compareWithBruteForce(rings: Position[][], samples: number, seed: numbe
 }
 
 describe('OPL', () => {
-  it('hebt die Maskierung auf', () => {
+  it('undoes the escaping', () => {
     expect(unescapeOpl('Deutschland%20%%2014%%20%Schweiz')).toBe('Deutschland — Schweiz');
   });
 
-  it('liest Tags und Wege einer Relation', () => {
+  it('reads tags and ways of a relation', () => {
     const rel = parseOplRelation(
       'r51477 TISO3166-1=DE,admin_level=2,boundary=administrative,name=Bundesrepublik%20%Deutschland Mw1@outer,n5@admin_centre,w2@,r3@subarea',
     );
@@ -97,7 +97,7 @@ describe('OPL', () => {
 });
 
 describe('PolygonGrid', () => {
-  it('Quadrat mit Loch', () => {
+  it('square with a hole', () => {
     const rings = [
       [
         [0, 0],
@@ -122,7 +122,7 @@ describe('PolygonGrid', () => {
     compareWithBruteForce(rings, 20_000, 1);
   });
 
-  it('stimmt bei einem zackigen Stern mit der einfachen Zählung überein', () => {
+  it('agrees with the simple count for a jagged star', () => {
     const star: Position[] = [];
     const next = random(7);
     for (let i = 0; i < 400; i++) {
@@ -134,27 +134,27 @@ describe('PolygonGrid', () => {
     compareWithBruteForce([star], 50_000, 2);
   });
 
-  it('leere Fläche enthält nichts', () => {
+  it('an empty area contains nothing', () => {
     expect(new PolygonGrid([]).contains(0, 0)).toBe(false);
   });
 });
 
-describe('Grenzen aus dem Fixture', () => {
+describe('boundaries from the fixture', () => {
   let boundaries: BoundaryIndex;
 
   beforeAll(async () => {
     boundaries = await loadBoundaryFiles(BOUNDARY_GEOJSONSEQ, BOUNDARY_OPL);
   });
 
-  it('kennt Deutschland und die angeschnittenen Bundesländer als Flächen', () => {
+  it('knows Germany and the cut-off states as areas', () => {
     const { countries, states, borderSegments } = boundaries.summary;
-    // Nachbarländer sind im Extrakt unvollständig und fehlen als Fläche.
+    // Neighboring countries are incomplete in the extract and missing as areas.
     expect(countries).toEqual(['DE']);
     expect(states).toBe(5);
     expect(borderSegments).toBeGreaterThan(0);
   });
 
-  it('Herzogenrath liegt in Nordrhein-Westfalen', () => {
+  it('Herzogenrath is in North Rhine-Westphalia', () => {
     expect(boundaries.locate(HERZOGENRATH.lat, HERZOGENRATH.lon)).toEqual({
       country: 'DE',
       state: 'Nordrhein-Westfalen',
@@ -165,12 +165,12 @@ describe('Grenzen aus dem Fixture', () => {
     });
   });
 
-  it('Kerkrade auf der anderen Straßenseite liegt in den Niederlanden', () => {
+  it('Kerkrade across the street is in the Netherlands', () => {
     expect(boundaries.locate(KERKRADE.lat, KERKRADE.lon)).toEqual({ country: 'NL', state: null });
     expect(boundaries.locate(VAALS.lat, VAALS.lon).country).toBe('NL');
   });
 
-  it('Riezlern im Kleinwalsertal liegt in Österreich, Oberstdorf in Bayern', () => {
+  it('Riezlern in the Kleinwalsertal is in Austria, Oberstdorf in Bavaria', () => {
     expect(boundaries.locate(RIEZLERN.lat, RIEZLERN.lon)).toEqual({ country: 'AT', state: null });
     expect(boundaries.locate(OBERSTDORF.lat, OBERSTDORF.lon)).toEqual({
       country: 'DE',
@@ -178,7 +178,7 @@ describe('Grenzen aus dem Fixture', () => {
     });
   });
 
-  it('Büsingen ist deutsch, Schaffhausen nebenan schweizerisch', () => {
+  it('Büsingen is German, Schaffhausen next door is Swiss', () => {
     expect(boundaries.locate(BUESINGEN.lat, BUESINGEN.lon)).toEqual({
       country: 'DE',
       state: 'Baden-Württemberg',
@@ -186,17 +186,17 @@ describe('Grenzen aus dem Fixture', () => {
     expect(boundaries.locate(SCHAFFHAUSEN.lat, SCHAFFHAUSEN.lon).country).toBe('CH');
   });
 
-  it('Luxemburg an der Mosel, Perl im Saarland', () => {
+  it('Luxembourg on the Moselle, Perl in Saarland', () => {
     expect(boundaries.locate(REMICH.lat, REMICH.lon).country).toBe('LU');
     expect(boundaries.locate(MERTERT.lat, MERTERT.lon).country).toBe('LU');
     expect(boundaries.locate(PERL.lat, PERL.lon)).toEqual({ country: 'DE', state: 'Saarland' });
   });
 
-  it('weit weg von jeder Grenze bleibt das Land offen', () => {
+  it('far away from any border the country stays open', () => {
     expect(boundaries.locate(40, -30)).toEqual({ country: null, state: null });
   });
 
-  it('Punkt-in-Polygon mit Raster entspricht der einfachen Zählung', async () => {
+  it('point in polygon with a grid matches the simple count', async () => {
     const { readFile } = await import('node:fs/promises');
     const lines = (await readFile(BOUNDARY_GEOJSONSEQ, 'utf8')).split('\n');
     const nrw = lines.find((l) => l.includes('"Nordrhein-Westfalen"'));
@@ -206,7 +206,7 @@ describe('Grenzen aus dem Fixture', () => {
   });
 });
 
-describe('Import mit Grenzen', () => {
+describe('import with boundaries', () => {
   let dir: string;
 
   beforeAll(async () => {
@@ -249,7 +249,7 @@ describe('Import mit Grenzen', () => {
     });
   }
 
-  it('ersetzt addr:country und addr:state durch die Grenzen', async () => {
+  it('replaces addr:country and addr:state with the boundaries', async () => {
     const input = join(dir, 'places.geojsonseq');
     const street = {
       type: 'Feature',
@@ -260,12 +260,12 @@ describe('Import mit Grenzen', () => {
           [6.0845, 50.7758],
         ],
       },
-      properties: { '@type': 'way', '@id': 4, highway: 'residential', name: 'Ohne Adressen' },
+      properties: { '@type': 'way', '@id': 4, highway: 'residential', name: 'Without addresses' },
     };
     await writeFile(
       input,
       [
-        // falsches addr:country
+        // wrong addr:country
         point(1, KERKRADE, {
           'addr:street': 'Nieuwstraat',
           'addr:housenumber': '60',
@@ -281,7 +281,7 @@ describe('Import mit Grenzen', () => {
           'addr:state': 'Vorarlberg',
         }),
         JSON.stringify(street),
-        // außerhalb aller Grenzen: Tags bleiben
+        // outside all boundaries: tags stay
         point(
           5,
           { lat: 40, lon: -30 },
@@ -300,7 +300,7 @@ describe('Import mit Grenzen', () => {
     const result = rows(output);
     expect(result.get(1)).toMatchObject({ country: 'NL', state: null });
     expect(result.get(2)).toMatchObject({ country: 'DE', state: 'Nordrhein-Westfalen' });
-    // Land stimmt mit addr:country überein; das Bundesland aus dem Tag bleibt.
+    // Country matches addr:country; the state from the tag stays.
     expect(result.get(3)).toMatchObject({ country: 'AT', state: 'Vorarlberg' });
     expect(result.get(4)).toMatchObject({
       type: 'street',
@@ -318,7 +318,7 @@ describe('Import mit Grenzen', () => {
     expect(meta.value).toBe('DE');
   });
 
-  it('ohne Grenzen gelten weiter die Adress-Tags', async () => {
+  it('without boundaries the address tags still apply', async () => {
     const input = join(dir, 'tags.geojsonseq');
     await writeFile(input, point(1, KERKRADE, { 'addr:housenumber': '60', 'addr:country': 'DE' }));
     const output = join(dir, 'tags.sqlite');
@@ -328,8 +328,8 @@ describe('Import mit Grenzen', () => {
 });
 
 /**
- * Zwei Länder als OSM-XML: DE vollständig (Quadrat 0–1), NL nur angeschnitten (Weg 2 ist
- * die gemeinsame Grenze, Weg 99 fehlt in der Datei). Bundesland HH = DE.
+ * Two countries as OSM XML: DE complete (square 0–1), NL only cut off (way 2 is the shared
+ * border, way 99 is missing from the file). State HH = DE.
  */
 const SYNTHETIC_OSM = `<?xml version="1.0" encoding="UTF-8"?>
 <osm version="0.6" generator="test">
@@ -370,8 +370,8 @@ const SYNTHETIC_OSM = `<?xml version="1.0" encoding="UTF-8"?>
 </osm>
 `;
 
-describe.skipIf(!isOsmiumAvailable())('Import mit Grenzen aus PBF (osmium)', () => {
-  it('liest Grenzen und Mitglieder über osmium', async () => {
+describe.skipIf(!isOsmiumAvailable())('import with boundaries from PBF (osmium)', () => {
+  it('reads boundaries and members via osmium', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'doorstep-osm-boundaries-'));
     try {
       const input = join(dir, 'laender.osm');
@@ -390,7 +390,7 @@ describe.skipIf(!isOsmiumAvailable())('Import mit Grenzen aus PBF (osmium)', () 
         { osm_id: 11, type: 'house', state: null, country: 'NL' },
         { osm_id: 30, type: 'street', state: 'Hamburg', country: 'DE' },
       ]);
-      expect(logs.join('\n')).toMatch(/Länder DE, 1 Bundesländer/);
+      expect(logs.join('\n')).toMatch(/countries DE, 1 states/);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

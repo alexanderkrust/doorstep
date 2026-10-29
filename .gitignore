@@ -7,5 +7,5 @@ data/
 .DS_Store
 .env
 
-# Beispiel-Extrakt für Tests
+# Sample extract for tests
 !test/fixtures/*.osm.pbf

@@ -12,10 +12,9 @@ import { createCliLogger } from './import/log.js';
 import { runImport } from './import/pipeline.js';
 import { scheduleCron, type ScheduledJob } from './import/scheduler.js';
 
-const USAGE =
-  'Verwendung: doorstep <serve|import|update> [--region <url>] [--input <datei.osm.pbf>]';
+const USAGE = 'Usage: doorstep <serve|import|update> [--region <url>] [--input <file.osm.pbf>]';
 
-/** Exit-Code, wenn bereits ein Import läuft (EX_TEMPFAIL). */
+/** Exit code when an import is already running (EX_TEMPFAIL). */
 const EXIT_LOCKED = 75;
 
 async function serve(): Promise<void> {
@@ -30,13 +29,13 @@ async function serve(): Promise<void> {
     metrics,
   });
 
-  // Derselbe Einstieg wie dieser Prozess, nur mit einem anderen Kommando.
+  // Same entry point as this process, just with a different command.
   const script = process.argv[1] ?? '';
   const startJob = (command: 'import' | 'update') =>
     startBackgroundImport(process.execPath, [...process.execArgv, script, command]);
 
   const shutdown = (signal: string) => {
-    app.log.info({ signal }, 'Fahre herunter');
+    app.log.info({ signal }, 'Shutting down');
     stopping.abort();
     cron?.stop();
     job?.stop();
@@ -50,9 +49,9 @@ async function serve(): Promise<void> {
   };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
-  // Sofort auf einen neuen Index wechseln, ohne auf die nächste Prüfung zu warten.
+  // Switch to a new index right away, without waiting for the next check.
   process.on('SIGHUP', () => {
-    if (!app.reloadIndex()) app.log.info('SIGHUP: Index unverändert');
+    if (!app.reloadIndex()) app.log.info('SIGHUP: index unchanged');
   });
 
   await app.listen({ host: config.host, port: config.port });
@@ -63,41 +62,41 @@ async function serve(): Promise<void> {
       async () => {
         if (job?.running) {
           metrics.observeUpdate('skipped');
-          app.log.warn('Geplantes Update übersprungen: es läuft bereits ein Import');
+          app.log.warn('Skipped scheduled update: an import is already running');
           return;
         }
-        app.log.info({ region: config.regionUrl }, 'Starte geplantes Update');
+        app.log.info({ region: config.regionUrl }, 'Starting scheduled update');
         job = startJob('update');
         const ok = await job.done;
         metrics.observeUpdate(ok ? 'success' : 'failure');
         if (ok) {
           app.reloadIndex();
-          app.log.info({ next: cron?.next() }, 'Geplantes Update fertig');
+          app.log.info({ next: cron?.next() }, 'Scheduled update finished');
         } else if (!stopping.signal.aborted) {
           app.log.error(
             { next: cron?.next() },
-            'Geplantes Update fehlgeschlagen, der bisherige Index bleibt aktiv',
+            'Scheduled update failed, keeping the current index',
           );
         }
       },
       (err: unknown) => {
-        app.log.error({ err }, 'Geplantes Update fehlgeschlagen');
+        app.log.error({ err }, 'Scheduled update failed');
       },
     );
-    app.log.info({ cron: config.updateCron, next: cron.next() }, 'Geplante Updates aktiv');
+    app.log.info({ cron: config.updateCron, next: cron.next() }, 'Scheduled updates enabled');
   }
 
   if (needsAutoImport(config)) {
     app.log.info(
       { region: config.regionUrl },
-      'Kein Index vorhanden, starte Import im Hintergrund (bis dahin antwortet /api mit 503)',
+      'No index available, starting import in the background (/api answers 503 until then)',
     );
     job = startJob('import');
     const ok = await job.done;
     if (ok) {
-      app.log.info('Import fertig, der Index ist aktiv');
+      app.log.info('Import finished, the index is active');
     } else if (!stopping.signal.aborted) {
-      app.log.error('Import fehlgeschlagen, beende den Server');
+      app.log.error('Import failed, stopping the server');
       cron?.stop();
       await app.close();
       process.exit(1);
@@ -118,12 +117,12 @@ async function importCommand(command: 'import' | 'update', argv: string[]): Prom
       log.info(message);
     },
   });
-  log.info('Fertig', {
+  log.info('Done', {
     seconds: Math.round((Date.now() - started) / 100) / 10,
     places: result.places,
     skipped: result.skipped,
     ...(command === 'update'
-      ? { hint: 'Eine laufende API lädt den neuen Index automatisch (spätestens nach 5 s)' }
+      ? { hint: 'A running API loads the new index automatically (within 5 s)' }
       : {}),
   });
 }
@@ -136,12 +135,12 @@ async function main(argv: string[]): Promise<void> {
       return;
     case 'import':
     case 'update':
-      // Beide bauen index.next.sqlite und tauschen ihn atomar aus; `update` lädt den
-      // Extrakt nur neu, wenn sich die Geofabrik-MD5 geändert hat.
+      // Both build index.next.sqlite and swap it in atomically; `update` downloads the
+      // extract again only if the Geofabrik MD5 has changed.
       await importCommand(command, rest);
       return;
     default:
-      console.error(`Unbekanntes Kommando: ${command}\n${USAGE}`);
+      console.error(`Unknown command: ${command}\n${USAGE}`);
       process.exitCode = 1;
   }
 }

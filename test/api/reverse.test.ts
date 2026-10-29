@@ -30,8 +30,8 @@ const coords = (body: FeatureCollection) =>
   body.features.map((f) => ({ lon: f.geometry.coordinates[0], lat: f.geometry.coordinates[1] }));
 
 describe('GET /reverse', () => {
-  it('findet das Objekt an genau dieser Stelle', async () => {
-    // Königsallee 60d (OSM-Knoten 309938104)
+  it('finds the object at exactly this spot', async () => {
+    // Königsallee 60d (OSM node 309938104)
     const { res, body } = await reverse('lat=51.2220118&lon=6.7810708');
 
     expect(res.statusCode).toBe(200);
@@ -46,7 +46,7 @@ describe('GET /reverse', () => {
     });
   });
 
-  it('liefert einen plausiblen Treffer in der Nähe', async () => {
+  it('returns a plausible hit nearby', async () => {
     const lat = 51.2235;
     const lon = 6.7801;
     const { body } = await reverse(`lat=${String(lat)}&lon=${String(lon)}`);
@@ -55,7 +55,7 @@ describe('GET /reverse', () => {
     expect(distanceMeters(lat, lon, first?.lat ?? 0, first?.lon ?? 0)).toBeLessThan(100);
   });
 
-  it('liefert mit limit mehrere Treffer, nach Entfernung sortiert', async () => {
+  it('returns several hits with limit, sorted by distance', async () => {
     const lat = 51.2235;
     const lon = 6.7801;
     const { body } = await reverse(`lat=${String(lat)}&lon=${String(lon)}&limit=5`);
@@ -64,19 +64,19 @@ describe('GET /reverse', () => {
     expect(dist).toEqual([...dist].sort((a, b) => a - b));
   });
 
-  it('findet nichts außerhalb des Radius', async () => {
+  it('finds nothing outside the radius', async () => {
     expect((await reverse('lat=0&lon=0')).body.features).toEqual([]);
-    // ca. 1,5 km nördlich der Daten: mit Default-Radius 1 km leer, mit 3 km ein Treffer
+    // about 1.5 km north of the data: empty with the default radius of 1 km, one hit with 3 km
     expect((await reverse('lat=51.243&lon=6.780')).body.features).toEqual([]);
     expect((await reverse('lat=51.243&lon=6.780&radius=3')).body.features).toHaveLength(1);
   });
 
-  it('setzt Cache-Control', async () => {
+  it('sets Cache-Control', async () => {
     const { res } = await reverse('lat=51.2235&lon=6.7801');
     expect(res.headers['cache-control']).toMatch(/public, max-age=\d+/);
   });
 
-  describe('Validierung', () => {
+  describe('validation', () => {
     it.each([
       ['', 'lat'],
       ['lon=6.78', 'lat'],
@@ -89,7 +89,7 @@ describe('GET /reverse', () => {
       ['lat=51.22&lon=6.78&radius=0', 'radius'],
       ['lat=51.22&lon=6.78&radius=11', 'radius'],
       ['lat=51.22&lon=6.78&lang=xyz', 'lang'],
-    ])('lehnt "%s" mit 400 ab (%s)', async (query, param) => {
+    ])('rejects "%s" with 400 (%s)', async (query, param) => {
       const { res, body } = await reverse(query);
       expect(res.statusCode).toBe(400);
       expect(body).toMatchObject({ statusCode: 400, error: 'Bad Request' });

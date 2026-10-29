@@ -6,12 +6,12 @@ import { IndexWriter } from '../../src/import/index-writer.js';
 import { importanceFor, type Place } from '../../src/import/place.js';
 import { SearchIndex } from '../../src/search/search-index.js';
 
-/** Mehr gleichnamige, wichtigere Treffer, als die Suche früher vorab durchsah (20.000). */
+/** More same-named, more important hits than the search used to look through up front (20,000). */
 const FAR_STREETS = 25_000;
 const HERE = { lat: 52.52, lon: 13.405 };
-/** Knapp nördlich der Rastergrenze bei 52,5° (Zellen g570… und g569…). */
+/** Just north of the grid border at 52.5° (cells g570… and g569…). */
 const AT_CELL_BORDER = { lat: 52.501, lon: 13.405 };
-/** In Polnähe deckt der Umkreis zu viele Rasterzellen ab; dann wird ohne Zellen gesucht. */
+/** Near the poles the radius covers too many grid cells; then the search runs without cells. */
 const NEAR_POLE = { lat: 89.9, lon: 0 };
 
 function place(overrides: Partial<Place> & Pick<Place, 'osmId' | 'type' | 'lat' | 'lon'>): Place {
@@ -39,7 +39,7 @@ beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), 'doorstep-location-'));
   const path = join(dir, 'index.sqlite');
   const writer = new IndexWriter(path);
-  // Viele Hauptstraßen weit weg (Raster in Süddeutschland, Abstand ca. 2 km) …
+  // Many Hauptstraßen far away (grid in southern Germany, about 2 km apart) …
   const side = Math.ceil(Math.sqrt(FAR_STREETS));
   for (let i = 0; i < FAR_STREETS; i++) {
     writer.add(
@@ -52,7 +52,7 @@ beforeAll(async () => {
       }),
     );
   }
-  // … und eine Adresse an einer Hauptstraße direkt am Standort der Anfrage.
+  // … and an address on a Hauptstraße right at the request's location.
   writer.add(
     place({
       osmType: 'N',
@@ -66,7 +66,7 @@ beforeAll(async () => {
       lon: HERE.lon,
     }),
   );
-  // … eine jenseits der Rastergrenze …
+  // … one beyond the grid border …
   writer.add(
     place({
       osmType: 'N',
@@ -80,7 +80,7 @@ beforeAll(async () => {
       lon: HERE.lon,
     }),
   );
-  // … und eine in Polnähe.
+  // … and one near the pole.
   writer.add(
     place({
       osmType: 'N',
@@ -101,28 +101,28 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-describe('Location Bias auf großen Indizes', () => {
-  it('findet eine nahe Adresse hinter vielen wichtigeren gleichnamigen Treffern', () => {
+describe('location bias on large indexes', () => {
+  it('finds a nearby address behind many more important hits with the same name', () => {
     const rows = index.search({ q: 'Hauptstr', limit: 5, ...HERE }) ?? [];
     expect(rows[0]).toMatchObject({ type: 'house', street: 'Hauptstraße', housenumber: '3' });
   });
 
-  it('findet sie auch mit angefangener Hausnummer', () => {
+  it('also finds it with a partial house number', () => {
     const rows = index.search({ q: 'Hauptstraße 3', limit: 5, ...HERE }) ?? [];
     expect(rows[0]).toMatchObject({ type: 'house', housenumber: '3' });
   });
 
-  it('findet nahe Adressen in der Nachbarzelle des Rasters', () => {
+  it('finds nearby addresses in the neighboring grid cell', () => {
     const rows = index.search({ q: 'Hauptstr', limit: 5, ...AT_CELL_BORDER }) ?? [];
     expect(rows[0]).toMatchObject({ type: 'house', housenumber: '7' });
   });
 
-  it('findet nahe Adressen auch dort, wo der Umkreis zu viele Zellen hätte', () => {
+  it('finds nearby addresses also where the radius would have too many cells', () => {
     const rows = index.search({ q: 'Hauptstr', limit: 5, ...NEAR_POLE }) ?? [];
     expect(rows[0]).toMatchObject({ type: 'house', housenumber: '9' });
   });
 
-  it('lässt Suchwörter nicht auf die Rasterzellen passen', () => {
+  it('does not let search words match the grid cells', () => {
     expect(index.search({ q: 'g570', limit: 5, ...HERE })).toEqual([]);
     expect(index.search({ q: 'g5', limit: 5 })).toEqual([]);
   });

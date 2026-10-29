@@ -27,8 +27,8 @@ export const searchRoutes: FastifyPluginAsync<SearchRoutesOptions> = async (
     const started = performance.now();
     let cacheKey: string | undefined;
     if (cache.maxSize > 0) {
-      // Alle Anfragen, nicht nur kurze: Auf großen Indizes sind lange mit Standort am
-      // teuersten. Häufige kurze Präfixe bleiben im LRU, weil sie öfter wiederkommen.
+      // All queries, not just short ones: on large indexes, long queries with a location are
+      // the most expensive. Frequent short prefixes stay in the LRU because they recur often.
       cacheKey = [normalizeTokens(q).join(' '), limit, lang, lat ?? '', lon ?? ''].join('|');
       const hit = cache.get(cacheKey);
       if (hit) {

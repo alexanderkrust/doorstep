@@ -1,7 +1,7 @@
 {
   "name": "doorstep",
   "version": "0.1.0",
-  "description": "Self-hosted Adress-Autosuggest-API auf OSM-Basis",
+  "description": "Self-hosted address autosuggest API based on OSM",
   "private": true,
   "type": "module",
   "license": "UNLICENSED",

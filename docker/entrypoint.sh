@@ -1,9 +1,9 @@
 #!/bin/sh
-# Einstieg des Images, auch im Container als `doorstep` aufrufbar:
-#   serve (Standard)  API starten; ohne Index läuft der Import im Hintergrund (AUTO_IMPORT)
-#   import [--region <url>] [--input <datei>]  Index bauen
-#   update            Extrakt neu laden und Index austauschen
-# Alles andere wird unverändert ausgeführt (z. B. `sh` zur Fehlersuche).
+# Entry point of the image, also callable as `doorstep` inside the container:
+#   serve (default)  start the API; without an index, the import runs in the background (AUTO_IMPORT)
+#   import [--region <url>] [--input <file>]  build the index
+#   update           download the extract again and swap the index
+# Anything else is run unchanged (e.g. `sh` for debugging).
 set -eu
 
 if [ "$#" -eq 0 ]; then

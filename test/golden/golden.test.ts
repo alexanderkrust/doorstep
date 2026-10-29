@@ -16,12 +16,12 @@ interface GoldenQuery {
   lat?: number;
   lon?: number;
   lang?: string;
-  /** Erwarteter Treffer muss unter den ersten `top` sein (Default 1). */
+  /** The expected hit must be among the first `top` (default 1). */
   top?: number;
   expect: Record<string, string>;
-  /** [lat, lon, maxMeter]: der Treffer muss so nah an diesem Punkt liegen. */
+  /** [lat, lon, maxMeters]: the hit must lie this close to this point. */
   near?: [number, number, number];
-  /** Begründung für eine gelockerte Erwartung. */
+  /** Reason for a relaxed expectation. */
   note?: string;
 }
 
@@ -66,8 +66,8 @@ const label = (g: GoldenQuery) =>
     .filter(Boolean)
     .join(' ');
 
-describe('Golden-Queries', () => {
-  it('enthält 30 bis 50 Anfragen', () => {
+describe('golden queries', () => {
+  it('contains 30 to 50 queries', () => {
     expect(golden.queries.length).toBeGreaterThanOrEqual(30);
     expect(golden.queries.length).toBeLessThanOrEqual(50);
   });
@@ -94,7 +94,7 @@ describe('Golden-Queries', () => {
       .join(' | ');
     expect(
       top.some((f) => matches(f, g)),
-      `Treffer: ${summary}`,
+      `Hits: ${summary}`,
     ).toBe(true);
   });
 });

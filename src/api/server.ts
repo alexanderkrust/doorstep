@@ -13,38 +13,38 @@ import { metricsRoutes } from './routes/metrics.js';
 import { reverseRoutes } from './routes/reverse.js';
 import { searchRoutes } from './routes/search.js';
 
-/** So oft prüft der Server, ob ein Update die Indexdatei ersetzt hat. */
+/** How often the server checks whether an update replaced the index file. */
 export const DEFAULT_RELOAD_INTERVAL_MS = 5000;
 
 export interface ServerOptions {
-  /** Läuft gerade ein Import im Hintergrund? Erscheint in `/health`. */
+  /** Is an import running in the background? Shown in `/health`. */
   importing?: () => boolean;
   /**
-   * Abstand, in dem die Indexdatei auf einen Tausch geprüft wird; 0 = nie
-   * (Neuladen dann nur über `app.reloadIndex()`). Default: 0, `serve` setzt
+   * Interval for checking whether the index file was swapped; 0 = never
+   * (reload only via `app.reloadIndex()`). Default: 0; `serve` sets
    * `DEFAULT_RELOAD_INTERVAL_MS`.
    */
   reloadIntervalMs?: number;
-  /** Kennzahlen; `serve` reicht eigene herein, um Updates mitzuzählen. */
+  /** Metrics; `serve` passes its own to count updates as well. */
   metrics?: Metrics;
 }
 
 declare module 'fastify' {
   interface FastifyInstance {
     /**
-     * Wechselt auf eine neue Indexdatei, falls ein Update sie ersetzt hat, und
-     * leert dann den Cache. `true` nach einem Wechsel.
+     * Switches to a new index file if an update replaced it, then clears the
+     * cache. `true` after a switch.
      */
     reloadIndex(): boolean;
   }
 }
 
-/** Baut die Fastify-Instanz, ohne sie zu starten (testbar per inject). */
+/** Builds the Fastify instance without starting it (testable via inject). */
 export function buildServer(config: Config, options: ServerOptions = {}): FastifyInstance {
   const app = Fastify({
     logger: { level: config.logLevel },
-    // Eigene, kompakte Zeile pro Anfrage (siehe onResponse), ohne Query-String:
-    // Suchtexte sind oft Adressen und gehören nicht ins Log.
+    // One compact line per request (see onResponse), without the query string:
+    // search texts are often addresses and do not belong in the log.
     logController: new LogController({ disableRequestLogging: true }),
     trustProxy: config.trustProxy,
   });
@@ -59,12 +59,12 @@ export function buildServer(config: Config, options: ServerOptions = {}): Fastif
     } catch (err) {
       if (!(err instanceof IndexUnavailableError)) throw err;
       metrics.indexReloadErrors++;
-      app.log.error({ err }, 'Neuer Index ist unbrauchbar, der bisherige bleibt aktiv');
+      app.log.error({ err }, 'New index is unusable, keeping the current one');
       return false;
     }
     cache.clear();
     metrics.indexReloads++;
-    app.log.info({ index: index.meta() }, 'Neuer Index geladen');
+    app.log.info({ index: index.meta() }, 'Loaded new index');
     return true;
   });
 
@@ -83,7 +83,7 @@ export function buildServer(config: Config, options: ServerOptions = {}): Fastif
   });
 
   app.addHook('onSend', (_request, reply, payload, done) => {
-    // Fehler (auch 404 und 429 der Plugins) nie cachen lassen.
+    // Never let errors be cached (including 404 and 429 from plugins).
     if (reply.statusCode >= 400 && !reply.hasHeader('cache-control')) {
       void reply.header('cache-control', 'no-store');
     }
@@ -102,7 +102,7 @@ export function buildServer(config: Config, options: ServerOptions = {}): Fastif
         durationMs: Math.round(reply.elapsedTime * 100) / 100,
         cache: reply.getHeader('x-cache'),
       },
-      'Anfrage beantwortet',
+      'Request answered',
     );
     done();
   });

@@ -9,7 +9,7 @@ export interface ReverseRoutesOptions {
   defaultLang: string;
 }
 
-/** `GET /reverse?lat=&lon=&limit=&radius=&lang=` – nächstes Objekt zum Punkt. */
+/** `GET /reverse?lat=&lon=&limit=&radius=&lang=` – nearest objects to a point. */
 export const reverseRoutes: FastifyPluginAsync<ReverseRoutesOptions> = async (
   app,
   { index, defaultLang },

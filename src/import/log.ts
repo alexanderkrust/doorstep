@@ -1,7 +1,7 @@
 import { hostname } from 'node:os';
 import type { Config } from '../config/index.js';
 
-/** Pino-Levels, damit Import- und Server-Logs im selben Format im Container-Log landen. */
+/** Pino levels, so import and server logs end up in the container log in the same format. */
 const LEVELS = { trace: 10, debug: 20, info: 30, warn: 40, error: 50, fatal: 60 } as const;
 
 export type LogLevel = keyof typeof LEVELS;
@@ -12,8 +12,8 @@ export interface CliLogger {
 }
 
 /**
- * Logger für die Kommandos `import` und `update`: eine JSON-Zeile pro Meldung
- * (`level`, `time`, `pid`, `hostname`, `component`, `msg`), wie Fastify/pino.
+ * Logger for the `import` and `update` commands: one JSON line per message
+ * (`level`, `time`, `pid`, `hostname`, `component`, `msg`), like Fastify/pino.
  */
 export function createCliLogger(
   component: string,

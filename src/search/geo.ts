@@ -1,8 +1,8 @@
-/** Geometrie-Hilfen. Reine Funktionen. */
+/** Geometry helpers. Pure functions. */
 
 const EARTH_RADIUS_KM = 6371.0088;
 
-/** Großkreisentfernung in Kilometern. */
+/** Great-circle distance in kilometers. */
 export function distanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const rad = Math.PI / 180;
   const dLat = (lat2 - lat1) * rad;
@@ -14,7 +14,7 @@ export function distanceKm(lat1: number, lon1: number, lat2: number, lon2: numbe
 
 const KM_PER_DEGREE_LAT = 111.32;
 
-/** Box, die einen Kreis um den Punkt sicher enthält: [minLat, maxLat, minLon, maxLon]. */
+/** Box that surely contains a circle around the point: [minLat, maxLat, minLon, maxLon]. */
 export function boundingBox(
   lat: number,
   lon: number,
@@ -27,10 +27,10 @@ export function boundingBox(
 }
 
 /**
- * Kantenlänge der Rasterzellen in Grad (ca. 28 × 17 km in Deutschland). Jeder
- * Eintrag trägt seine Zelle als Token in der FTS-Spalte `cell`; die Umkreissuche
- * verlangt eine der Zellen der Box und muss so nicht alle Treffer durchgehen.
- * Eine Änderung erfordert eine neue Schema-Version.
+ * Edge length of the grid cells in degrees (about 28 × 17 km in Germany). Every entry
+ * carries its cell as a token in the FTS column `cell`; the nearby search requires one
+ * of the box's cells and so does not have to go through all hits.
+ * Changing it requires a new schema version.
  */
 const GRID_CELL_DEG = 0.25;
 const GRID_ROWS = 180 / GRID_CELL_DEG;
@@ -41,12 +41,12 @@ const gridRow = (lat: number) =>
 const gridCol = (lon: number) =>
   Math.min(GRID_COLS - 1, Math.max(0, Math.floor((lon + 180) / GRID_CELL_DEG)));
 
-/** Token der Rasterzelle eines Punkts, z. B. `g570x773`. */
+/** Token of a point's grid cell, e.g. `g570x773`. */
 export function gridCell(lat: number, lon: number): string {
   return `g${String(gridRow(lat))}x${String(gridCol(lon))}`;
 }
 
-/** Alle Rasterzellen, die die Box [minLat, maxLat, minLon, maxLon] berühren. */
+/** All grid cells that touch the box [minLat, maxLat, minLon, maxLon]. */
 export function gridCellsInBox([minLat, maxLat, minLon, maxLon]: readonly [
   number,
   number,

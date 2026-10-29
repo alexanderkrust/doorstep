@@ -1,10 +1,10 @@
 /**
- * Misst die Antwortzeit der Suche direkt auf einem Index (ohne HTTP).
+ * Measures the search response time directly on an index (without HTTP).
  *
  *   npm run bench -- --index /data/index.sqlite [--rounds 5]
  *
- * Anfragen: die Golden-Queries plus jedes Tipp-Präfix (ab 2 Zeichen) typischer
- * Eingaben, mit und ohne Standort. Ziel aus der Roadmap: p95 unter 50 ms.
+ * Queries: the golden queries plus every typing prefix (from 2 characters) of typical
+ * inputs, with and without a location. Target from the roadmap: p95 below 50 ms.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -25,7 +25,7 @@ const TYPED = [
   'Friedrichstraße 3',
   'Gartenstraße',
 ];
-/** Düsseldorf; Location Bias vergrößert die Kandidatenmenge. */
+/** Düsseldorf; location bias enlarges the candidate set. */
 const LOCATION = { lat: 51.2254, lon: 6.7763 };
 
 const { values } = parseArgs({
@@ -35,7 +35,7 @@ const { values } = parseArgs({
   },
 });
 if (!values.index) {
-  console.error('Verwendung: npm run bench -- --index <index.sqlite> [--rounds 5]');
+  console.error('Usage: npm run bench -- --index <index.sqlite> [--rounds 5]');
   process.exit(1);
 }
 
@@ -64,11 +64,11 @@ for (const text of TYPED) {
 
 const index = new SearchIndex(values.index);
 if (!index.open()) {
-  console.error(`Kein Index unter ${values.index}`);
+  console.error(`No index at ${values.index}`);
   process.exit(1);
 }
 
-// Aufwärmen (Page-Cache, vorbereitete Statements)
+// Warm-up (page cache, prepared statements)
 for (const q of queries) index.search(q);
 
 const rounds = Number(values.rounds);
@@ -90,16 +90,16 @@ const p95 = pct(95);
 
 console.log(`Index:     ${values.index}`);
 console.log(
-  `Anfragen:  ${String(queries.length)} × ${String(rounds)} Runden = ${String(times.length)}`,
+  `Queries:   ${String(queries.length)} × ${String(rounds)} rounds = ${String(times.length)}`,
 );
 console.log(`p50:       ${fmt(pct(50))}`);
 console.log(`p95:       ${fmt(p95)}`);
 console.log(`p99:       ${fmt(pct(99))}`);
 console.log(`max:       ${fmt(times.at(-1)?.ms ?? 0)}`);
-console.log('Langsamste Anfragen:');
+console.log('Slowest queries:');
 const seen = new Set<string>();
 for (const t of [...times].reverse()) {
-  const key = `${t.q.q}${t.q.lat !== undefined ? ' (mit Standort)' : ''}`;
+  const key = `${t.q.q}${t.q.lat !== undefined ? ' (with location)' : ''}`;
   if (seen.has(key)) continue;
   seen.add(key);
   console.log(`  ${fmt(t.ms).padStart(10)}  ${key}`);
@@ -108,6 +108,6 @@ for (const t of [...times].reverse()) {
 console.log(
   p95 <= TARGET_MS
     ? `OK: p95 ≤ ${String(TARGET_MS)} ms`
-    : `ZU LANGSAM: p95 > ${String(TARGET_MS)} ms`,
+    : `TOO SLOW: p95 > ${String(TARGET_MS)} ms`,
 );
 process.exitCode = p95 <= TARGET_MS ? 0 : 2;

@@ -14,7 +14,7 @@ const ROOT = join(import.meta.dirname, '..', '..');
 const LARGE = join(ROOT, 'test', 'fixtures', 'duesseldorf.geojsonseq');
 const PIPELINE = pathToFileURL(join(ROOT, 'src', 'import', 'pipeline.ts')).href;
 
-/** Baut den Index in einem eigenen Prozess neu, wie `doorstep update` im Container. */
+/** Rebuilds the index in a separate process, like `doorstep update` in the container. */
 function updateInChildProcess(output: string): Promise<number | null> {
   const script = `
     const { importFromGeoJsonSeq } = await import(${JSON.stringify(PIPELINE)});
@@ -49,13 +49,13 @@ const URLS = [
   '/reverse?lat=51.2235&lon=6.7795',
 ];
 
-describe('Update im laufenden Betrieb', () => {
-  it('tauscht den Index aus, ohne dass eine Anfrage fehlschlägt', { timeout: 60_000 }, async () => {
+describe('update while running', () => {
+  it('swaps the index without any request failing', { timeout: 60_000 }, async () => {
     const failures: string[] = [];
     let requests = 0;
     let running = true;
 
-    // Vier Clients, die ohne Pause Anfragen schicken.
+    // Four clients sending requests without pause.
     const clients = URLS.map(async (url) => {
       while (running) {
         try {
@@ -81,10 +81,10 @@ describe('Update im laufenden Betrieb', () => {
 
       expect(await updateInChildProcess(fixture.path)).toBe(0);
 
-      // Der Server bemerkt die neue Datei von selbst.
+      // The server notices the new file by itself.
       const deadline = Date.now() + 5000;
       while (!(await oberbilk())) {
-        if (Date.now() > deadline) throw new Error('Neuer Index wurde nicht geladen');
+        if (Date.now() > deadline) throw new Error('New index was not loaded');
         await new Promise((r) => setTimeout(r, 20));
       }
       expect(requests - before).toBeGreaterThan(20);

@@ -1,38 +1,38 @@
 /**
- * Ranking der Suchtreffer. Reine Funktionen, damit sich die Formel ohne Index testen lässt.
+ * Ranking of search hits. Pure functions, so the formula can be tested without an index.
  *
- *   text      = 0.5 · bm25 relativ zum besten Treffer + 0.5 · Namensübereinstimmung
- *   ohne Ort: score = 0.6 · text + 0.4 · importance
- *   mit Ort:  score = 0.45 · text + 0.3 · importance + 0.25 · Nähe
+ *   text          = 0.5 · bm25 relative to the best hit + 0.5 · name match
+ *   no location:   score = 0.6 · text + 0.4 · importance
+ *   with location: score = 0.45 · text + 0.3 · importance + 0.25 · proximity
  *
- * Alle Teilwerte liegen zwischen 0 und 1, der Score also auch.
+ * All parts are between 0 and 1, and so is the score.
  */
 
 import { distanceKm } from './geo.js';
 
 export interface Candidate {
-  /** `bm25()` aus FTS5: negativ, je kleiner desto relevanter. */
+  /** `bm25()` from FTS5: negative, the smaller the more relevant. */
   bm25: number;
-  /** Wichtigkeit des Typs (0–1), siehe `importanceFor`. */
+  /** Importance of the type (0–1), see `importanceFor`. */
   importance: number;
-  /** Normalisierte Namen (Wörter durch Leerzeichen getrennt); bei Adressen "straße nummer". */
+  /** Normalized names (words separated by spaces); for addresses "street number". */
   names: readonly string[];
-  /** Entfernung zum Standort der Anfrage; nur gesetzt, wenn lat/lon mitgegeben wurden. */
+  /** Distance to the request's location; only set if lat/lon were given. */
   distanceKm?: number;
 }
 
 export interface ScoreContext {
-  /** Normalisierte Wörter der Anfrage, das letzte ist ein Präfix. */
+  /** Normalized words of the query; the last one is a prefix. */
   queryTokens: readonly string[];
-  /** Kleinster (bester) bm25-Wert aller Kandidaten. */
+  /** Smallest (best) bm25 value of all candidates. */
   bestBm25: number;
 }
 
-/** Ab dieser Entfernung ist die Nähe nur noch halb so viel wert. */
+/** At this distance, proximity is only worth half as much. */
 export const LOCATION_BIAS_SCALE_KM = 5;
-/** Faktor für Namen, die nicht mit dem ersten Wort der Anfrage beginnen. */
+/** Factor for names that do not start with the query's first word. */
 const NOT_AT_START = 0.7;
-/** Faktor, wenn das letzte Wort nur als Präfix passt ("Königsallee 1" → "… 11"). */
+/** Factor when the last word only matches as a prefix ("Königsallee 1" → "… 11"). */
 const PREFIX_ONLY = 0.9;
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
@@ -59,7 +59,7 @@ function matchOne(query: readonly string[], name: string): number {
   }
   if (matchedQuery === 0) return 0;
 
-  // Wurzel, damit kurze Namen ("Düssel") nicht zu stark vor langen ("Düsseldorf") liegen.
+  // Square root, so short names ("Düssel") do not rank too far ahead of long ones ("Düsseldorf").
   const nameCoverage = Math.sqrt(matchedChars / nameChars);
   const queryCoverage = matchedQuery / query.length;
   const first = query[0] ?? '';
@@ -71,9 +71,8 @@ function matchOne(query: readonly string[], name: string): number {
 }
 
 /**
- * Wie gut passt die Anfrage zu einem der Namen? 1 = exakt gleich; weniger, wenn
- * der Name länger ist als die Anfrage, nur einen Teil der Anfrage enthält oder
- * nicht mit ihr beginnt.
+ * How well does the query match one of the names? 1 = exactly equal; less if the name
+ * is longer than the query, contains only part of the query, or does not start with it.
  */
 export function nameMatch(queryTokens: readonly string[], names: readonly string[]): number {
   let best = 0;
@@ -81,7 +80,7 @@ export function nameMatch(queryTokens: readonly string[], names: readonly string
   return best;
 }
 
-/** Nähe zum Standort: 1 direkt am Punkt, 0,5 bei `LOCATION_BIAS_SCALE_KM`. */
+/** Proximity to the location: 1 right at the point, 0.5 at `LOCATION_BIAS_SCALE_KM`. */
 export function proximity(distanceKm: number): number {
   return LOCATION_BIAS_SCALE_KM / (LOCATION_BIAS_SCALE_KM + Math.max(0, distanceKm));
 }
@@ -96,7 +95,7 @@ export function scoreCandidate(candidate: Candidate, ctx: ScoreContext): number 
   return 0.45 * text + 0.3 * importance + 0.25 * proximity(candidate.distanceKm);
 }
 
-/** Sortiert die Kandidaten absteigend nach Score (stabil, ohne die Eingabe zu ändern). */
+/** Sorts the candidates by descending score (stable, without changing the input). */
 export function rank<T extends Candidate>(
   candidates: readonly T[],
   queryTokens: readonly string[],
@@ -110,9 +109,9 @@ export function rank<T extends Candidate>(
 }
 
 /**
- * Entfernt Einträge, die einem früheren mit gleichem Schlüssel im Umkreis von
- * `radiusKm` entsprechen (z. B. die vielen Abschnitte einer Straße in OSM).
- * Reihenfolge bleibt erhalten, der erste (bestgerankte) Eintrag gewinnt.
+ * Removes entries that match an earlier one with the same key within `radiusKm`
+ * (e.g. the many segments of a street in OSM). The order is kept; the first
+ * (best-ranked) entry wins.
  */
 export function dedupeNearby<T extends { lat: number; lon: number }>(
   rows: readonly T[],

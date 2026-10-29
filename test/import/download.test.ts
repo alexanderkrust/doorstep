@@ -67,7 +67,7 @@ afterEach(async () => {
 });
 
 describe('downloadExtract', () => {
-  it('lädt die Datei herunter, prüft die MD5 und meldet Fortschritt', async () => {
+  it('downloads the file, verifies the MD5 and reports progress', async () => {
     await startServer();
     const dest = join(dir, 'extract.osm.pbf');
     const progress: number[] = [];
@@ -87,7 +87,7 @@ describe('downloadExtract', () => {
     await expect(stat(`${dest}.part`)).rejects.toThrow();
   });
 
-  it('setzt einen abgebrochenen Download per Range-Request fort', async () => {
+  it('resumes an interrupted download with a range request', async () => {
     await startServer();
     const dest = join(dir, 'extract.osm.pbf');
     await writeFile(`${dest}.part`, payload.subarray(0, 50_000));
@@ -98,7 +98,7 @@ describe('downloadExtract', () => {
     expect(requests.find((r) => r.url === '/extract.osm.pbf')?.range).toBe('bytes=50000-');
   });
 
-  it('beginnt neu, wenn der Server keine Range-Requests unterstützt', async () => {
+  it('starts over when the server does not support range requests', async () => {
     await startServer({ supportsRange: false });
     const dest = join(dir, 'extract.osm.pbf');
     await writeFile(`${dest}.part`, Buffer.from('kaputt'));
@@ -108,7 +108,7 @@ describe('downloadExtract', () => {
     expect(await readFile(dest)).toEqual(payload);
   });
 
-  it('überspringt den Download, wenn die vorhandene Datei zur MD5 passt', async () => {
+  it('skips the download when the existing file matches the MD5', async () => {
     await startServer();
     const dest = join(dir, 'extract.osm.pbf');
     await writeFile(dest, payload);
@@ -119,7 +119,7 @@ describe('downloadExtract', () => {
     expect(requests.some((r) => r.url === '/extract.osm.pbf')).toBe(false);
   });
 
-  it('funktioniert ohne .md5-Datei, ohne zu prüfen', async () => {
+  it('works without an .md5 file, without verifying', async () => {
     await startServer({ md5: null });
     const dest = join(dir, 'extract.osm.pbf');
 
@@ -129,7 +129,7 @@ describe('downloadExtract', () => {
     expect(await readFile(dest)).toEqual(payload);
   });
 
-  it('bricht bei falscher Prüfsumme ab und verwirft die Datei', async () => {
+  it('aborts on a wrong checksum and discards the file', async () => {
     await startServer({ md5: `${'0'.repeat(32)}  extract.osm.pbf` });
     const dest = join(dir, 'extract.osm.pbf');
 
@@ -140,7 +140,7 @@ describe('downloadExtract', () => {
     await expect(stat(`${dest}.part`)).rejects.toThrow();
   });
 
-  it('meldet HTTP-Fehler verständlich', async () => {
+  it('reports HTTP errors clearly', async () => {
     await startServer();
     await expect(
       downloadExtract(`${baseUrl}/fehlt.osm.pbf`, join(dir, 'x.osm.pbf')),

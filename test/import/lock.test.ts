@@ -23,8 +23,8 @@ afterEach(async () => {
 });
 
 /**
- * Hält die Sperre in einem eigenen Prozess, wie ein Import in einem anderen
- * Container. Löst auf, sobald die Sperre gesetzt ist.
+ * Holds the lock in a separate process, like an import in another container.
+ * Resolves as soon as the lock is taken.
  */
 async function holdInOtherProcess(): Promise<ChildProcess> {
   const script = `
@@ -48,7 +48,7 @@ describe('acquireLock', () => {
   const holder = async () =>
     JSON.parse(await readFile(`${lockPath}.json`, 'utf8')) as Record<string, unknown>;
 
-  it('hält PID und Host fest und gibt die Sperre wieder frei', async () => {
+  it('records PID and host and releases the lock again', async () => {
     const release = await acquireLock(lockPath);
     expect(await holder()).toMatchObject({ pid: process.pid, host: hostname() });
 
@@ -59,26 +59,26 @@ describe('acquireLock', () => {
     )();
   });
 
-  it('verweigert eine zweite Sperre im selben Prozess', async () => {
+  it('refuses a second lock in the same process', async () => {
     const release = await acquireLock(lockPath);
     await expect(acquireLock(lockPath)).rejects.toThrow(LockError);
     await release();
   });
 
-  it('verweigert die Sperre, solange ein anderer Prozess sie hält, und nennt ihn', async () => {
+  it('refuses the lock while another process holds it, and names it', async () => {
     const other = await holdInOtherProcess();
     await expect(acquireLock(lockPath)).rejects.toThrow(
-      new RegExp(`PID ${String(other.pid)} auf ${hostname()}`),
+      new RegExp(`PID ${String(other.pid)} on ${hostname()}`),
     );
   });
 
-  it('ist sofort frei, wenn der Halter hart beendet wird (z. B. Container neu gebaut)', async () => {
+  it('is free immediately when the holder is killed (e.g. container rebuilt)', async () => {
     const other = await holdInOtherProcess();
     await expect(acquireLock(lockPath)).rejects.toThrow(LockError);
 
     other.kill('SIGKILL');
     await once(other, 'exit');
-    // Die Angaben des toten Halters liegen noch da, dürfen aber nicht sperren.
+    // The dead holder's details are still there but must not lock.
     expect(existsSync(`${lockPath}.json`)).toBe(true);
     const release = await acquireLock(lockPath);
     expect(await holder()).toMatchObject({ pid: process.pid });

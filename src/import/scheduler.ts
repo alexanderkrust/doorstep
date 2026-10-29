@@ -1,18 +1,18 @@
 import { nextRun, parseCron } from './cron.js';
 
-/** Größte Verzögerung, die setTimeout zuverlässig kann (2^31-1 ms, ~24,8 Tage). */
+/** Largest delay setTimeout handles reliably (2^31-1 ms, ~24.8 days). */
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
 export interface ScheduledJob {
-  /** Nächster geplanter Lauf; `null` nach `stop()`. */
+  /** Next scheduled run; `null` after `stop()`. */
   next(): Date | null;
   stop(): void;
 }
 
 /**
- * Führt `task` nach dem Cron-Ausdruck aus. Läuft die Aufgabe beim nächsten
- * Zeitpunkt noch, wird dieser ausgelassen. Fehler gehen an `onError`, der
- * Zeitplan läuft weiter.
+ * Runs `task` according to the cron expression. If the task is still running at the
+ * next point in time, that run is skipped. Errors go to `onError`; the schedule
+ * keeps running.
  */
 export function scheduleCron(
   expression: string,
@@ -38,7 +38,7 @@ export function scheduleCron(
 
   function fire() {
     if (due === null) return;
-    // Lange Wartezeiten in Etappen: noch nicht fällig → weiter warten.
+    // Long waits in stages: not due yet → keep waiting.
     if (Date.now() < due.getTime()) {
       arm();
       return;

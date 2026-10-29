@@ -1,7 +1,6 @@
 /**
- * Eingaben, wie sie bei der Adressprüfung im Webshop vorkommen. Die Daten sind Fällen
- * aus dem Deutschland-Extrakt nachgebaut, bei denen die Suche früher nichts oder den
- * falschen Ort fand.
+ * Inputs as they occur when checking addresses in a web shop. The data mimics cases from
+ * the Germany extract where the search used to find nothing or the wrong place.
  */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -13,7 +12,7 @@ import { SearchIndex, type PlaceRow } from '../../src/search/search-index.js';
 
 let nextId = 1;
 
-/** Ein OSM-Knoten mit den angegebenen Tags. */
+/** An OSM node with the given tags. */
 function node(lat: number, lon: number, tags: Record<string, string>) {
   return {
     type: 'Feature' as const,
@@ -22,7 +21,7 @@ function node(lat: number, lon: number, tags: Record<string, string>) {
   };
 }
 
-/** Ein Straßenabschnitt als kurze Linie. */
+/** A street segment as a short line. */
 function street(lat: number, lon: number, name: string) {
   return {
     type: 'Feature' as const,
@@ -45,13 +44,13 @@ const addr = (street: string, housenumber: string, postcode: string, city: strin
 });
 
 const FEATURES = [
-  // Sylt: Gemeinde Sylt, Ortsteil Westerland
+  // Sylt: municipality Sylt, district Westerland
   node(54.9076, 8.3076, {
     ...addr('Strandstraße', '1', '25980', 'Sylt'),
     'addr:suburb': 'Westerland',
   }),
   street(54.9078, 8.3071, 'Strandstraße'),
-  // Bonn hat die Straße, aber keine Nr. 1; Bönen hat Nr. 1
+  // Bonn has the street but no no. 1; Bönen has no. 1
   street(50.7184, 7.1186, 'Konrad-Adenauer-Straße'),
   node(50.7185, 7.1187, addr('Konrad-Adenauer-Straße', '7', '53113', 'Bonn')),
   node(51.5977, 7.7518, addr('Konrad-Adenauer-Straße', '1', '59199', 'Bönen')),
@@ -59,19 +58,19 @@ const FEATURES = [
   node(50.1153, 8.6806, addr('Zeil', '106', '60313', 'Frankfurt am Main')),
   // ß + s: "Schloßstraße"
   node(52.4644, 13.3271, addr('Schloßstraße', '1', '12163', 'Berlin')),
-  // Hausnummer mit Leerzeichen vor dem Buchstaben
+  // House number with a space before the letter
   node(51.2, 6.8, addr('Musterweg', '12 a', '40210', 'Düsseldorf')),
-  // Adresse ohne Straße (addr:place), Kleinwalsertal
+  // Address without a street (addr:place), Kleinwalsertal
   node(47.3809, 10.216, {
     'addr:place': 'Wäldele',
     'addr:housenumber': '16',
     'addr:postcode': '87567',
     'addr:city': 'Riezlern',
   }),
-  // "St." und "Sankt": Kirche mit Kurzform, Stadt mit Langform
+  // "St." and "Sankt": church with the short form, town with the long form
   node(48.934, 10.9713, { amenity: 'place_of_worship', name: 'St. Augustin' }),
   node(50.7753, 7.1896, { place: 'town', name: 'Sankt Augustin' }),
-  // Berliner Ortsteil
+  // Berlin district
   node(52.5407, 13.4117, {
     ...addr('Kastanienallee', '1', '10435', 'Berlin'),
     'addr:suburb': 'Prenzlauer Berg',
@@ -102,8 +101,8 @@ afterAll(async () => {
 const search = (q: string): PlaceRow[] => index.search({ q, limit: 5 }) ?? [];
 const first = (q: string) => search(q)[0];
 
-describe('Adresseingaben im Webshop', () => {
-  it('findet eine Adresse über den Ortsteil (Westerland in der Gemeinde Sylt)', () => {
+describe('address input in a web shop', () => {
+  it('finds an address via the district (Westerland in the municipality of Sylt)', () => {
     expect(first('Strandstraße 1 Westerland')).toMatchObject({
       housenumber: '1',
       city: 'Sylt',
@@ -112,50 +111,50 @@ describe('Adresseingaben im Webshop', () => {
     expect(first('Strandstraße 1, 25980 Sylt')).toMatchObject({ district: 'Westerland' });
   });
 
-  it('übernimmt den Ortsteil für Straßen von der nächsten Adresse', () => {
+  it('takes the district for streets from the nearest address', () => {
     expect(first('Strandstraße Westerland')).toMatchObject({
       type: 'street',
       district: 'Westerland',
     });
   });
 
-  it('findet den Berliner Ortsteil statt einer gleichnamigen Straße woanders in Berlin', () => {
+  it('finds the Berlin district instead of a street with the same name elsewhere in Berlin', () => {
     expect(first('Kastanienallee 1 Prenzlauer Berg')).toMatchObject({ postcode: '10435' });
   });
 
-  it('nimmt lieber die Straße im genannten Ort als eine Hausnummer in einem ähnlich geschriebenen', () => {
+  it('prefers the street in the named city over a house number in a similarly spelled one', () => {
     expect(first('Konrad-Adenauer-Str. 1 Bonn')).toMatchObject({ type: 'street', city: 'Bonn' });
   });
 
-  it('versteht "a.M." und ähnliche Abkürzungen', () => {
+  it('understands "a.M." and similar abbreviations', () => {
     expect(first('Zeil 106 Frankfurt a.M.')).toMatchObject({ housenumber: '106' });
   });
 
-  it('findet "Schlosstr" als Schloßstraße', () => {
+  it('finds "Schlosstr" as Schloßstraße', () => {
     expect(first('Schlosstr 1 Berlin')).toMatchObject({ street: 'Schloßstraße' });
   });
 
-  it('findet eine Hausnummer ohne Leerzeichen hinter der Straße', () => {
+  it('finds a house number without a space after the street', () => {
     expect(first('schloßstraße1 berlin')).toMatchObject({ street: 'Schloßstraße' });
   });
 
-  it('findet "12a", wenn OSM "12 a" schreibt, und umgekehrt', () => {
+  it('finds "12a" when OSM writes "12 a", and vice versa', () => {
     expect(first('Musterweg 12a')).toMatchObject({ housenumber: '12 a' });
     expect(first('Musterweg 12 a')).toMatchObject({ housenumber: '12 a' });
   });
 
-  it('findet Adressen ohne Straße über addr:place', () => {
+  it('finds addresses without a street via addr:place', () => {
     expect(first('Wäldele 16 Riezlern')).toMatchObject({ street: 'Wäldele', postcode: '87567' });
   });
 
-  it('setzt "St." und "Sankt" gleich', () => {
+  it('treats "St." and "Sankt" the same', () => {
     expect(first('St. Augustin')).toMatchObject({ type: 'town', name: 'Sankt Augustin' });
     expect(search('Sankt Augustin').map((r) => r.name)).toContain('St. Augustin');
   });
 });
 
-describe('Aufbau des Suchindex in Blöcken', () => {
-  it('nimmt alle Zeilen auf, auch über Blockgrenzen hinweg', async () => {
+describe('building the search index in blocks', () => {
+  it('includes all rows, also across block boundaries', async () => {
     const blockDir = await mkdtemp(join(tmpdir(), 'doorstep-blocks-'));
     try {
       const path = join(blockDir, 'index.sqlite');
@@ -168,7 +167,7 @@ describe('Aufbau des Suchindex in Blöcken', () => {
       const blocks = new SearchIndex(path);
       try {
         expect(count).toBe(FEATURES.length);
-        // Jede Zeile ist über FTS und über den R*Tree auffindbar
+        // Every row can be found via FTS and via the R*Tree
         expect(blocks.search({ q: 'Strandstraße 1 Westerland', limit: 1 })).toHaveLength(1);
         expect(blocks.search({ q: 'Sankt Augustin', limit: 1 })).toHaveLength(1);
         expect(blocks.search({ q: 'Kastanienallee 1 Prenzlauer', limit: 1 })).toHaveLength(1);
@@ -183,7 +182,7 @@ describe('Aufbau des Suchindex in Blöcken', () => {
   });
 });
 
-describe('Schreibvarianten von Straßennamen', () => {
+describe('spelling variants of street names', () => {
   let variantsDir: string;
   let variants: SearchIndex;
 
@@ -210,11 +209,11 @@ describe('Schreibvarianten von Straßennamen', () => {
 
   const top = (q: string) => variants.search({ q, limit: 5 })?.[0];
 
-  it('findet "Friedrich Straße" als Friedrichstraße, nicht als Friedrich-List-Straße', () => {
+  it('finds "Friedrich Straße" as Friedrichstraße, not as Friedrich-List-Straße', () => {
     expect(top('Friedrich Straße 43 Berlin')).toMatchObject({ street: 'Friedrichstraße' });
   });
 
-  it('findet "Konrad-Adenauerstraße" als Konrad-Adenauer-Straße', () => {
+  it('finds "Konrad-Adenauerstraße" as Konrad-Adenauer-Straße', () => {
     expect(top('Konrad-Adenauerstraße 1')).toMatchObject({ street: 'Konrad-Adenauer-Straße' });
     expect(top('Konrad Adenauerstr 1 Bad Honnef')).toMatchObject({ postcode: '53604' });
   });

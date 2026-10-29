@@ -11,7 +11,7 @@ import {
 const point = (lon: number, lat: number) => ({ type: 'Point' as const, coordinates: [lon, lat] });
 
 describe('featureToPlace', () => {
-  it('macht aus einem Knoten mit Hausnummer eine Adresse', () => {
+  it('turns a node with a house number into an address', () => {
     const place = featureToPlace({
       type: 'Feature',
       geometry: point(6.78, 51.22),
@@ -45,7 +45,7 @@ describe('featureToPlace', () => {
     });
   });
 
-  it('macht aus einem benannten Weg mit highway eine Straße am Mittelpunkt der Linie', () => {
+  it('turns a named way with highway into a street at the middle of the line', () => {
     const place = featureToPlace({
       type: 'Feature',
       geometry: {
@@ -63,7 +63,7 @@ describe('featureToPlace', () => {
     expect(place?.lon).toBeCloseTo(6.0, 6);
   });
 
-  it('übernimmt place-Objekte mit ihrem Typ und setzt city bei Städten', () => {
+  it('takes place objects with their type and sets city for cities', () => {
     const place = featureToPlace({
       type: 'Feature',
       geometry: point(6.77, 51.22),
@@ -72,7 +72,7 @@ describe('featureToPlace', () => {
     expect(place).toMatchObject({ type: 'city', name: 'Düsseldorf', city: 'Düsseldorf' });
   });
 
-  it('nimmt addr:place als Straße, wenn eine Adresse keine addr:street hat', () => {
+  it('uses addr:place as the street when an address has no addr:street', () => {
     const house = (props: Record<string, unknown>) =>
       featureToPlace({
         type: 'Feature',
@@ -85,7 +85,7 @@ describe('featureToPlace', () => {
     });
   });
 
-  it('übernimmt den Ortsteil aus addr:suburb, sonst aus addr:hamlet', () => {
+  it('takes the district from addr:suburb, else from addr:hamlet', () => {
     const house = (props: Record<string, unknown>) =>
       featureToPlace({
         type: 'Feature',
@@ -100,7 +100,7 @@ describe('featureToPlace', () => {
     expect(house({})).toMatchObject({ district: null });
   });
 
-  it('übernimmt name:de und name:en getrennt', () => {
+  it('takes name:de and name:en separately', () => {
     const place = featureToPlace({
       type: 'Feature',
       geometry: point(6.77, 51.22),
@@ -117,7 +117,7 @@ describe('featureToPlace', () => {
     expect(place).toMatchObject({ name: 'Düsseldorf', nameDe: 'Düsseldorf', nameEn: 'Dusseldorf' });
   });
 
-  it('nimmt Objekte auch nur mit name:de oder name:en auf', () => {
+  it('also includes objects with only name:de or name:en', () => {
     const place = featureToPlace({
       type: 'Feature',
       geometry: point(6.77, 51.22),
@@ -126,7 +126,7 @@ describe('featureToPlace', () => {
     expect(place).toMatchObject({ type: 'suburb', name: null, nameEn: 'Old Town' });
   });
 
-  it('setzt city nicht bei Stadtteilen', () => {
+  it('does not set city for city districts', () => {
     const place = featureToPlace({
       type: 'Feature',
       geometry: point(6.77, 51.22),
@@ -135,7 +135,7 @@ describe('featureToPlace', () => {
     expect(place).toMatchObject({ type: 'suburb', name: 'Stadtmitte', city: null });
   });
 
-  it('nutzt für Gebäude-Polygone mit Adresse den Schwerpunkt', () => {
+  it('uses the centroid for building polygons with an address', () => {
     const place = featureToPlace({
       type: 'Feature',
       geometry: {
@@ -159,7 +159,7 @@ describe('featureToPlace', () => {
     expect(place?.lon).toBeCloseTo(6.1, 6);
   });
 
-  it('macht aus benannten Amenities einen POI', () => {
+  it('turns named amenities into a POI', () => {
     const place = featureToPlace({
       type: 'Feature',
       geometry: point(6.78, 51.22),
@@ -175,7 +175,7 @@ describe('featureToPlace', () => {
     expect(place).toMatchObject({ type: 'poi', name: 'Café Kö', housenumber: '1' });
   });
 
-  it('erkennt Relationen', () => {
+  it('recognizes relations', () => {
     const place = featureToPlace({
       type: 'Feature',
       geometry: point(6.78, 51.22),
@@ -185,12 +185,12 @@ describe('featureToPlace', () => {
   });
 
   it.each([
-    ['unbenannte Straße', { highway: 'service' }],
-    ['Amenity ohne Namen', { amenity: 'bench' }],
-    ['nur addr:street', { 'addr:street': 'Königsallee' }],
-    ['place ohne Namen', { place: 'city' }],
-    ['Straßenname ohne highway', { name: 'Irgendwas' }],
-  ])('verwirft %s', (_label, tags) => {
+    ['unnamed street', { highway: 'service' }],
+    ['amenity without a name', { amenity: 'bench' }],
+    ['only addr:street', { 'addr:street': 'Königsallee' }],
+    ['place without a name', { place: 'city' }],
+    ['street name without highway', { name: 'Something' }],
+  ])('drops %s', (_label, tags) => {
     expect(
       featureToPlace({
         type: 'Feature',
@@ -200,7 +200,7 @@ describe('featureToPlace', () => {
     ).toBeNull();
   });
 
-  it('verwirft Features ohne gültige Geometrie oder OSM-ID', () => {
+  it('drops features without a valid geometry or OSM ID', () => {
     const tags = { 'addr:housenumber': '1', 'addr:street': 'A' };
     expect(
       featureToPlace({
@@ -216,14 +216,14 @@ describe('featureToPlace', () => {
 });
 
 describe('importanceFor', () => {
-  it('ordnet Stadt vor Dorf vor Straße vor Hausnummer', () => {
+  it('orders city before village before street before house number', () => {
     expect(importanceFor('city')).toBeGreaterThan(importanceFor('town'));
     expect(importanceFor('town')).toBeGreaterThan(importanceFor('village'));
     expect(importanceFor('village')).toBeGreaterThan(importanceFor('street'));
     expect(importanceFor('street')).toBeGreaterThan(importanceFor('house'));
   });
 
-  it('liefert für unbekannte Typen einen Wert zwischen 0 und 1', () => {
+  it('returns a value between 0 and 1 for unknown types', () => {
     const value = importanceFor('irgendwas');
     expect(value).toBeGreaterThan(0);
     expect(value).toBeLessThan(1);
@@ -231,7 +231,7 @@ describe('importanceFor', () => {
 });
 
 describe('representativePoint', () => {
-  it('nimmt bei MultiLineString die längste Linie', () => {
+  it('takes the longest line for a MultiLineString', () => {
     const p = representativePoint({
       type: 'MultiLineString',
       coordinates: [
@@ -248,13 +248,13 @@ describe('representativePoint', () => {
     expect(p).toEqual({ lon: 1, lat: 1 });
   });
 
-  it('liefert null für leere Geometrien', () => {
+  it('returns null for empty geometries', () => {
     expect(representativePoint({ type: 'LineString', coordinates: [] })).toBeNull();
   });
 });
 
 describe('parseGeoJsonSeqLine', () => {
-  it('entfernt das Record-Separator-Zeichen und ignoriert Leerzeilen', () => {
+  it('removes the record separator character and ignores empty lines', () => {
     expect(parseGeoJsonSeqLine('\u001e{"type":"Feature","geometry":null,"properties":{}}')).toEqual(
       { type: 'Feature', geometry: null, properties: {} },
     );
@@ -282,28 +282,28 @@ describe('withLocation', () => {
     importance: 0.3,
   };
 
-  it('Grenzen haben Vorrang vor addr:country und addr:state', () => {
+  it('boundaries take precedence over addr:country and addr:state', () => {
     expect(withLocation(base, { country: 'DE', state: 'Bayern' })).toMatchObject({
       country: 'DE',
       state: 'Bayern',
     });
   });
 
-  it('anderes Land laut Grenze verwirft auch addr:state', () => {
+  it('a different country per boundary also drops addr:state', () => {
     expect(withLocation(base, { country: 'NL', state: null })).toMatchObject({
       country: 'NL',
       state: null,
     });
   });
 
-  it('gleiches Land ohne Bundeslandfläche behält addr:state', () => {
+  it('the same country without a state area keeps addr:state', () => {
     expect(withLocation(base, { country: 'DE', state: null })).toMatchObject({
       country: 'DE',
       state: 'Nordrhein-Westfalen',
     });
   });
 
-  it('ohne Ergebnis bleiben die Tags', () => {
+  it('without a result the tags stay', () => {
     expect(withLocation(base, { country: null, state: null })).toBe(base);
   });
 });

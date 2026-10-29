@@ -1,14 +1,14 @@
 /**
- * Lasttest gegen eine laufende API über HTTP (mit autocannon).
+ * Load test against a running API over HTTP (with autocannon).
  *
  *   npm run loadtest -- [--url http://127.0.0.1:2322] [--duration 20] [--connections 50]
  *                       [--api-key <key>] [--location]
  *
- * Anfragen: jedes Tipp-Präfix (ab 2 Zeichen) typischer Eingaben, reihum, wie
- * beim Autosuggest in einem Formular. Mit `--location` zusätzlich mit Standort.
- * Rate-Limiting begrenzt den Test sonst auf RATE_LIMIT pro Minute: dafür am Server
- * RATE_LIMIT_ENABLED=false setzen oder einen API-Key mit hohem Limit mitgeben.
- * Endet mit Exit-Code 1, wenn Anfragen fehlschlagen (Status ≠ 2xx oder Fehler).
+ * Queries: every typing prefix (from 2 characters) of typical inputs, in turn, as with
+ * autosuggest in a form. With `--location` also with a location.
+ * Otherwise rate limiting caps the test at RATE_LIMIT per minute: set
+ * RATE_LIMIT_ENABLED=false on the server or pass an API key with a high limit.
+ * Exits with code 1 if requests fail (status ≠ 2xx or errors).
  */
 import { parseArgs } from 'node:util';
 import autocannon from 'autocannon';
@@ -51,8 +51,8 @@ const headers: Record<string, string> = {};
 if (values['api-key']) headers['x-api-key'] = values['api-key'];
 
 console.log(
-  `Lasttest ${values.url}: ${values.connections} Verbindungen, ${values.duration} s, ` +
-    `${String(paths.length)} verschiedene Anfragen`,
+  `Load test ${values.url}: ${values.connections} connections, ${values.duration} s, ` +
+    `${String(paths.length)} different requests`,
 );
 
 const result = await autocannon({
@@ -66,16 +66,16 @@ const result = await autocannon({
 const failed = result.non2xx + result.errors + result.timeouts;
 const ms = (v: number) => `${v.toFixed(1)} ms`;
 console.log(`
-Anfragen gesamt   ${String(result.requests.total)}
-Anfragen/s        ${result.requests.average.toFixed(0)} (Mittel), ${String(result.requests.max)} (Max)
-Latenz p50        ${ms(result.latency.p50)}
-Latenz p90        ${ms(result.latency.p90)}
-Latenz p99        ${ms(result.latency.p99)}
-Latenz max        ${ms(result.latency.max)}
+Requests total    ${String(result.requests.total)}
+Requests/s        ${result.requests.average.toFixed(0)} (mean), ${String(result.requests.max)} (max)
+Latency p50       ${ms(result.latency.p50)}
+Latency p90       ${ms(result.latency.p90)}
+Latency p99       ${ms(result.latency.p99)}
+Latency max       ${ms(result.latency.max)}
 Status ≠ 2xx      ${String(result.non2xx)}
-Fehler/Timeouts   ${String(result.errors)} / ${String(result.timeouts)}`);
+Errors/timeouts   ${String(result.errors)} / ${String(result.timeouts)}`);
 
 if (failed > 0) {
-  console.error(`\n${String(failed)} Anfragen fehlgeschlagen`);
+  console.error(`\n${String(failed)} requests failed`);
   process.exit(1);
 }

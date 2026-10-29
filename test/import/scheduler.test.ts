@@ -11,7 +11,7 @@ afterEach(() => {
 });
 
 describe('scheduleCron', () => {
-  it('führt die Aufgabe zum nächsten Zeitpunkt aus und plant den folgenden', async () => {
+  it('runs the task at the next point in time and schedules the following one', async () => {
     const task = vi.fn(() => Promise.resolve());
     const job = scheduleCron('0 3 * * *', task);
     expect(job.next()).toEqual(new Date(2026, 9, 28, 3, 0));
@@ -27,9 +27,9 @@ describe('scheduleCron', () => {
     job.stop();
   });
 
-  it('läuft nach einem Fehler der Aufgabe weiter', async () => {
+  it('keeps running after the task fails', async () => {
     const onError = vi.fn();
-    const task = vi.fn(() => Promise.reject(new Error('kaputt')));
+    const task = vi.fn(() => Promise.reject(new Error('broken')));
     const job = scheduleCron('*/1 * * * *', task, onError);
 
     await vi.advanceTimersByTimeAsync(30_000);
@@ -39,7 +39,7 @@ describe('scheduleCron', () => {
     job.stop();
   });
 
-  it('startet keinen neuen Lauf, solange der vorige noch läuft', async () => {
+  it('starts no new run while the previous one is still running', async () => {
     let finish: () => void = () => undefined;
     const task = vi.fn(
       () =>
@@ -57,9 +57,9 @@ describe('scheduleCron', () => {
     job.stop();
   });
 
-  it('überbrückt Wartezeiten, die länger als ein setTimeout sind', async () => {
+  it('bridges waits longer than a setTimeout', async () => {
     const task = vi.fn(() => Promise.resolve());
-    // Nächster 1. Januar: gut zwei Monate, länger als 2^31-1 ms (~24,8 Tage).
+    // Next January 1: a good two months, longer than 2^31-1 ms (~24.8 days).
     const job = scheduleCron('0 0 1 1 *', task);
     await vi.advanceTimersByTimeAsync(60 * 24 * 3600 * 1000);
     expect(task).not.toHaveBeenCalled();
@@ -68,7 +68,7 @@ describe('scheduleCron', () => {
     job.stop();
   });
 
-  it('führt nach stop() nichts mehr aus', async () => {
+  it('runs nothing after stop()', async () => {
     const task = vi.fn(() => Promise.resolve());
     const job = scheduleCron('* * * * *', task);
     job.stop();

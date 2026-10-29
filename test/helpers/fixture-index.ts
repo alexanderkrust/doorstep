@@ -14,7 +14,7 @@ export interface FixtureIndex {
   cleanup: () => Promise<void>;
 }
 
-/** Baut den Test-Index (Königsallee) in ein temporäres DATA_DIR. */
+/** Builds the test index (Königsallee) in a temporary DATA_DIR. */
 export async function createFixtureIndex(): Promise<FixtureIndex> {
   const dir = await mkdtemp(join(tmpdir(), 'doorstep-api-'));
   const path = join(dir, INDEX_FILE);
@@ -23,8 +23,8 @@ export async function createFixtureIndex(): Promise<FixtureIndex> {
 }
 
 /**
- * Server gegen ein DATA_DIR, ohne Logausgabe. Rate-Limiting ist aus, solange
- * `env` es nicht einschaltet; Tests schicken viele Anfragen von derselben IP.
+ * Server against a DATA_DIR, without log output. Rate limiting is off unless `env`
+ * turns it on; tests send many requests from the same IP.
  */
 export function buildTestServer(
   dataDir: string,
@@ -49,7 +49,7 @@ export interface FeatureCollection {
   attribution: string;
 }
 
-/** Entfernung in Metern (Haversine). */
+/** Distance in meters (haversine). */
 export function distanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const rad = Math.PI / 180;
   const dLat = (lat2 - lat1) * rad;

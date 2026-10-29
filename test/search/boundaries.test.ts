@@ -8,7 +8,7 @@ import { buildTestServer, type FeatureCollection } from '../helpers/fixture-inde
 
 const FIXTURES = join(import.meta.dirname, '..', 'fixtures');
 
-/** Grenzstraße Herzogenrath/Kerkrade: beide Seiten heißen fast gleich, liegen ca. 50 m auseinander. */
+/** Border street Herzogenrath/Kerkrade: both sides have almost the same name and lie about 50 m apart. */
 const FEATURES = [
   {
     coordinates: [6.075014, 50.8517797],
@@ -17,7 +17,7 @@ const FEATURES = [
       'addr:housenumber': '60',
       'addr:postcode': '6462GL',
       'addr:city': 'Kerkrade',
-      // falsch getaggt
+      // wrongly tagged
       'addr:country': 'DE',
     },
   },
@@ -58,8 +58,8 @@ beforeAll(async () => {
     ).join('\n'),
   );
   const boundaries = await loadBoundaryFiles(
-    join(FIXTURES, 'grenzen.geojsonseq'),
-    join(FIXTURES, 'grenzen.opl'),
+    join(FIXTURES, 'boundaries.geojsonseq'),
+    join(FIXTURES, 'boundaries.opl'),
   );
   await importFromGeoJsonSeq(input, join(dir, INDEX_FILE), { boundaries });
   app = buildTestServer(dir);
@@ -77,8 +77,8 @@ async function first(q: string): Promise<Record<string, unknown> | undefined> {
   return res.json<FeatureCollection>().features[0]?.properties;
 }
 
-describe('Land und Bundesland in Suchergebnissen', () => {
-  it('Adresse in Herzogenrath: Deutschland, Nordrhein-Westfalen', async () => {
+describe('country and state in search results', () => {
+  it('address in Herzogenrath: Germany, North Rhine-Westphalia', async () => {
     expect(await first('Neustraße 127 Herzogenrath')).toMatchObject({
       street: 'Neustraße',
       housenumber: '127',
@@ -87,13 +87,13 @@ describe('Land und Bundesland in Suchergebnissen', () => {
     });
   });
 
-  it('Adresse in Kerkrade: Niederlande, auch bei falschem addr:country', async () => {
+  it('address in Kerkrade: Netherlands, even with a wrong addr:country', async () => {
     const properties = await first('Nieuwstraat 60 Kerkrade');
     expect(properties).toMatchObject({ street: 'Nieuwstraat', country: 'NL' });
     expect(properties).not.toHaveProperty('state');
   });
 
-  it('Adresse im Kleinwalsertal: Österreich', async () => {
+  it('address in the Kleinwalsertal: Austria', async () => {
     expect(await first('Walserstraße 77 Riezlern')).toMatchObject({ country: 'AT' });
   });
 });

@@ -1,10 +1,10 @@
 /**
- * Erzeugt das Grenz-Fixture (`test/fixtures/grenzen.*`) aus den osmium-Ausgaben der
- * Verwaltungsgrenzen eines Extrakts (siehe test/fixtures/README.md):
- * Flächen werden auf kleine Testgebiete zugeschnitten, Grenzwege auf die, die ein
- * Testgebiet berühren, Relationen auf diese Wege und wenige Tags.
+ * Builds the boundary fixture (`test/fixtures/boundaries.*`) from osmium's output for the
+ * administrative boundaries of an extract (see test/fixtures/README.md):
+ * areas are clipped to small test regions, boundary ways to those touching a test
+ * region, relations to these ways and a few tags.
  *
- *   npx tsx scripts/boundary-fixture.ts <grenzen.geojsonseq> <relationen.opl> <ausgabe-ohne-endung>
+ *   npx tsx scripts/boundary-fixture.ts <boundaries.geojsonseq> <relations.opl> <output-without-extension>
  */
 import { createReadStream, writeFileSync } from 'node:fs';
 import { parseOplRelation } from '../src/import/boundaries.js';
@@ -13,7 +13,7 @@ import { parseGeoJsonSeqLine, type Position } from '../src/import/place.js';
 
 type BBox = [minLon: number, minLat: number, maxLon: number, maxLat: number];
 
-/** Testgebiete: Aachen/Kerkrade/Vaals, Kleinwalsertal/Oberstdorf, Büsingen, Mosel (Schengen–Wasserbillig). */
+/** Test regions: Aachen/Kerkrade/Vaals, Kleinwalsertal/Oberstdorf, Büsingen, Moselle (Schengen–Wasserbillig). */
 const AREAS: BBox[] = [
   [5.95, 50.75, 6.2, 50.95],
   [10.05, 47.25, 10.35, 47.45],
@@ -31,7 +31,7 @@ const KEEP_TAGS = new Set([
 
 const [geojsonPath, oplPath, outBase] = process.argv.slice(2);
 if (!geojsonPath || !oplPath || !outBase) {
-  console.error('Verwendung: tsx scripts/boundary-fixture.ts <geojsonseq> <opl> <ausgabe>');
+  console.error('Usage: tsx scripts/boundary-fixture.ts <geojsonseq> <opl> <output>');
   process.exit(1);
 }
 
@@ -39,7 +39,7 @@ const round = (n: number) => Math.round(n * 1e7) / 1e7;
 const inBox = ([x = 0, y = 0]: Position, [a, b, c, d]: BBox) =>
   x >= a && x <= c && y >= b && y <= d;
 
-/** Sutherland-Hodgman an einer Kante der Box. */
+/** Sutherland-Hodgman at one edge of the box. */
 function clipEdge(
   ring: Position[],
   inside: (p: Position) => boolean,
@@ -165,4 +165,4 @@ for (const rel of relations) {
 
 writeFileSync(`${outBase}.geojsonseq`, features.map((l) => `${l}\n`).join(''));
 writeFileSync(`${outBase}.opl`, opl.map((l) => `${l}\n`).join(''));
-console.log(`${String(features.length)} Features, ${String(opl.length)} Relationen geschrieben`);
+console.log(`Wrote ${String(features.length)} features, ${String(opl.length)} relations`);

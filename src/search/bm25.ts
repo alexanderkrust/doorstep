@@ -1,24 +1,24 @@
 /**
- * bm25 wie `bm25()` in FTS5, aber in JS. Reine Funktionen.
+ * bm25 like `bm25()` in FTS5, but in JS. Pure functions.
  *
- * FTS5 zählt für `bm25()` bei jeder Anfrage alle Dokumente jedes Suchworts; auf
- * dem Deutschland-Index kostet das bis zu 250 ms. Hier kommt die Dokumentzahl aus
- * der beim Import vorberechneten Wortstatistik (siehe `TermStats`), die Treffer im
- * Dokument aus dessen Spalten, die genauso wie beim Import erzeugt werden.
+ * For `bm25()`, FTS5 counts all documents of every search word on every query; on the
+ * Germany index that costs up to 250 ms. Here the document count comes from the word
+ * statistics precomputed during the import (see `TermStats`), and the hits in the
+ * document from its columns, which are generated exactly as during the import.
  */
 
 import { housenumberText, indexText } from './normalize.js';
 
-/** Ein Suchwort, wie FTS5 es sucht (siehe `phrasesFor`). */
+/** A search word as FTS5 searches it (see `phrasesFor`). */
 export interface Phrase {
   token: string;
-  /** Passt auf jedes Wort, das mit `token` beginnt. */
+  /** Matches every word that starts with `token`. */
   prefix: boolean;
-  /** Zählt nicht in der Spalte `postcode` (angefangene Hausnummer). */
+  /** Does not count in the `postcode` column (partial house number). */
   notInPostcode: boolean;
 }
 
-/** Wörter je Textspalte des Volltextindex. */
+/** Words per text column of the full-text index. */
 export interface FtsColumns {
   name: readonly string[];
   street: readonly string[];
@@ -27,7 +27,7 @@ export interface FtsColumns {
   city: readonly string[];
 }
 
-/** Spaltengewichte wie früher in `bm25(places_fts, 4, 2, 1, 1, 1, 0)`; `cell` zählt nicht. */
+/** Column weights as formerly in `bm25(places_fts, 4, 2, 1, 1, 1, 0)`; `cell` does not count. */
 const WEIGHTS: Readonly<Record<keyof FtsColumns, number>> = {
   name: 4,
   street: 2,
@@ -36,15 +36,15 @@ const WEIGHTS: Readonly<Record<keyof FtsColumns, number>> = {
   city: 1,
 };
 const COLUMN_NAMES = Object.keys(WEIGHTS) as (keyof FtsColumns)[];
-/** Die Spalte `cell` hat immer genau ein Wort; es zählt für die Dokumentlänge mit. */
+/** The `cell` column always has exactly one word; it counts toward the document length. */
 const CELL_TOKENS = 1;
-/** Parameter wie in FTS5. */
+/** Parameters as in FTS5. */
 const K1 = 1.2;
 const B = 0.75;
 
 const words = (text: string) => text.split(' ').filter(Boolean);
 
-/** Wie der unicode61-Tokenizer die rohe Postleitzahl zerlegt. */
+/** How the unicode61 tokenizer splits the raw postcode. */
 const postcodeWords = (value: string) =>
   value
     .normalize('NFD')
@@ -63,7 +63,7 @@ export interface FtsSource {
   district: string | null;
 }
 
-/** Spalteninhalt wie beim Import (`IndexWriter.buildSearchIndexes`). */
+/** Column content as during the import (`IndexWriter.buildSearchIndexes`). */
 export function ftsColumns(row: FtsSource): FtsColumns {
   return {
     name: words(indexText([row.name, row.name_de, row.name_en])),
@@ -74,13 +74,13 @@ export function ftsColumns(row: FtsSource): FtsColumns {
   };
 }
 
-/** Inverse Dokumenthäufigkeit wie in FTS5 (nie 0 oder negativ). */
+/** Inverse document frequency as in FTS5 (never 0 or negative). */
 export function idf(rows: number, hits: number): number {
   const value = Math.log((rows - hits + 0.5) / (hits + 0.5));
   return value > 0 ? value : 1e-6;
 }
 
-/** bm25 einer Zeile; negativ, je kleiner desto relevanter (wie FTS5). */
+/** bm25 of a row; negative, the smaller the more relevant (like FTS5). */
 export function bm25(
   phrases: readonly Phrase[],
   idfs: readonly number[],

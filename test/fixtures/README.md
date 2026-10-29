@@ -1,30 +1,30 @@
-# Test-Fixtures
+# Test fixtures
 
-`koenigsallee.osm.pbf` ist ein kleiner Ausschnitt aus OpenStreetMap rund um die Königsallee in
-Düsseldorf (Bounding Box 6.7760,51.2190 – 6.7830,51.2290), bereits mit dem Tag-Filter des
-Imports (`src/import/osmium.ts`, `TAG_FILTERS`) reduziert.
+`koenigsallee.osm.pbf` is a small excerpt from OpenStreetMap around the Königsallee in
+Düsseldorf (bounding box 6.7760,51.2190 – 6.7830,51.2290), already reduced with the import's
+tag filter (`src/import/osmium.ts`, `TAG_FILTERS`).
 
-`koenigsallee.geojsonseq` ist dieselbe Datei als GeoJSON-Sequenz. Sie wird für Tests genutzt,
-die ohne `osmium` laufen sollen.
+`koenigsallee.geojsonseq` is the same file as a GeoJSON sequence. It is used by tests that should
+run without `osmium`.
 
-`duesseldorf.geojsonseq` ist größer und dient den Golden-Queries (`test/golden/`) für das
-Ranking: Innenstadt Düsseldorf (6.765,51.210 – 6.800,51.235), Innenstadt Neuss
-(6.680,51.190 – 6.705,51.205) und alle Ortsknoten (`place=city,town,village,suburb,borough,quarter`)
-des Regierungsbezirks Düsseldorf. Zur Verkleinerung enthält jedes Feature nur die vom Import
-gelesenen Tags und als Geometrie den repräsentativen Punkt (`scripts/slim-fixture.ts`).
-Stand: Geofabrik-Extrakt vom 2026-10-27.
+`duesseldorf.geojsonseq` is larger and serves the golden queries (`test/golden/`) for the
+ranking: Düsseldorf city center (6.765,51.210 – 6.800,51.235), Neuss city center
+(6.680,51.190 – 6.705,51.205) and all place nodes (`place=city,town,village,suburb,borough,quarter`)
+of the Düsseldorf administrative region. To keep it small, every feature contains only the tags
+the import reads and the representative point as geometry (`scripts/slim-fixture.ts`).
+As of: Geofabrik extract from 2026-10-27.
 
-`grenzen.geojsonseq` und `grenzen.opl` sind Verwaltungsgrenzen (`admin_level=2` und `4`) aus dem
-Geofabrik-Deutschland-Extrakt vom 2026-10-27, zugeschnitten auf vier Testgebiete:
-Aachen/Kerkrade/Vaals, Kleinwalsertal/Oberstdorf, Büsingen/Schaffhausen und die Mosel
-(Schengen–Wasserbillig). Flächen (nur Deutschland und Bundesländer sind im Extrakt vollständig)
-sind auf die Gebiete beschnitten, Grenzwege und Relationen auf die dort liegenden Wege reduziert
+`boundaries.geojsonseq` and `boundaries.opl` are administrative boundaries (`admin_level=2` and
+`4`) from the Geofabrik Germany extract from 2026-10-27, clipped to four test regions:
+Aachen/Kerkrade/Vaals, Kleinwalsertal/Oberstdorf, Büsingen/Schaffhausen and the Moselle
+(Schengen–Wasserbillig). Areas (only Germany and its states are complete in the extract) are
+clipped to the regions; boundary ways and relations are reduced to the ways located there
 (`scripts/boundary-fixture.ts`).
 
-Daten: © OpenStreetMap contributors, verfügbar unter der
+Data: © OpenStreetMap contributors, available under the
 [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/).
 
-## Neu erzeugen
+## Regenerating
 
 ```bash
 curl -A 'doorstep-dev' -o map.osm 'https://api.openstreetmap.org/api/0.6/map?bbox=6.7760,51.2190,6.7830,51.2290'
@@ -50,12 +50,12 @@ osmium export filtered.pbf -f geojsonseq --attributes=type,id -x print_record_se
 npx tsx scripts/slim-fixture.ts full.geojsonseq test/fixtures/duesseldorf.geojsonseq
 ```
 
-### `grenzen.geojsonseq`, `grenzen.opl`
+### `boundaries.geojsonseq`, `boundaries.opl`
 
 ```bash
 osmium tags-filter germany-latest.osm.pbf r/admin_level=2,4 -o admin.pbf
 osmium export admin.pbf -f geojsonseq --geometry-types=polygon,linestring --keep-untagged \
-  --attributes=type,id -x print_record_separator=false -o grenzen-voll.geojsonseq
-osmium cat admin.pbf -t relation -f opl,add_metadata=false -o relationen.opl
-npx tsx scripts/boundary-fixture.ts grenzen-voll.geojsonseq relationen.opl test/fixtures/grenzen
+  --attributes=type,id -x print_record_separator=false -o boundaries-full.geojsonseq
+osmium cat admin.pbf -t relation -f opl,add_metadata=false -o relations.opl
+npx tsx scripts/boundary-fixture.ts boundaries-full.geojsonseq relations.opl test/fixtures/boundaries
 ```

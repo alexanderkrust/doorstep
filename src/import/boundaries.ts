@@ -1,39 +1,39 @@
 /**
- * Land und Bundesland aus OSM-Verwaltungsgrenzen (`boundary=administrative`,
- * `admin_level=2` und `4`).
+ * Country and state from OSM administrative boundaries (`boundary=administrative`,
+ * `admin_level=2` and `4`).
  *
- * Eingabe ist die Ausgabe von osmium für die gefilterten Grenzen:
- * - GeoJSON-Sequenz mit Flächen (Relationen) und Linien (Wege),
- * - OPL-Zeilen der Relationen (für die Mitglieder der Länder-Relationen).
+ * The input is osmium's output for the filtered boundaries:
+ * - a GeoJSON sequence with areas (relations) and lines (ways),
+ * - OPL lines of the relations (for the members of the country relations).
  *
- * Ein Geofabrik-Länderextrakt enthält nur die eigenen Grenzen vollständig; Nachbarländer
- * sind angeschnitten und lassen sich nicht als Fläche zusammensetzen. Für Punkte
- * außerhalb aller vollständigen Länder entscheidet deshalb der nächste Grenzweg: Er gehört
- * zum vollständigen Land und zu genau einem Nachbarland, und dort liegt der Punkt.
+ * A Geofabrik country extract contains only its own boundaries completely; neighboring
+ * countries are cut off and cannot be assembled into an area. For points outside all
+ * complete countries, the nearest boundary way therefore decides: it belongs to the
+ * complete country and to exactly one neighboring country, and that is where the point is.
  */
 import type { Feature, Position } from './place.js';
 
 export interface Location {
-  /** ISO-3166-1-Code, z. B. `DE`. */
+  /** ISO 3166-1 code, e.g. `DE`. */
   country: string | null;
-  /** Name des Bundeslands (`admin_level=4`). */
+  /** Name of the state (`admin_level=4`). */
   state: string | null;
 }
 
 export interface LocateStats {
-  /** Punkte in einer vollständigen Länderfläche. */
+  /** Points inside a complete country area. */
   inside: number;
-  /** Punkte außerhalb, Land über den nächsten Grenzweg bestimmt. */
+  /** Points outside; country determined via the nearest boundary way. */
   border: number;
-  /** Punkte ohne Ergebnis (Land bleibt `addr:country`). */
+  /** Points without a result (country stays `addr:country`). */
   unknown: number;
 }
 
-/** Umkreis für den nächsten Grenzweg in Grad (Breite); weiter entfernte Punkte bleiben offen. */
+/** Radius for the nearest boundary way in degrees (latitude); points farther away stay open. */
 const MAX_BORDER_DISTANCE_DEG = 0.5;
-/** Rasterweite für die Suche nach Grenzwegen in Grad. */
+/** Grid size for the search for boundary ways in degrees. */
 const BORDER_CELL_DEG = 0.05;
-/** Höchstens so viele Rasterzellen je Achse für eine Fläche. */
+/** At most this many grid cells per axis for an area. */
 const MAX_CELLS_PER_AXIS = 512;
 const MIN_CELL_DEG = 0.002;
 
@@ -42,18 +42,18 @@ const MIN_CELL_DEG = 0.002;
 export interface OplRelation {
   id: number;
   tags: Record<string, string>;
-  /** IDs der Wege unter den Mitgliedern. */
+  /** IDs of the ways among the members. */
   wayIds: number[];
 }
 
-/** Hebt die OPL-Maskierung auf (`%20%` → Leerzeichen, `%2014%` → Gedankenstrich). */
+/** Undoes the OPL escaping (`%20%` → space, `%2014%` → em dash). */
 export function unescapeOpl(text: string): string {
   return text.replace(/%([0-9a-fA-F]+)%/g, (_, hex: string) =>
     String.fromCodePoint(Number.parseInt(hex, 16)),
   );
 }
 
-/** Parst eine Relationszeile von `osmium cat -f opl`; andere Zeilen ergeben `null`. */
+/** Parses a relation line of `osmium cat -f opl`; other lines give `null`. */
 export function parseOplRelation(line: string): OplRelation | null {
   const fields = line.trim().split(' ');
   const head = fields[0];
@@ -79,14 +79,14 @@ export function parseOplRelation(line: string): OplRelation | null {
   return { id, tags, wayIds };
 }
 
-/** Verwaltungsebene 2 oder 4, sonst `null`. */
+/** Administrative level 2 or 4, otherwise `null`. */
 function adminLevel(tags: Record<string, unknown>): 2 | 4 | null {
   if (tags['boundary'] !== 'administrative') return null;
   const level = tags['admin_level'];
   return level === '2' ? 2 : level === '4' ? 4 : null;
 }
 
-/** ISO-Code einer Länder-Relation; Grenzlinien-Relationen (`Deutschland - Österreich`) haben keinen. */
+/** ISO code of a country relation; border line relations (`Deutschland - Österreich`) have none. */
 function countryCode(tags: Record<string, unknown>): string | null {
   for (const key of ['ISO3166-1:alpha2', 'ISO3166-1', 'country_code']) {
     const value = tags[key];
@@ -95,9 +95,9 @@ function countryCode(tags: Record<string, unknown>): string | null {
   return null;
 }
 
-// --- Punkt in Polygon -----------------------------------------------------------------------
+// --- Point in polygon -----------------------------------------------------------------------
 
-/** x-Koordinate, an der die Kante die Waagerechte `y` schneidet, oder `null`. */
+/** x coordinate where the edge crosses the horizontal `y`, or `null`. */
 function crossingX(edges: Float64Array, e: number, y: number): number | null {
   const y1 = edges[e + 1] ?? 0;
   const y2 = edges[e + 3] ?? 0;
@@ -112,10 +112,9 @@ const INSIDE = 1;
 const MIXED = 2;
 
 /**
- * Punkt-in-Polygon (gerade-ungerade-Regel über alle Ringe) mit Raster: Zellen ohne Kante
- * sind ganz innen oder ganz außen und werden in O(1) beantwortet. Sonst zählt ein Strahl
- * nach Osten die Schnitte nur in den Zellen bis zur nächsten kantenfreien Zelle, deren
- * Zustand bekannt ist.
+ * Point in polygon (even-odd rule over all rings) with a grid: cells without an edge are
+ * entirely inside or outside and are answered in O(1). Otherwise, a ray to the east counts
+ * the crossings only in the cells up to the next edge-free cell, whose state is known.
  */
 export class PolygonGrid {
   readonly minX: number;
@@ -126,7 +125,7 @@ export class PolygonGrid {
   private readonly cols: number;
   private readonly rows: number;
   private readonly edges: Float64Array;
-  /** Kantenindizes (Vielfache von 4) je Zelle; `undefined` = keine Kante. */
+  /** Edge indices (multiples of 4) per cell; `undefined` = no edge. */
   private readonly cellEdges: (Int32Array | undefined)[];
   private readonly status: Uint8Array;
 
@@ -174,7 +173,7 @@ export class PolygonGrid {
     return Math.min(this.rows - 1, Math.max(0, Math.floor((y - this.minY) / this.size)));
   }
 
-  /** Ordnet jede Kante den Zellen zu, die sie berührt (je Zeile, eine Zelle Reserve). */
+  /** Assigns each edge to the cells it touches (per row, one cell of margin). */
   private assignEdges(): (Int32Array | undefined)[] {
     const lists: (number[] | undefined)[] = new Array<number[] | undefined>(this.cols * this.rows);
     const { edges } = this;
@@ -186,7 +185,7 @@ export class PolygonGrid {
       const r0 = this.row(Math.min(y1, y2));
       const r1 = this.row(Math.max(y1, y2));
       for (let r = r0; r <= r1; r++) {
-        // x-Bereich der Kante innerhalb der Zeile
+        // x range of the edge within the row
         let xa = x1;
         let xb = x2;
         if (y1 !== y2) {
@@ -206,7 +205,7 @@ export class PolygonGrid {
     return lists.map((list) => (list ? Int32Array.from(list) : undefined));
   }
 
-  /** Zustand der kantenfreien Zellen, je Zeile von Osten (außen) nach Westen. */
+  /** State of the edge-free cells, per row from east (outside) to west. */
   private computeStatus(): Uint8Array {
     const status = new Uint8Array(this.cols * this.rows);
     for (let r = 0; r < this.rows; r++) {
@@ -228,7 +227,7 @@ export class PolygonGrid {
     return status;
   }
 
-  /** Schnitte mit der Waagerechten `y` bei x in [from, to) bzw. (from, to). */
+  /** Crossings with the horizontal `y` at x in [from, to) or (from, to). */
   private countCrossings(
     list: Int32Array,
     y: number,
@@ -266,7 +265,7 @@ export class PolygonGrid {
   }
 }
 
-/** Alle Ringe einer Fläche (Polygon oder MultiPolygon). */
+/** All rings of an area (Polygon or MultiPolygon). */
 function areaRings(feature: Feature): Position[][] | null {
   const geometry = feature.geometry;
   if (geometry?.type === 'Polygon') return geometry.coordinates;
@@ -274,9 +273,9 @@ function areaRings(feature: Feature): Position[][] | null {
   return null;
 }
 
-// --- Nächster Grenzweg ----------------------------------------------------------------------
+// --- Nearest boundary way ------------------------------------------------------------------
 
-/** Grenzabschnitte eines vollständigen Lands mit dem Code des Nachbarlands. */
+/** Border segments of a complete country with the code of the neighboring country. */
 class BorderIndex {
   private readonly segments: number[] = [];
   private readonly codes: string[] = [];
@@ -308,7 +307,7 @@ class BorderIndex {
     }
   }
 
-  /** Code am nächsten Grenzabschnitt (Abstand mit cos(Breite) entzerrt). */
+  /** Code at the nearest border segment (distance corrected with cos(latitude)). */
   nearest(x: number, y: number): string | null {
     if (this.codes.length === 0) return null;
     const scale = Math.cos((y * Math.PI) / 180);
@@ -320,7 +319,7 @@ class BorderIndex {
     for (let ring = 0; ring <= maxRing; ring++) {
       for (let r = row - ring; r <= row + ring; r++) {
         for (let c = col - ring; c <= col + ring; c++) {
-          // nur der Rand des Quadrats; das Innere war in früheren Ringen dran
+          // only the edge of the square; the inside was covered in earlier rings
           if (Math.max(Math.abs(r - row), Math.abs(c - col)) !== ring) continue;
           for (const s of this.cells.get(cellKey(c, r)) ?? []) {
             const d = segmentDistance(this.segments, s * 4, x, y, scale);
@@ -331,7 +330,7 @@ class BorderIndex {
           }
         }
       }
-      // Unbesuchte Zellen sind mindestens ring Zellen entfernt.
+      // Unvisited cells are at least `ring` cells away.
       if (best <= ring * BORDER_CELL_DEG * scale) break;
     }
     return best <= MAX_BORDER_DISTANCE_DEG ? bestCode : null;
@@ -339,7 +338,7 @@ class BorderIndex {
 }
 
 function cellKey(col: number, row: number): number {
-  // Grad/0,05 liegt sicher in ±7200; eindeutiger Schlüssel ohne String.
+  // Degrees/0.05 is surely within ±7200; a unique key without a string.
   return (row + 8192) * 16384 + (col + 8192);
 }
 
@@ -364,11 +363,11 @@ interface Area {
 }
 
 export interface BoundarySummary {
-  /** ISO-Codes der vollständig vorhandenen Länder. */
+  /** ISO codes of the countries that are fully present. */
   countries: string[];
-  /** Anzahl der vollständig vorhandenen Bundesländer. */
+  /** Number of states that are fully present. */
   states: number;
-  /** Anzahl der Grenzabschnitte mit bekanntem Nachbarland. */
+  /** Number of border segments with a known neighboring country. */
   borderSegments: number;
 }
 
@@ -381,21 +380,21 @@ export class BoundaryIndex {
     private readonly borders: BorderIndex,
   ) {}
 
-  /** Leerer Index: Land und Bundesland bleiben wie in den Adress-Tags. */
+  /** Empty index: country and state stay as in the address tags. */
   static empty(): BoundaryIndex {
     return new BoundaryIndex([], [], new BorderIndex());
   }
 
   /**
-   * Liest erst die Relationen (OPL), dann Flächen und Linien (GeoJSON-Sequenz).
-   * Hält nur Länder- und Bundeslandflächen sowie die Grenzwege der vollständigen Länder.
+   * Reads the relations (OPL) first, then areas and lines (GeoJSON sequence).
+   * Keeps only country and state areas plus the boundary ways of the complete countries.
    */
   static async load(
     features: () => AsyncIterable<string>,
     relations: AsyncIterable<string>,
     parse: (line: string) => Feature | null,
   ): Promise<BoundaryIndex> {
-    /** Weg-ID → ISO-Codes der Länder, zu denen er gehört. */
+    /** Way ID → ISO codes of the countries it belongs to. */
     const wayCountries = new Map<number, string[]>();
     const relationCodes = new Map<number, string>();
     for await (const line of relations) {
@@ -437,10 +436,10 @@ export class BoundaryIndex {
       }
     }
 
-    // Grenzwege mit genau einem unvollständigen Land: gemeinsame Grenzen mit einem
-    // vollständigen Land, aber auch Wege nur des Nachbarlands (an der Mosel verlaufen die
-    // deutsche und die luxemburgische Grenze an verschiedenen Ufern). Wege zwischen zwei
-    // Nachbarländern sagen nicht, auf welcher Seite ein Punkt liegt, und bleiben weg.
+    // Boundary ways with exactly one incomplete country: shared borders with a complete
+    // country, but also ways of the neighboring country only (on the Moselle, the German
+    // and the Luxembourg border run along different banks). Ways between two neighboring
+    // countries do not tell which side a point is on and are left out.
     const complete = new Set(countries.map((c) => c.name));
     const borders = new BorderIndex();
     for (const { id, coordinates } of complete.size > 0 ? lines : []) {
@@ -458,7 +457,7 @@ export class BoundaryIndex {
     };
   }
 
-  /** Land und Bundesland eines Punkts; `null`, wo die Grenzen nichts hergeben. */
+  /** Country and state of a point; `null` where the boundaries give nothing. */
   locate(lat: number, lon: number): Location {
     let country = findArea(this.countries, lon, lat);
     if (country) this.stats.inside++;

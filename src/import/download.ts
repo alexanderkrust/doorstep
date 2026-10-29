@@ -11,7 +11,7 @@ export class DownloadError extends Error {
 
 export interface DownloadProgress {
   received: number;
-  /** Gesamtgröße in Bytes, falls der Server sie meldet. */
+  /** Total size in bytes, if the server reports it. */
   total: number | null;
 }
 
@@ -23,7 +23,7 @@ export interface DownloadResult {
   path: string;
   bytes: number;
   md5Verified: boolean;
-  /** `true`, wenn eine vorhandene Datei per MD5 bestätigt und nicht neu geladen wurde. */
+  /** `true` if an existing file was confirmed via MD5 and not downloaded again. */
   skipped: boolean;
 }
 
@@ -41,7 +41,7 @@ async function md5OfFile(path: string): Promise<string> {
   return hash.digest('hex');
 }
 
-/** Geofabrik legt neben jedem Extrakt `<datei>.md5` im Format `<hash>  <name>` ab. */
+/** Geofabrik puts `<file>.md5` next to each extract, in the format `<hash>  <name>`. */
 async function fetchExpectedMd5(url: string): Promise<string | null> {
   try {
     const res = await fetch(`${url}.md5`);
@@ -54,9 +54,9 @@ async function fetchExpectedMd5(url: string): Promise<string | null> {
 }
 
 /**
- * Lädt `url` nach `dest`. Unterbrochene Downloads liegen als `<dest>.part` und werden
- * per Range-Request fortgesetzt. Stellt der Server eine `.md5` bereit, wird geprüft;
- * eine bereits vorhandene, passende Datei wird nicht erneut geladen.
+ * Downloads `url` to `dest`. Interrupted downloads are kept as `<dest>.part` and resumed
+ * with a range request. If the server provides an `.md5`, the file is verified; an
+ * existing file that matches is not downloaded again.
  */
 export async function downloadExtract(
   url: string,
@@ -77,10 +77,10 @@ export async function downloadExtract(
 
   const res = await fetch(url, { headers });
   if (!res.ok || !res.body) {
-    throw new DownloadError(`Download von ${url} fehlgeschlagen: HTTP ${String(res.status)}`);
+    throw new DownloadError(`Download of ${url} failed: HTTP ${String(res.status)}`);
   }
 
-  // 206 = Fortsetzung; bei 200 liefert der Server die ganze Datei, also neu beginnen.
+  // 206 = resumed; with 200 the server sends the whole file, so start over.
   const resumed = res.status === 206 && offset > 0;
   let received = resumed ? offset : 0;
   const length = Number(res.headers.get('content-length'));
@@ -102,7 +102,7 @@ export async function downloadExtract(
 
   if (total !== null && received !== total) {
     throw new DownloadError(
-      `Download von ${url} unvollständig: ${String(received)} von ${String(total)} Bytes`,
+      `Download of ${url} incomplete: ${String(received)} of ${String(total)} bytes`,
     );
   }
 
@@ -112,7 +112,7 @@ export async function downloadExtract(
       await rm(part, { force: true });
       await rm(dest, { force: true });
       throw new DownloadError(
-        `Prüfsumme von ${url} stimmt nicht: erwartet ${expectedMd5}, erhalten ${actual}`,
+        `Checksum of ${url} does not match: expected ${expectedMd5}, got ${actual}`,
       );
     }
   }

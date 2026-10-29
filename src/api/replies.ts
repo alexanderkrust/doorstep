@@ -3,7 +3,7 @@ import type { z } from 'zod';
 import { IndexUnavailableError } from '../search/search-index.js';
 import { formatIssues } from './params.js';
 
-/** Index ändert sich nur bei Updates; identische Anfragen dürfen gecacht werden. */
+/** The index only changes on updates; identical requests may be cached. */
 export const CACHE_MAX_AGE_SECONDS = 3600;
 
 export function sendCached(reply: FastifyReply, body: unknown): FastifyReply {
@@ -25,7 +25,7 @@ export function sendBadRequest(reply: FastifyReply, error: z.ZodError): FastifyR
 
 export function sendNoIndex(
   reply: FastifyReply,
-  message = 'Kein Index vorhanden. Bitte zuerst den Import ausführen.',
+  message = 'No index available. Please run the import first.',
 ): FastifyReply {
   return reply.code(503).header('cache-control', 'no-store').send({
     statusCode: 503,
@@ -35,8 +35,8 @@ export function sendNoIndex(
 }
 
 /**
- * Führt eine Index-Abfrage aus. Fehlt der Index oder ist er nicht nutzbar, wird
- * 503 gesendet und `null` geliefert. Die Dauer geht in den Header `Server-Timing`.
+ * Runs an index query. If the index is missing or unusable, sends 503 and returns
+ * `null`. The duration goes into the `Server-Timing` header.
  */
 export function queryIndex<T>(reply: FastifyReply, run: () => T | null): T | null {
   const started = performance.now();

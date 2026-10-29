@@ -19,7 +19,7 @@ import { charLength, MAX_INDEXED_PREFIX, TermStats } from './term-stats.js';
 
 export { distanceKm };
 
-/** Eine Zeile aus `places`, wie sie die API ausliefert. */
+/** A row from `places` as the API delivers it. */
 export interface PlaceRow {
   osm_type: 'N' | 'W' | 'R';
   osm_id: number;
@@ -41,7 +41,7 @@ export interface PlaceRow {
 export interface SearchOptions {
   q: string;
   limit: number;
-  /** Optionaler Standort (Location Bias): Treffer in der Nähe werden angehoben. */
+  /** Optional location (location bias): nearby hits are boosted. */
   lat?: number;
   lon?: number;
 }
@@ -50,7 +50,7 @@ export interface ReverseOptions {
   lat: number;
   lon: number;
   limit: number;
-  /** Suchradius in Kilometern. */
+  /** Search radius in kilometers. */
   radiusKm: number;
 }
 
@@ -62,7 +62,7 @@ interface CandidateRow extends PlaceRow {
 type RankedRow = CandidateRow & Candidate;
 
 export interface SearchIndexOptions {
-  /** Präfixe mit mehr Dokumenten werden zerlegt (siehe `expandPrefix`); kleiner nur für Tests. */
+  /** Prefixes with more documents are expanded (see `expandPrefix`); smaller only for tests. */
   expandPrefixDocs?: number;
 }
 
@@ -70,50 +70,50 @@ const COLUMNS = `p.osm_type, p.osm_id, p.type, p.name, p.name_de, p.name_en, p.s
   p.housenumber, p.postcode, p.city, p.district, p.state, p.country, p.lat, p.lon`;
 
 /**
- * Ab so vielen Dokumenten wird ein Präfix über 4 Zeichen zerlegt. FTS5 braucht
- * zum Zusammenführen etwa 30 ns je Dokument: 50.000 Dokumente kosten so etwa 1,5 ms.
+ * From this many documents on, a prefix over 4 characters is expanded. FTS5 needs about
+ * 30 ns per document to merge: 50,000 documents cost about 1.5 ms.
  */
 const EXPAND_PREFIX_DOCS = 50_000;
 /**
- * So viele Kandidaten gehen je Abfrage ins Ranking. Die IDs sind nach Wichtigkeit
- * vergeben und FTS5 liefert in ID-Reihenfolge: Die ersten Treffer sind also die
- * wichtigsten, ohne dass alle Treffer bewertet werden müssen.
+ * This many candidates per query go into the ranking. IDs are assigned by importance
+ * and FTS5 returns hits in ID order, so the first hits are the most important ones,
+ * without having to score all hits.
  */
 const CANDIDATES = 200;
-/** Umkreis für die zusätzlichen Kandidaten bei gesetztem Standort. */
+/** Radius for the additional candidates when a location is given. */
 const LOCAL_RADIUS_KM = 25;
-/** Mehr Rasterzellen (nur in Polnähe) machen die Anfrage teurer als eine Prüfung aller Treffer. */
+/** More grid cells (only near the poles) make the query more expensive than checking all hits. */
 const MAX_LOCAL_CELLS = 64;
 /**
- * Ab so vielen globalen Kandidaten im Umkreis wird ohne Rasterzellen gesucht: Bei
- * 10 von 200 sind 200 nahe Treffer nach etwa 4.000 geprüften erreicht.
+ * From this many global candidates within the radius on, the search runs without grid
+ * cells: with 10 out of 200, 200 nearby hits are reached after checking about 4,000.
  */
 const LOCAL_DENSE_HITS = 10;
-/** Gleichnamige Treffer (z. B. Abschnitte einer Straße) in diesem Abstand werden zusammengefasst. */
+/** Hits with the same name (e.g. segments of a street) within this distance are merged. */
 const DEDUPE_RADIUS_KM = 2;
 
-/** Gleiche Treffer haben denselben Typ, Namen und dieselbe Adresse. */
+/** Equal hits have the same type, name and address. */
 const dedupeKey = (row: PlaceRow) =>
   [row.type, row.name, row.name_de, row.name_en, row.street, row.housenumber]
     .map((v) => v?.toLowerCase() ?? '')
     .join('|');
 
-/** Startradius der Umkreissuche; wird verdoppelt, bis genug Treffer da sind. */
+/** Start radius of the nearby search; doubled until there are enough hits. */
 const REVERSE_START_RADIUS_KM = 0.05;
 
-/** Namen, mit denen die Anfrage im Ranking verglichen wird. */
+/** Names the query is compared with in the ranking. */
 function candidateNames(row: PlaceRow): string[] {
   const names = [row.name, row.name_de, row.name_en].flatMap(nameForms);
   if (row.street && row.housenumber) names.push(...nameForms(`${row.street} ${row.housenumber}`));
   return names;
 }
 
-/** Der Index ist da, aber nicht nutzbar (z. B. altes Schema). */
+/** The index exists but is not usable (e.g. old schema). */
 export class IndexUnavailableError extends Error {
   override name = 'IndexUnavailableError';
 }
 
-/** Identität einer Datei: Ein atomarer Tausch per rename liefert eine neue Inode. */
+/** Identity of a file: an atomic swap via rename yields a new inode. */
 function fileIdentity(path: string): string | null {
   try {
     const s = statSync(path);
@@ -123,7 +123,7 @@ function fileIdentity(path: string): string | null {
   }
 }
 
-/** Eine geöffnete Indexdatei mit vorbereiteten Abfragen. */
+/** An open index file with prepared queries. */
 interface OpenIndex {
   db: DatabaseSync;
   identity: string | null;
@@ -134,16 +134,16 @@ interface OpenIndex {
   box: StatementSync;
 }
 
-/** Öffnet und prüft eine Indexdatei. Wirft `IndexUnavailableError` bei falschem Schema. */
+/** Opens and checks an index file. Throws `IndexUnavailableError` on a wrong schema. */
 function openIndexFile(path: string): OpenIndex {
-  // Identität vor dem Öffnen lesen: Wird die Datei dazwischen getauscht,
-  // fällt das beim nächsten Vergleich auf und sie wird erneut geladen.
+  // Read the identity before opening: if the file is swapped in between, the next
+  // comparison notices and it is loaded again.
   const identity = fileIdentity(path);
   let db: DatabaseSync;
   try {
     db = new DatabaseSync(path, { readOnly: true });
   } catch (err) {
-    throw new IndexUnavailableError(`Index ${path} lässt sich nicht öffnen: ${String(err)}`);
+    throw new IndexUnavailableError(`Index ${path} cannot be opened: ${String(err)}`);
   }
   try {
     let meta: Record<string, string>;
@@ -154,13 +154,13 @@ function openIndexFile(path: string): OpenIndex {
       }[];
       meta = Object.fromEntries(rows.map((r) => [r.key, r.value]));
     } catch (err) {
-      throw new IndexUnavailableError(`Index ${path} ist nicht lesbar: ${String(err)}`);
+      throw new IndexUnavailableError(`Index ${path} is not readable: ${String(err)}`);
     }
     const version = meta['schema_version'];
     if (version !== String(SCHEMA_VERSION)) {
       throw new IndexUnavailableError(
-        `Index hat Schema-Version ${version ?? 'unbekannt'}, erwartet wird ${String(SCHEMA_VERSION)}. ` +
-          'Bitte neu importieren.',
+        `Index has schema version ${version ?? 'unknown'}, expected ${String(SCHEMA_VERSION)}. ` +
+          'Please import again.',
       );
     }
     return {
@@ -168,14 +168,14 @@ function openIndexFile(path: string): OpenIndex {
       identity,
       meta,
       stats: TermStats.open(db),
-      // Ohne bm25(): Das zählt für jedes Suchwort alle Dokumente; bm25 kommt aus JS.
+      // Without bm25(): it counts all documents for every search word; bm25 comes from JS.
       search: db.prepare(`SELECT p.id, ${COLUMNS}, p.importance
         FROM (SELECT rowid AS id FROM places_fts
                WHERE places_fts MATCH ? LIMIT ${String(CANDIDATES)}) f
         JOIN places p ON p.id = f.id`),
-      // Alle Treffer im Umkreis, nicht nur die wichtigsten: Nahe Adressen haben die
-      // niedrigste Wichtigkeit und stehen in FTS-Reihenfolge ganz hinten. Die Anfrage
-      // enthält die Rasterzellen der Box, FTS5 verschneidet dann die Trefferlisten.
+      // All hits within the radius, not just the most important: nearby addresses have the
+      // lowest importance and come last in FTS order. The query contains the box's grid
+      // cells; FTS5 then intersects the hit lists.
       searchLocal: db.prepare(`SELECT p.id, ${COLUMNS}, p.importance
         FROM places_fts JOIN places p ON p.id = places_fts.rowid
         WHERE places_fts MATCH ?
@@ -191,12 +191,12 @@ function openIndexFile(path: string): OpenIndex {
 }
 
 /**
- * Lesender Zugriff auf `index.sqlite`. Die Datei wird beim ersten Zugriff
- * geöffnet, damit die API auch startet, bevor ein Import gelaufen ist.
+ * Read access to `index.sqlite`. The file is opened on first access, so the API also
+ * starts before an import has run.
  *
- * Updates ersetzen die Datei per atomarem rename. Die geöffnete alte Datei
- * bleibt bis zum Neuladen lesbar (unter Unix lebt sie, solange sie offen ist);
- * `reloadIfChanged()` wechselt dann ohne Unterbrechung auf die neue.
+ * Updates replace the file via an atomic rename. The open old file stays readable until
+ * the reload (on Unix it lives as long as it is open); `reloadIfChanged()` then switches
+ * to the new one without interruption.
  */
 export class SearchIndex {
   private current: OpenIndex | null = null;
@@ -210,8 +210,8 @@ export class SearchIndex {
   }
 
   /**
-   * Öffnet den Index, falls vorhanden; `false`, wenn noch keiner existiert.
-   * Wirft `IndexUnavailableError`, wenn die Datei ein anderes Schema hat.
+   * Opens the index if present; `false` if none exists yet.
+   * Throws `IndexUnavailableError` if the file has a different schema.
    */
   open(): boolean {
     if (this.current) return true;
@@ -221,10 +221,10 @@ export class SearchIndex {
   }
 
   /**
-   * Lädt den Index neu, wenn unter `path` inzwischen eine andere Datei liegt.
-   * Liefert `true` nach einem Wechsel. Ist die neue Datei unbrauchbar, bleibt der
-   * alte Index aktiv und es wird `IndexUnavailableError` geworfen. Ist noch kein
-   * Index geöffnet, passiert nichts (das übernimmt der nächste Zugriff).
+   * Reloads the index if a different file now lies at `path`. Returns `true` after a
+   * switch. If the new file is unusable, the old index stays active and
+   * `IndexUnavailableError` is thrown. If no index is open yet, nothing happens (the
+   * next access takes care of it).
    */
   reloadIfChanged(): boolean {
     const old = this.current;
@@ -236,17 +236,17 @@ export class SearchIndex {
     try {
       next = openIndexFile(this.path);
     } catch (err) {
-      // Nicht bei jedem Aufruf erneut versuchen, erst wenn sich die Datei wieder ändert.
+      // Do not retry on every call, only when the file changes again.
       old.identity = identity;
       throw err;
     }
-    // Abfragen laufen synchron: Zwischen diesen Zeilen kann keine Anfrage dazwischenkommen.
+    // Queries run synchronously: no request can come in between these lines.
     this.current = next;
     old.db.close();
     return true;
   }
 
-  /** Metadaten des geöffneten Index (`places`, `imported_at`, `source`, …); sonst `null`. */
+  /** Metadata of the open index (`places`, `imported_at`, `source`, …); otherwise `null`. */
   meta(): Readonly<Record<string, string>> | null {
     return this.current?.meta ?? null;
   }
@@ -256,14 +256,14 @@ export class SearchIndex {
   }
 
   /**
-   * Autosuggest; `null`, wenn kein Index vorhanden ist.
+   * Autosuggest; `null` if there is no index.
    *
-   * Reihenfolge, die erste mit Treffern gewinnt:
-   * 1. die Anfrage wie eingegeben, sonst ohne einzelne Buchstaben ("Frankfurt a.M."),
-   *    jeweils mit Hausnummer und sonst auf Straßenebene (Hausnummer fehlt in OSM);
-   * 2. dasselbe mit Tippfehler-Toleranz am letzten Wort.
-   * Die Straße im genannten Ort geht so vor einer Hausnummer in einem ähnlich
-   * geschriebenen Ort ("… 1 Bonn" findet nicht "… 1 Bönen").
+   * Order; the first with hits wins:
+   * 1. the query as typed, otherwise without single letters ("Frankfurt a.M."),
+   *    each with the house number and otherwise at street level (house number missing in OSM);
+   * 2. the same with typo tolerance on the last word.
+   * So the street in the named city comes before a house number in a similarly
+   * spelled city ("… 1 Bonn" does not find "… 1 Bönen").
    */
   search(options: SearchOptions): PlaceRow[] | null {
     if (!this.open()) return null;
@@ -289,8 +289,8 @@ export class SearchIndex {
   }
 
   /**
-   * Erste Query-Variante mit Treffern, gerankt. Ohne `typos` nur die Anfrage selbst,
-   * mit `typos` nur die Varianten mit gekürztem letztem Wort.
+   * First query variant with hits, ranked. Without `typos` only the query itself, with
+   * `typos` only the variants with a trimmed last word.
    */
   private rankedSearch(
     tokens: readonly string[],
@@ -307,9 +307,9 @@ export class SearchIndex {
       const { match, idfs } = this.prepareQuery(current.stats, variant);
       if (match === null) continue;
       const rows = current.search.all(inTextColumns(match)) as unknown as CandidateRow[];
-      // Weniger als CANDIDATES Treffer: Alle sind schon dabei, auch die nahen.
+      // Fewer than CANDIDATES hits: all are already included, the nearby ones too.
       if (hasLocation && rows.length >= CANDIDATES) {
-        // Treffer in der Nähe, die es global nicht unter die ersten Kandidaten schaffen.
+        // Nearby hits that do not make it into the first candidates globally.
         const seen = new Set(rows.map((r) => r.id));
         for (const row of this.localCandidates(match, lat, lon, rows)) {
           if (!seen.has(row.id)) rows.push(row);
@@ -330,8 +330,8 @@ export class SearchIndex {
   }
 
   /**
-   * FTS5-Query und IDF je Suchwort aus der Wortstatistik. Ein langes Präfix mit
-   * einem häufigen Wort ("strasse"*) wird zerlegt, siehe `expandPrefix`.
+   * FTS5 query and IDF per search word from the word statistics. A long prefix with a
+   * frequent word ("strasse"*) is expanded, see `expandPrefix`.
    */
   private prepareQuery(
     stats: TermStats,
@@ -354,12 +354,11 @@ export class SearchIndex {
   }
 
   /**
-   * Die wichtigsten Treffer im Umkreis. Über die Rasterzellen der Box muss FTS5 nur
-   * Treffer in der Nähe liefern; die Dauer hängt so von der Dichte im Umkreis ab,
-   * nicht von der Zahl der Treffer im ganzen Index. Liegen schon unter den globalen
-   * Kandidaten viele im Umkreis, sind die nahen Treffer auch ohne Zellen schnell
-   * gefunden, und die Verschneidung mit den Trefferlisten der Zellen entfällt.
-   * Beide Wege liefern dieselben Zeilen.
+   * The most important hits within the radius. Through the box's grid cells, FTS5 only has
+   * to return nearby hits; the duration depends on the density within the radius, not on
+   * the number of hits in the whole index. If many of the global candidates already lie
+   * within the radius, the nearby hits are found quickly without cells too, and the
+   * intersection with the cells' hit lists is skipped. Both ways return the same rows.
    */
   private localCandidates(
     match: string,
@@ -378,7 +377,7 @@ export class SearchIndex {
     return (this.current?.searchLocal.all(query, ...box) ?? []) as unknown as CandidateRow[];
   }
 
-  /** Nächste Objekte zum Punkt über den R*Tree; `null`, wenn kein Index vorhanden ist. */
+  /** Nearest objects to the point via the R*Tree; `null` if there is no index. */
   reverse(options: ReverseOptions): PlaceRow[] | null {
     if (!this.open()) return null;
     const { lat, lon, limit, radiusKm } = options;
@@ -386,7 +385,7 @@ export class SearchIndex {
     for (;;) {
       const candidates = (this.current?.box.all(...boundingBox(lat, lon, radius)) ??
         []) as unknown as PlaceRow[];
-      // Nur Treffer innerhalb des Kreises sind sicher die nächsten.
+      // Only hits inside the circle are surely the nearest.
       const inCircle = candidates
         .map((row) => ({ row, d: distanceKm(lat, lon, row.lat, row.lon) }))
         .filter((c) => c.d <= radius)

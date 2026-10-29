@@ -1,36 +1,38 @@
-# Projekt: Self-hosted Autosuggest-API auf OSM-Basis
+# Project: self-hosted autosuggest API based on OSM
 
-## Ziel
+## Goal
 
-Adress-Autosuggest-API. Auslieferung als EIN Docker-Image.
+Address autosuggest API. Shipped as ONE Docker image.
 
-## Harte Regeln
+## Hard rules
 
-- Kein docker-compose, weder im Repo noch in der Doku. Nur ein Dockerfile.
-- Keine externen Dienste (kein Elasticsearch, Typesense, Redis, Postgres).
-- Index = SQLite (FTS5 + R*Tree), Datei liegt unter /data.
-- Konfiguration nur per Umgebungsvariablen, validiert in src/config.
-- TypeScript strict, Fastify, Vitest. Keine neuen Abhängigkeiten ohne Begründung.
+- No docker-compose, neither in the repo nor in the docs. Only a Dockerfile.
+- No external services (no Elasticsearch, Typesense, Redis, Postgres).
+- Index = SQLite (FTS5 + R\*Tree), the file lives under /data.
+- Configuration only via environment variables, validated in src/config.
+- TypeScript strict, Fastify, Vitest. No new dependencies without a reason.
+- Everything technical is in English: code, comments, log and error messages, API responses,
+  tests, docs, commit messages and PR descriptions.
 
-## Befehle
+## Commands
 
 - npm run dev | build | test | lint | typecheck
-- npm run ci (lint, typecheck, test, build – vor jedem Commit)
-- npm run import -- --region <url> (ab Phase 2)
+- npm run ci (lint, typecheck, test, build – before every commit)
+- npm run import -- --region <url> (from phase 2 on)
 
-## Struktur
+## Structure
 
-- src/index.ts: CLI-Einstieg (`serve`, `import`)
-- src/config: ENV-Schema (zod), `loadConfig(env)`; neue Variablen nur hier
-- src/api: Fastify-Server (`buildServer(config)`), Routen unter src/api/routes
-- src/import: OSM-Import (Phase 2)
-- src/search: Such- und Ranking-Logik (Phase 3/4)
-- test/: Vitest-Tests, API-Tests per `app.inject`
-- docker/: Entrypoint und Hilfsskripte für das Dockerfile (Phase 5)
+- src/index.ts: CLI entry point (`serve`, `import`, `update`)
+- src/config: env schema (zod), `loadConfig(env)`; new variables only here
+- src/api: Fastify server (`buildServer(config)`), routes under src/api/routes
+- src/import: OSM import (phase 2)
+- src/search: search and ranking logic (phases 3/4)
+- test/: Vitest tests, API tests via `app.inject`
+- docker/: entry point and helper scripts for the Dockerfile (phase 5)
 
-## Arbeitsweise
+## Way of working
 
-- Arbeite phasenweise gemäß ROADMAP.md, nur die jeweils genannte Phase.
-- Schreibe zuerst Tests, dann Code. Eine Phase ist fertig, wenn ihr Kriterium "Fertig, wenn" erfüllt ist.
-- Antwortformat der API: GeoJSON.
-- OSM-Attribution (ODbL) muss in README und API-Antworten enthalten sein.
+- Work phase by phase according to ROADMAP.md, only the phase named.
+- Write tests first, then code. A phase is done when its "Done when" criterion is met.
+- API response format: GeoJSON.
+- OSM attribution (ODbL) must be in the README and in API responses.

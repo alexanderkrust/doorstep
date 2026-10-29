@@ -1,44 +1,44 @@
-/** Übersetzung normalisierter Wörter (siehe `normalizeTokens`) in FTS5-Queries. Reine Funktionen. */
+/** Translation of normalized words (see `normalizeTokens`) into FTS5 queries. Pure functions. */
 
 import type { Phrase } from './bm25.js';
 import type { TermDocs } from './term-stats.js';
 
-/** Kürzer wird das letzte Token bei der Tippfehler-Toleranz nicht. */
+/** The typo tolerance never trims the last token below this length. */
 const MIN_TRIMMED_LENGTH = 3;
-/** So viele Zeichen werden am Ende des letzten Tokens höchstens abgeschnitten. */
+/** At most this many characters are cut off the end of the last token. */
 const MAX_TRIM = 2;
 
 const quote = (token: string) => `"${token.replaceAll('"', '""')}"`;
 
-/** Sieht aus wie eine Hausnummer ("12", "60d"). */
+/** Looks like a house number ("12", "60d"). */
 const HOUSENUMBER = /^\d+[a-z]?$/;
-/** Ab so vielen Ziffern kann ein angefangenes Token auch eine Postleitzahl sein. */
+/** From this many digits on, a partial token can also be a postcode. */
 const MIN_POSTCODE_PREFIX = 4;
 
 /**
- * Eine angefangene Hausnummer ("4") soll nicht als Präfix der Postleitzahl
- * passen (40213), sonst trifft sie jede Adresse im PLZ-Gebiet.
+ * A partial house number ("4") must not match as a prefix of the postcode (40213),
+ * otherwise it hits every address in that postcode area.
  */
 function isHousenumberPrefix(token: string): boolean {
   return HOUSENUMBER.test(token) && token.replace(/\D/g, '').length < MIN_POSTCODE_PREFIX;
 }
 
-/** Spalten mit Text aus OSM; die Spalte `cell` (Rasterzelle) gehört nicht dazu. */
+/** Columns with text from OSM; the `cell` column (grid cell) is not one of them. */
 const TEXT_COLUMNS = '{name street housenumber postcode city}';
 
-/** Beschränkt eine Anfrage auf die Textspalten, damit Suchwörter nie Rasterzellen treffen. */
+/** Restricts a query to the text columns so search words never hit grid cells. */
 export function inTextColumns(match: string): string {
   return `${TEXT_COLUMNS} : (${match})`;
 }
 
-/** Wie `inTextColumns`, zusätzlich muss der Treffer in einer der Rasterzellen liegen. */
+/** Like `inTextColumns`; in addition, the hit must lie in one of the grid cells. */
 export function withinCells(match: string, cells: readonly string[]): string {
   return `${inTextColumns(match)} AND cell : (${cells.map(quote).join(' OR ')})`;
 }
 
 /**
- * Letztes Token als Präfix, alle anderen exakt; alle müssen vorkommen.
- * `lastParts` ersetzt das Präfix durch seine Zerlegung (siehe `expandPrefix`).
+ * Last token as a prefix, all others exact; all must occur.
+ * `lastParts` replaces the prefix with its expansion (see `expandPrefix`).
  */
 export function buildFtsQuery(
   tokens: readonly string[],
@@ -49,14 +49,14 @@ export function buildFtsQuery(
   const last = tokens[tokens.length - 1] ?? '';
   const filter = isHousenumberPrefix(last) ? '- {postcode} : ' : '';
   if (lastParts && lastParts.length > 0) {
-    // Vor einer Klammer verlangt FTS5 ein ausdrückliches AND.
+    // FTS5 requires an explicit AND before a parenthesis.
     const group = `${filter}(${lastParts.join(' OR ')})`;
     return head.length > 0 ? `${head.join(' ')} AND ${group}` : group;
   }
   return [...head, `${filter}${quote(last)}*`].join(' ');
 }
 
-/** Suchwörter für bm25: das letzte als Präfix, eine angefangene Hausnummer nicht in der PLZ. */
+/** Search words for bm25: the last one as a prefix, a partial house number not in the postcode. */
 export function phrasesFor(tokens: readonly string[]): Phrase[] {
   return tokens.map((token, i) => {
     const isLast = i === tokens.length - 1;
@@ -67,15 +67,15 @@ export function phrasesFor(tokens: readonly string[]): Phrase[] {
 const sumDocs = (terms: readonly TermDocs[]) => terms.reduce((sum, t) => sum + t.docs, 0);
 
 /**
- * Zerlegt ein Präfix, unter dessen Wörtern ein sehr häufiges ist ("strasse"* mit
- * 5 Mio. Dokumenten). FTS5 führt für Präfixe ohne Präfixindex (über 4 Zeichen)
- * die Trefferlisten aller passenden Wörter vorab vollständig zusammen; exakte
- * Wörter in einer ODER-Verknüpfung liest es dagegen nur so weit wie nötig.
+ * Expands a prefix whose words include a very frequent one ("strasse"* with
+ * 5 million documents). For prefixes without a prefix index (over 4 characters), FTS5
+ * merges the hit lists of all matching words up front; exact words in an OR group,
+ * on the other hand, are read only as far as needed.
  *
- * Teilbäume mit höchstens `maxDocs` Dokumenten bleiben ein (längeres) Präfix, die
- * übrigen werden zeichenweise weiter zerlegt bis zum häufigen Wort, das exakt
- * gesucht wird. Die Teile decken zusammen genau die Wörter von `prefix` ab.
- * `null`, wenn nichts zu zerlegen ist.
+ * Subtrees with at most `maxDocs` documents stay one (longer) prefix; the rest are
+ * split further character by character down to the frequent word, which is searched
+ * exactly. Together, the parts cover exactly the words of `prefix`.
+ * `null` if there is nothing to expand.
  */
 export function expandPrefix(
   prefix: string,
@@ -107,15 +107,15 @@ function expandSorted(prefix: string, terms: readonly TermDocs[], maxDocs: numbe
 }
 
 /**
- * Die Wörter der Anfrage plus Varianten mit gekürztem letztem Token, damit ein
- * Tippfehler am Wortende ("Königsalleh") noch die Königsallee findet.
+ * The query's words plus variants with a trimmed last token, so that a typo at the
+ * end of a word ("Königsalleh") still finds Königsallee.
  */
 export function tokenVariants(tokens: readonly string[]): string[][] {
   if (tokens.length === 0) return [];
   const variants = [[...tokens]];
   const head = tokens.slice(0, -1);
   const last = tokens[tokens.length - 1] ?? '';
-  // Zahlen werden nicht gekürzt: "1234" → "123"* wäre kein Tippfehler, sondern eine andere Nummer.
+  // Numbers are not trimmed: "1234" → "123"* would not be a typo but a different number.
   if (/^\d/.test(last)) return variants;
   const chars = Array.from(last);
   for (let trim = 1; trim <= MAX_TRIM && chars.length - trim >= MIN_TRIMMED_LENGTH; trim++) {
@@ -124,26 +124,26 @@ export function tokenVariants(tokens: readonly string[]): string[][] {
   return variants;
 }
 
-/** `tokenVariants` als FTS5-Queries (ohne Zerlegung des Präfixes). */
+/** `tokenVariants` as FTS5 queries (without expanding the prefix). */
 export function queryVariants(tokens: readonly string[]): string[] {
   return tokenVariants(tokens).flatMap((variant) => buildFtsQuery(variant) ?? []);
 }
 
 /**
- * Für den Fallback auf Straßenebene: die Wörter ohne Hausnummern; `null`, wenn
- * es keine Hausnummer gab oder sonst nichts übrig bleibt.
+ * For the street-level fallback: the words without house numbers; `null` if there
+ * was no house number or nothing else is left.
  */
 export function withoutHousenumbers(tokens: readonly string[]): string[] | null {
   const rest = tokens.filter((t) => !HOUSENUMBER.test(t));
   return rest.length === tokens.length || rest.length === 0 ? null : rest;
 }
 
-/** Ein einzelner Buchstabe, keine Ziffer. */
+/** A single letter, not a digit. */
 const SINGLE_LETTER = /^\p{L}$/u;
 
 /**
- * Für Abkürzungen wie "Frankfurt a.M." oder "Mülheim a.d. Ruhr": die Wörter ohne
- * einzelne Buchstaben; `null`, wenn keiner wegfällt oder sonst nichts übrig bleibt.
+ * For abbreviations like "Frankfurt a.M." or "Mülheim a.d. Ruhr": the words without
+ * single letters; `null` if none is dropped or nothing else is left.
  */
 export function withoutSingleLetters(tokens: readonly string[]): string[] | null {
   const rest = tokens.filter((t) => !SINGLE_LETTER.test(t));

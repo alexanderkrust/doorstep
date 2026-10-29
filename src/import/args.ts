@@ -7,13 +7,13 @@ export class ImportArgsError extends Error {
 
 export interface ImportArgs {
   regionUrl: string;
-  /** Lokale PBF-Datei; überspringt den Download. */
+  /** Local PBF file; skips the download. */
   input?: string;
 }
 
-const regionUrl = z.url({ protocol: /^https?$/, error: '--region muss eine http(s)-URL sein' });
+const regionUrl = z.url({ protocol: /^https?$/, error: '--region must be an http(s) URL' });
 
-/** Liest `--region <url>` und `--input <datei>`; Default für die Region ist REGION_URL. */
+/** Reads `--region <url>` and `--input <file>`; the region defaults to REGION_URL. */
 export function parseImportArgs(argv: string[], defaultRegionUrl: string): ImportArgs {
   try {
     return parse(argv, defaultRegionUrl);
@@ -22,7 +22,7 @@ export function parseImportArgs(argv: string[], defaultRegionUrl: string): Impor
       err instanceof z.ZodError
         ? err.issues.map((i) => i.message).join(', ')
         : (err as Error).message;
-    throw new ImportArgsError(`Ungültige Argumente für import: ${message}`);
+    throw new ImportArgsError(`Invalid arguments for import: ${message}`);
   }
 }
 

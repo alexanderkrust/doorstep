@@ -1,4 +1,4 @@
-// HEALTHCHECK des Images: Exit 0, wenn /health mit 200 antwortet. Ohne curl im Image.
+// HEALTHCHECK of the image: exit 0 if /health answers 200. No curl in the image.
 const port = process.env.PORT ?? '2322';
 
 try {

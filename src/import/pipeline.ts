@@ -19,37 +19,37 @@ import { formatCount, Progress, Steps, type Logger } from './progress.js';
 export const EXTRACT_FILE = 'extract.osm.pbf';
 export const INDEX_FILE = 'index.sqlite';
 export const NEXT_INDEX_FILE = 'index.next.sqlite';
-/** Sperrt `dataDir`, solange ein Import oder Update läuft (siehe `acquireLock`). */
+/** Locks `dataDir` while an import or update is running (see `acquireLock`). */
 export const LOCK_FILE = 'import.lock.sqlite';
 /**
- * Sperrdatei älterer Versionen (JSON mit PID und Host). Sie blieb liegen, wenn der
- * Container mitten im Import endete, und blockierte dann jeden neuen Container.
+ * Lock file of older versions (JSON with PID and host). It was left behind when the
+ * container ended in the middle of an import and then blocked every new container.
  */
 export const LEGACY_LOCK_FILE = 'import.lock';
 
 export interface ImportResult {
-  /** Anzahl der gelesenen Features. */
+  /** Number of features read. */
   features: number;
-  /** Anzahl der Zeilen im Index. */
+  /** Number of rows in the index. */
   places: number;
-  /** Features, die nicht in den Index gehören (z. B. unbenannte Straßen). */
+  /** Features that do not belong in the index (e.g. unnamed streets). */
   skipped: number;
 }
 
 export type { Logger } from './progress.js';
 
-/** Objekttyp aus `osmium export`; osmium liefert erst Knoten, dann Wege, dann Relationen. */
+/** Object type from `osmium export`; osmium yields nodes first, then ways, then relations. */
 const OSM_TYPE_NAMES: Record<string, string> = {
-  node: 'Knoten',
-  way: 'Wege',
-  relation: 'Relationen',
+  node: 'nodes',
+  way: 'ways',
+  relation: 'relations',
 };
 
 interface WriteIndexOptions {
   boundaries?: BoundaryIndex | undefined;
   log?: Logger | undefined;
   progressIntervalMs?: number | undefined;
-  /** Nummerierte Schritte; der Aufbau des Index beginnt einen neuen. */
+  /** Numbered steps; building the index starts a new one. */
   steps?: Steps | undefined;
 }
 
@@ -61,8 +61,8 @@ function nextPath(output: string): string {
 }
 
 /**
- * Schreibt die Features in eine neue Datei neben `output` und ersetzt `output`
- * erst am Ende per atomarem rename. Bei Fehlern bleibt ein alter Index unberührt.
+ * Writes the features to a new file next to `output` and replaces `output` only at the
+ * end, with an atomic rename. On errors, an old index stays untouched.
  */
 async function writeIndex(
   openLines: () => AsyncIterable<string>,
@@ -85,12 +85,12 @@ async function writeIndex(
       ? { progressIntervalMs: options.progressIntervalMs }
       : {}),
   });
-  // Die Gesamtzahl ist vorab unbekannt (osmium liefert die Features als Strom).
-  const progress = new Progress(log, 'Features einlesen', intervalMs);
+  // The total is unknown in advance (osmium yields the features as a stream).
+  const progress = new Progress(log, 'Reading features', intervalMs);
   let features = 0;
   let skipped = 0;
   try {
-    // Erst hier öffnen, damit keine Daten anlaufen, bevor jemand liest.
+    // Open only here, so no data starts flowing before someone reads.
     for await (const line of openLines()) {
       const feature = parseGeoJsonSeqLine(line);
       if (!feature) continue;
@@ -101,7 +101,7 @@ async function writeIndex(
       else skipped++;
     }
     progress.finish(features);
-    steps?.start('Index aufbauen (sortieren, Straßen zuordnen, Suchindex)');
+    steps?.start('Building the index (sorting, assigning streets, search index)');
     const places = writer.finish(boundaries ? { ...meta, ...boundaryMeta(boundaries) } : meta);
     await rename(tmp, output);
     return { features, places, skipped };
@@ -118,15 +118,15 @@ function boundaryMeta(boundaries: BoundaryIndex): Record<string, string> {
 }
 
 export interface GeoJsonSeqImportOptions {
-  /** Grenzen für Land und Bundesland; ohne gelten `addr:country`/`addr:state`. */
+  /** Boundaries for country and state; without them, `addr:country`/`addr:state` apply. */
   boundaries?: BoundaryIndex;
-  /** Fortschrittsmeldungen. */
+  /** Progress messages. */
   log?: Logger;
-  /** Abstand der Fortschrittsmeldungen; 0 meldet jeden Fortschritt (Tests). */
+  /** Interval of the progress messages; 0 reports every step of progress (tests). */
   progressIntervalMs?: number;
 }
 
-/** Importiert eine fertige GeoJSON-Sequenz (Ausgabe von `osmium export`). */
+/** Imports a finished GeoJSON sequence (output of `osmium export`). */
 export async function importFromGeoJsonSeq(
   input: string,
   output: string,
@@ -137,8 +137,8 @@ export async function importFromGeoJsonSeq(
 }
 
 /**
- * Lädt Grenzen aus fertigen osmium-Ausgaben: GeoJSON-Sequenz (Flächen und Linien) und
- * OPL der Relationen. Für Tests und Fixtures ohne osmium.
+ * Loads boundaries from finished osmium output: GeoJSON sequence (areas and lines) and
+ * OPL of the relations. For tests and fixtures without osmium.
  */
 export async function loadBoundaryFiles(geojsonseq: string, opl: string): Promise<BoundaryIndex> {
   return BoundaryIndex.load(
@@ -148,7 +148,7 @@ export async function loadBoundaryFiles(geojsonseq: string, opl: string): Promis
   );
 }
 
-/** Filtert die Verwaltungsgrenzen aus einer PBF-Datei und lädt sie. */
+/** Filters the administrative boundaries out of a PBF file and loads them. */
 export async function loadBoundariesFromPbf(
   input: string,
   workDir: string,
@@ -167,18 +167,18 @@ export async function loadBoundariesFromPbf(
 }
 
 export interface PbfImportOptions {
-  /** Verzeichnis für die gefilterte Zwischendatei (Default: neben `output`). */
+  /** Directory for the filtered intermediate file (default: next to `output`). */
   workDir?: string;
   source?: string;
   log?: Logger;
-  /** Schrittzählung, wenn vorher schon Schritte liefen (Download). */
+  /** Step counter, if steps already ran before (download). */
   steps?: Steps;
 }
 
-/** Schritte von `importFromPbf`: Grenzen, Filtern, Features einlesen, Index aufbauen. */
+/** Steps of `importFromPbf`: boundaries, filtering, reading features, building the index. */
 const PBF_STEPS = 4;
 
-/** Filtert eine PBF-Datei mit osmium und importiert sie per Streaming. */
+/** Filters a PBF file with osmium and imports it by streaming. */
 export async function importFromPbf(
   input: string,
   output: string,
@@ -191,16 +191,16 @@ export async function importFromPbf(
   const steps = options.steps ?? new Steps(log, PBF_STEPS);
 
   try {
-    steps.start('Verwaltungsgrenzen laden (admin_level 2 und 4)');
+    steps.start('Loading administrative boundaries (admin_level 2 and 4)');
     const boundaries = await loadBoundariesFromPbf(input, workDir);
     const { countries, states, borderSegments } = boundaries.summary;
     log(
-      `Grenzen: Länder ${countries.join(', ') || 'keine'}, ${String(states)} Bundesländer, ` +
-        `${String(borderSegments)} Abschnitte zu Nachbarländern`,
+      `Boundaries: countries ${countries.join(', ') || 'none'}, ${String(states)} states, ` +
+        `${String(borderSegments)} segments to neighboring countries`,
     );
-    steps.start(`Extrakt filtern (osmium tags-filter ${input})`);
+    steps.start(`Filtering the extract (osmium tags-filter ${input})`);
     await filterExtract(input, filtered);
-    steps.start('Features einlesen (osmium export)');
+    steps.start('Reading features (osmium export)');
     const result = await writeIndex(
       () => exportGeoJsonSeq(filtered),
       output,
@@ -210,8 +210,8 @@ export async function importFromPbf(
     steps.done();
     const { inside, border, unknown } = boundaries.stats;
     log(
-      `Land per Grenze: ${formatCount(inside)} innerhalb, ${formatCount(border)} über Nachbargrenze, ` +
-        `${formatCount(unknown)} ohne (addr:country bleibt)`,
+      `Country from boundaries: ${formatCount(inside)} inside, ${formatCount(border)} via neighboring border, ` +
+        `${formatCount(unknown)} without (addr:country kept)`,
     );
     return result;
   } finally {
@@ -222,7 +222,7 @@ export async function importFromPbf(
 export interface RunImportOptions {
   dataDir: string;
   regionUrl: string;
-  /** Lokale PBF-Datei statt Download. */
+  /** Local PBF file instead of a download. */
   input?: string;
   log?: Logger;
 }
@@ -235,8 +235,8 @@ function formatProgress({ received, total }: DownloadProgress): string {
 }
 
 /**
- * Kompletter Import: Download (falls nötig), Filter, Export, Index unter `dataDir`.
- * Wirft `LockError`, wenn dort bereits ein Import läuft.
+ * Complete import: download (if needed), filter, export, index under `dataDir`.
+ * Throws `LockError` if an import is already running there.
  */
 export async function runImport(options: RunImportOptions): Promise<ImportResult> {
   await mkdir(options.dataDir, { recursive: true });
@@ -258,7 +258,7 @@ async function runLockedImport(options: RunImportOptions): Promise<ImportResult>
   if (!input) {
     input = join(options.dataDir, EXTRACT_FILE);
     source = options.regionUrl;
-    steps.start(`Extrakt laden (${options.regionUrl})`);
+    steps.start(`Downloading the extract (${options.regionUrl})`);
     let lastLog = 0;
     const download = await downloadExtract(options.regionUrl, input, {
       onProgress: (p) => {
@@ -271,8 +271,8 @@ async function runLockedImport(options: RunImportOptions): Promise<ImportResult>
     });
     log(
       download.skipped
-        ? 'Vorhandener Extrakt ist aktuell (MD5 passt), kein Download nötig'
-        : `Download fertig${download.md5Verified ? ', MD5 geprüft' : ' (keine MD5 verfügbar)'}`,
+        ? 'Existing extract is up to date (MD5 matches), no download needed'
+        : `Download done${download.md5Verified ? ', MD5 verified' : ' (no MD5 available)'}`,
     );
   }
 
@@ -283,6 +283,6 @@ async function runLockedImport(options: RunImportOptions): Promise<ImportResult>
     steps,
     ...(source ? { source } : {}),
   });
-  log(`Index ${output} mit ${formatCount(result.places)} Einträgen erstellt`);
+  log(`Created index ${output} with ${formatCount(result.places)} entries`);
   return result;
 }

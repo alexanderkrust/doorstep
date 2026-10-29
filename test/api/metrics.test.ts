@@ -23,18 +23,18 @@ afterEach(async () => {
 });
 
 const get = (url: string) => {
-  if (!app) throw new Error('Server fehlt');
+  if (!app) throw new Error('Server missing');
   return app.inject({ method: 'GET', url });
 };
 
-/** Wert einer Zeile `name{labels} value` aus dem Prometheus-Text. */
+/** Value of a line `name{labels} value` from the Prometheus text. */
 function sample(text: string, series: string): number | undefined {
   const line = text.split('\n').find((l) => l.startsWith(`${series} `));
   return line === undefined ? undefined : Number(line.slice(series.length + 1));
 }
 
 describe('GET /metrics', () => {
-  it('liefert Prometheus-Text mit HELP und TYPE', async () => {
+  it('returns Prometheus text with HELP and TYPE', async () => {
     app = buildTestServer(fixture.dir);
     const res = await get('/metrics');
 
@@ -47,12 +47,12 @@ describe('GET /metrics', () => {
     expect(res.body.endsWith('\n')).toBe(true);
   });
 
-  it('zählt Anfragen pro Route und Status, ohne die Query im Label', async () => {
+  it('counts requests per route and status, without the query in the label', async () => {
     app = buildTestServer(fixture.dir);
     await get('/api?q=K%C3%B6nigsall');
     await get('/api?q=Bilk');
     await get('/api?q=x');
-    await get('/gibt-es-nicht');
+    await get('/does-not-exist');
     const text = (await get('/metrics')).body;
 
     expect(
@@ -67,7 +67,7 @@ describe('GET /metrics', () => {
     expect(text).not.toContain('nigsall');
   });
 
-  it('enthält ein Histogramm der Antwortzeiten', async () => {
+  it('contains a histogram of response times', async () => {
     app = buildTestServer(fixture.dir);
     await get('/api?q=K%C3%B6nigsall');
     const text = (await get('/metrics')).body;
@@ -81,7 +81,7 @@ describe('GET /metrics', () => {
     ).toBeGreaterThan(0);
   });
 
-  it('meldet Cache-Treffer, Index-Zustand und Neuladen', async () => {
+  it('reports cache hits, index state and reloads', async () => {
     app = buildTestServer(fixture.dir);
     await get('/api?q=K%C3%B6');
     await get('/api?q=K%C3%B6');
@@ -97,17 +97,17 @@ describe('GET /metrics', () => {
 
     app.reloadIndex();
     text = (await get('/metrics')).body;
-    expect(sample(text, 'doorstep_index_reloads_total')).toBe(0); // gleiche Datei, kein Tausch
+    expect(sample(text, 'doorstep_index_reloads_total')).toBe(0); // same file, no swap
   });
 
-  it('meldet einen fehlenden Index', async () => {
-    app = buildTestServer('/gibt/es/nicht');
+  it('reports a missing index', async () => {
+    app = buildTestServer('/does/not/exist');
     const text = (await get('/metrics')).body;
     expect(sample(text, 'doorstep_index_available')).toBe(0);
   });
 
-  it('zählt abgewiesene Anfragen (Rate-Limit)', async () => {
-    app = buildTestServer('/gibt/es/nicht', { RATE_LIMIT_ENABLED: 'true', RATE_LIMIT: '1' });
+  it('counts rejected requests (rate limit)', async () => {
+    app = buildTestServer('/does/not/exist', { RATE_LIMIT_ENABLED: 'true', RATE_LIMIT: '1' });
     await get('/api?q=ab');
     await get('/api?q=ab');
     const text = (await get('/metrics')).body;

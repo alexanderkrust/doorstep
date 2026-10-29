@@ -1,22 +1,22 @@
 /**
- * Fortschrittsmeldungen für den Import. Der Import dauert auf dem Deutschland-Extrakt
- * eine halbe Stunde, und bis dahin antwortet `/api` mit 503; die Meldungen zeigen im
- * Container-Log, in welchem Schritt er steckt und wie lange es noch dauert.
+ * Progress messages for the import. On the Germany extract the import takes half an
+ * hour, and until then `/api` answers 503; the messages show in the container log which
+ * step it is in and how long it will take.
  */
 
 export type Logger = (message: string) => void;
 
-/** Abstand zwischen zwei Meldungen eines langen Schritts. */
+/** Interval between two messages of a long step. */
 export const DEFAULT_PROGRESS_INTERVAL_MS = 15_000;
 
-const NUMBER = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
+const NUMBER = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 
-/** 25568099 → "25.568.099" */
+/** 25568099 → "25,568,099" */
 export function formatCount(n: number): string {
   return NUMBER.format(n);
 }
 
-/** 192000 → "3 min 12 s"; ab einer Stunde ohne Sekunden. */
+/** 192000 → "3 min 12 s"; from one hour on without seconds. */
 export function formatDuration(ms: number): string {
   const total = Math.max(0, Math.round(ms / 1000));
   const h = Math.floor(total / 3600);
@@ -28,13 +28,13 @@ export function formatDuration(ms: number): string {
 }
 
 export interface ProgressOptions {
-  /** Gesamtzahl, falls vorab bekannt; dann mit Prozent und Restzeit. */
+  /** Total, if known in advance; then with percent and remaining time. */
   total?: number;
   intervalMs?: number;
   now?: () => number;
 }
 
-/** Fortschritt eines Schritts, gemeldet höchstens einmal je Intervall. */
+/** Progress of a step, reported at most once per interval. */
 export class Progress {
   private readonly total: number | undefined;
   private readonly intervalMs: number;
@@ -54,7 +54,7 @@ export class Progress {
     this.lastLog = this.started;
   }
 
-  /** `done` Einheiten erledigt; `detail` ergänzt die Meldung (z. B. "Wege"). */
+  /** `done` units completed; `detail` adds to the message (e.g. "ways"). */
   update(done: number, detail?: string): void {
     const now = this.now();
     if (now - this.lastLog < this.intervalMs) return;
@@ -65,29 +65,29 @@ export class Progress {
       const percent = Math.min(100, Math.floor((done / this.total) * 100));
       message = `${this.label}: ${formatCount(done)} / ${formatCount(this.total)} (${String(percent)} %)`;
       if (done > 0 && done < this.total) {
-        message += `, noch ca. ${formatDuration(((this.total - done) * elapsed) / done)}`;
+        message += `, about ${formatDuration(((this.total - done) * elapsed) / done)} left`;
       }
     } else {
       message = `${this.label}: ${formatCount(done)} (${formatCount((done * 1000) / elapsed)}/s)`;
     }
-    if (detail) message += `, gerade ${detail}`;
+    if (detail) message += `, currently ${detail}`;
     this.log(message);
   }
 
   finish(done: number): void {
     this.log(
-      `${this.label} fertig: ${formatCount(done)} in ${formatDuration(this.now() - this.started)}`,
+      `${this.label} done: ${formatCount(done)} in ${formatDuration(this.now() - this.started)}`,
     );
   }
 }
 
 export interface StepsOptions {
-  /** Nummer des ersten Schritts, z. B. 2, wenn der Download Schritt 1 war. */
+  /** Number of the first step, e.g. 2 if the download was step 1. */
   first?: number;
   now?: () => number;
 }
 
-/** Nummerierte Schritte ("Schritt 2/5: …") mit der Dauer jedes Schritts. */
+/** Numbered steps ("Step 2/5: …") with the duration of each step. */
 export class Steps {
   private readonly now: () => number;
   private current: number;
@@ -106,13 +106,13 @@ export class Steps {
     this.done();
     this.current++;
     this.started = this.now();
-    this.log(`Schritt ${this.label()}: ${name}`);
+    this.log(`Step ${this.label()}: ${name}`);
   }
 
-  /** Beendet den laufenden Schritt; ohne laufenden Schritt passiert nichts. */
+  /** Ends the running step; without a running step nothing happens. */
   done(): void {
     if (this.started === null) return;
-    this.log(`Schritt ${this.label()} fertig in ${formatDuration(this.now() - this.started)}`);
+    this.log(`Step ${this.label()} done in ${formatDuration(this.now() - this.started)}`);
     this.started = null;
   }
 

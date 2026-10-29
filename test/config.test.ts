@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ConfigError, loadConfig } from '../src/config/index.js';
 
 describe('loadConfig', () => {
-  it('setzt Defaults, wenn keine ENV-Variablen gesetzt sind', () => {
+  it('sets defaults when no env variables are set', () => {
     const config = loadConfig({});
     expect(config).toEqual({
       regionUrl: 'https://download.geofabrik.de/europe/germany-latest.osm.pbf',
@@ -23,7 +23,7 @@ describe('loadConfig', () => {
     });
   });
 
-  it('liest und konvertiert gesetzte Werte', () => {
+  it('reads and converts set values', () => {
     const config = loadConfig({
       REGION_URL: 'https://download.geofabrik.de/europe/germany/berlin-latest.osm.pbf',
       HOST: '127.0.0.1',
@@ -60,7 +60,7 @@ describe('loadConfig', () => {
     });
   });
 
-  it('behandelt leere Strings wie nicht gesetzt', () => {
+  it('treats empty strings as not set', () => {
     expect(loadConfig({ PORT: '', CORS_ORIGINS: '' }).port).toBe(2322);
     expect(loadConfig({ CORS_ORIGINS: '  ' }).corsOrigins).toEqual(['*']);
   });
@@ -68,7 +68,7 @@ describe('loadConfig', () => {
   it.each([
     ['RATE_LIMIT_ENABLED', 'rateLimitEnabled'],
     ['TRUST_PROXY', 'trustProxy'],
-  ] as const)('liest %s als Schalter', (key, field) => {
+  ] as const)('reads %s as a flag', (key, field) => {
     expect(loadConfig({ [key]: 'yes' })[field]).toBe(true);
     expect(loadConfig({ [key]: '0' })[field]).toBe(false);
   });
@@ -80,7 +80,7 @@ describe('loadConfig', () => {
     ['false', false],
     ['0', false],
     ['NO', false],
-  ])('liest AUTO_IMPORT=%s als %s', (value, expected) => {
+  ])('reads AUTO_IMPORT=%s as %s', (value, expected) => {
     expect(loadConfig({ AUTO_IMPORT: value }).autoImport).toBe(expected);
   });
 
@@ -100,14 +100,14 @@ describe('loadConfig', () => {
     ['RATE_LIMIT_API_KEY', '0'],
     ['TRUST_PROXY', 'ja'],
     ['CACHE_SIZE', '-5'],
-    ['UPDATE_CRON', 'täglich'],
+    ['UPDATE_CRON', 'daily'],
     ['UPDATE_CRON', '60 3 * * *'],
     ['UPDATE_CRON', '0 3 * *'],
-  ])('lehnt ungültigen Wert %s=%s ab', (key, value) => {
+  ])('rejects the invalid value %s=%s', (key, value) => {
     expect(() => loadConfig({ [key]: value })).toThrow(ConfigError);
   });
 
-  it('nennt alle fehlerhaften Variablen in der Fehlermeldung', () => {
+  it('names all invalid variables in the error message', () => {
     expect(() => loadConfig({ PORT: 'x', LOG_LEVEL: 'y' })).toThrow(/PORT[\s\S]*LOG_LEVEL/);
   });
 });

@@ -1,8 +1,8 @@
 /**
- * Minimaler Cron-Parser für `UPDATE_CRON`: fünf Felder (Minute, Stunde, Tag,
- * Monat, Wochentag) mit `*`, Zahlen, Listen (`1,15`), Bereichen (`1-5`) und
- * Schritten (`*\/15`, `1-12/3`). Zeiten gelten in der lokalen Zeitzone des
- * Prozesses (im Container meist UTC, steuerbar über `TZ`).
+ * Minimal cron parser for `UPDATE_CRON`: five fields (minute, hour, day of month,
+ * month, day of week) with `*`, numbers, lists (`1,15`), ranges (`1-5`) and
+ * steps (`*\/15`, `1-12/3`). Times are in the process's local time zone
+ * (usually UTC in the container, configurable via `TZ`).
  */
 
 export class CronError extends Error {
@@ -15,9 +15,9 @@ export interface CronSchedule {
   readonly hours: ReadonlySet<number>;
   readonly days: ReadonlySet<number>;
   readonly months: ReadonlySet<number>;
-  /** 0 = Sonntag; 7 wird beim Parsen zu 0. */
+  /** 0 = Sunday; 7 becomes 0 when parsing. */
   readonly weekdays: ReadonlySet<number>;
-  /** Ist das Feld eingeschränkt (nicht `*`)? Wichtig für die Tag/Wochentag-Regel. */
+  /** Is the field restricted (not `*`)? Matters for the day/weekday rule. */
   readonly daysRestricted: boolean;
   readonly weekdaysRestricted: boolean;
 }
@@ -29,21 +29,21 @@ interface FieldSpec {
 }
 
 const FIELDS: readonly FieldSpec[] = [
-  { name: 'Minute', min: 0, max: 59 },
-  { name: 'Stunde', min: 0, max: 23 },
-  { name: 'Tag', min: 1, max: 31 },
-  { name: 'Monat', min: 1, max: 12 },
-  { name: 'Wochentag', min: 0, max: 7 },
+  { name: 'minute', min: 0, max: 59 },
+  { name: 'hour', min: 0, max: 23 },
+  { name: 'day', min: 1, max: 31 },
+  { name: 'month', min: 1, max: 12 },
+  { name: 'weekday', min: 0, max: 7 },
 ];
 
 function parseNumber(text: string, spec: FieldSpec): number {
   if (!/^\d+$/.test(text)) {
-    throw new CronError(`${spec.name}: "${text}" ist keine Zahl`);
+    throw new CronError(`${spec.name}: "${text}" is not a number`);
   }
   const n = Number(text);
   if (n < spec.min || n > spec.max) {
     throw new CronError(
-      `${spec.name}: ${text} liegt nicht zwischen ${String(spec.min)} und ${String(spec.max)}`,
+      `${spec.name}: ${text} is not between ${String(spec.min)} and ${String(spec.max)}`,
     );
   }
   return n;
@@ -53,7 +53,7 @@ function parseField(field: string, spec: FieldSpec): Set<number> {
   const values = new Set<number>();
   for (const part of field.split(',')) {
     const [range = '', stepText, ...rest] = part.split('/');
-    if (rest.length > 0) throw new CronError(`${spec.name}: "${part}" ist ungültig`);
+    if (rest.length > 0) throw new CronError(`${spec.name}: "${part}" is invalid`);
     const step = stepText === undefined ? 1 : parseNumber(stepText, { ...spec, min: 1, max: 99 });
 
     let from: number;
@@ -65,7 +65,7 @@ function parseField(field: string, spec: FieldSpec): Set<number> {
       const [a = '', b = ''] = range.split('-');
       from = parseNumber(a, spec);
       to = parseNumber(b, spec);
-      if (from > to) throw new CronError(`${spec.name}: Bereich "${range}" ist umgekehrt`);
+      if (from > to) throw new CronError(`${spec.name}: range "${range}" is reversed`);
     } else {
       from = parseNumber(range, spec);
       to = stepText === undefined ? from : spec.max;
@@ -79,7 +79,7 @@ export function parseCron(expression: string): CronSchedule {
   const fields = expression.trim().split(/\s+/).filter(Boolean);
   if (fields.length !== FIELDS.length) {
     throw new CronError(
-      `Erwartet werden 5 Felder (Minute Stunde Tag Monat Wochentag), gefunden: ${String(fields.length)}`,
+      `Expected 5 fields (minute hour day month weekday), found: ${String(fields.length)}`,
     );
   }
   const [minutes, hours, days, months, weekdays] = FIELDS.map((spec, i) =>
@@ -99,7 +99,7 @@ export function parseCron(expression: string): CronSchedule {
   };
 }
 
-/** Passt der Tag? Sind Tag und Wochentag beide eingeschränkt, reicht eins (wie bei cron). */
+/** Does the day match? If day and weekday are both restricted, either is enough (as in cron). */
 function dayMatches(s: CronSchedule, date: Date): boolean {
   const day = s.days.has(date.getDate());
   const weekday = s.weekdays.has(date.getDay());
@@ -107,10 +107,10 @@ function dayMatches(s: CronSchedule, date: Date): boolean {
   return day && weekday;
 }
 
-/** Spätestens nach so vielen Jahren gilt ein Zeitplan als "trifft nie zu" (z. B. 31. Februar). */
+/** After this many years at most, a schedule counts as "never matches" (e.g. February 31). */
 const MAX_YEARS = 5;
 
-/** Nächster Zeitpunkt nach `after` (volle Minute, lokale Zeit). */
+/** Next point in time after `after` (full minute, local time). */
 export function nextRun(schedule: CronSchedule, after: Date): Date {
   const t = new Date(after.getTime());
   t.setSeconds(0, 0);
@@ -138,5 +138,5 @@ export function nextRun(schedule: CronSchedule, after: Date): Date {
     }
     return t;
   }
-  throw new CronError(`Zeitplan "${schedule.expression}" trifft nie zu`);
+  throw new CronError(`Schedule "${schedule.expression}" never matches`);
 }

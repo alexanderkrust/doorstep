@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-/** Liest die Version aus package.json (funktioniert aus src/ und dist/). */
+/** Reads the version from package.json (works from src/ and dist/). */
 function readVersion(): string {
   try {
     const raw = readFileSync(new URL('../../package.json', import.meta.url), 'utf8');

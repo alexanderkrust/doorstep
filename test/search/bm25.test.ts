@@ -86,13 +86,13 @@ interface Row {
 }
 
 describe('TermStats', () => {
-  it('kennt Zeilen, Wörter und Dokumentzahlen aus dem Import', () => {
+  it('knows rows, words and document counts from the import', () => {
     expect(stats.rows).toBe(PLACES.length);
     expect(stats.avgTokens).toBeGreaterThan(1);
     expect(stats.docs('breite')).toBe(3);
     expect(stats.docs('unbekannt')).toBe(0);
-    // Präfixe bis 4 Zeichen aus der vorberechneten Tabelle, längere aus den Wörtern.
-    // "Breite Straße" steht auch als "breitestrasse" im Index (3 Dokumente), siehe indexText.
+    // Prefixes up to 4 characters from the precomputed table, longer ones from the words.
+    // "Breite Straße" is also in the index as "breitestrasse" (3 documents), see indexText.
     expect(stats.prefixDocs('brei')).toBe(7);
     expect(stats.prefixDocs('breite')).toBe(7);
     expect(stats.completions('breite').map((c) => c.term)).toEqual([
@@ -102,13 +102,13 @@ describe('TermStats', () => {
     ]);
   });
 
-  it('enthält keine Rasterzellen', () => {
+  it('contains no grid cells', () => {
     expect(stats.prefixDocs('g')).toBe(0);
   });
 });
 
 describe('bm25 in JS', () => {
-  // Fälle ohne Überschneidung der Wörter eines Präfixes: Dort zählt FTS5 genau dieselben Dokumente.
+  // Cases without overlapping words of a prefix: there FTS5 counts exactly the same documents.
   it.each([
     [['breite', 'strasse']],
     [['breite']],
@@ -116,7 +116,7 @@ describe('bm25 in JS', () => {
     [['duesseldorf']],
     [['cafe', 'breite']],
     [['breite', 'strasse', '12a']],
-  ])('entspricht bm25() aus FTS5 für %j', (tokens) => {
+  ])('matches bm25() from FTS5 for %j', (tokens) => {
     const match = inTextColumns(buildFtsQuery(tokens) ?? '');
     const rows = db
       .prepare(
@@ -135,12 +135,12 @@ describe('bm25 in JS', () => {
     }
   });
 
-  it('bewertet seltene Wörter höher als häufige', () => {
+  it('scores rare words higher than frequent ones', () => {
     expect(idf(1000, 1)).toBeGreaterThan(idf(1000, 100));
     expect(idf(1000, 900)).toBeGreaterThan(0);
   });
 
-  it('liefert 0 ohne Treffer in der Zeile', () => {
+  it('returns 0 without hits in the row', () => {
     const columns = ftsColumns({
       name: 'Foo',
       name_de: null,

@@ -1,4 +1,4 @@
-# Nur package*.json, tsconfig*.json, src/ und docker/ werden fürs Image gebraucht.
+# Only package*.json, tsconfig*.json, src/ and docker/ are needed for the image.
 .git
 .github
 .claude

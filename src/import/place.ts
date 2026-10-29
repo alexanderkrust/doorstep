@@ -1,4 +1,4 @@
-/** Umwandlung von osmium-GeoJSON-Features in Index-Zeilen. Reine Funktionen. */
+/** Conversion of osmium GeoJSON features into index rows. Pure functions. */
 
 export type Position = number[];
 
@@ -17,21 +17,21 @@ export interface Feature {
 
 export type OsmType = 'N' | 'W' | 'R';
 
-/** Eine Zeile der Tabelle `places` (ohne die interne `id`). */
+/** A row of the `places` table (without the internal `id`). */
 export interface Place {
   osmType: OsmType;
   osmId: number;
-  /** `house`, `street`, `poi` oder der Wert von `place=*` (z. B. `city`). */
+  /** `house`, `street`, `poi` or the value of `place=*` (e.g. `city`). */
   type: string;
   name: string | null;
-  /** `name:de` bzw. `name:en`; ausgewählt per `lang` in der API. */
+  /** `name:de` and `name:en`; selected via `lang` in the API. */
   nameDe: string | null;
   nameEn: string | null;
   street: string | null;
   housenumber: string | null;
   postcode: string | null;
   city: string | null;
-  /** Ortsteil (`addr:suburb`, sonst `addr:hamlet`); `city` ist oft die Gemeinde. */
+  /** District (`addr:suburb`, else `addr:hamlet`); `city` is often the municipality. */
   district: string | null;
   state: string | null;
   country: string | null;
@@ -40,7 +40,7 @@ export interface Place {
   importance: number;
 }
 
-/** Wichtigkeit je Typ: Stadt vor Dorf vor Straße vor Hausnummer. */
+/** Importance per type: city before village before street before house number. */
 const IMPORTANCE: Record<string, number> = {
   country: 1,
   state: 0.95,
@@ -61,7 +61,7 @@ const IMPORTANCE: Record<string, number> = {
 };
 const DEFAULT_IMPORTANCE = 0.4;
 
-/** Ortstypen, deren Name gleichzeitig die Stadt ist. */
+/** Place types whose name is also the city. */
 const CITY_TYPES = new Set(['city', 'town', 'village', 'hamlet']);
 
 const OSM_TYPES: Record<string, OsmType> = { node: 'N', way: 'W', relation: 'R' };
@@ -77,7 +77,7 @@ function tag(props: Record<string, unknown>, key: string): string | null {
   return trimmed === '' ? null : trimmed;
 }
 
-/** Bestimmt den Typ; `null`, wenn das Objekt nicht in den Index gehört. */
+/** Determines the type; `null` if the object does not belong in the index. */
 function classify(props: Record<string, unknown>, name: string | null): string | null {
   const place = tag(props, 'place');
   if (place && name) return place;
@@ -111,7 +111,7 @@ export function featureToPlace(feature: Feature): Place | null {
     name,
     nameDe,
     nameEn,
-    // Adressen ohne Straße (meist kleine Orte) tragen den Ortsnamen in addr:place.
+    // Addresses without a street (mostly small places) carry the place name in addr:place.
     street: tag(props, 'addr:street') ?? tag(props, 'addr:place'),
     housenumber: tag(props, 'addr:housenumber'),
     postcode: tag(props, 'addr:postcode') ?? tag(props, 'postal_code'),
@@ -145,7 +145,7 @@ function lineLength(line: Position[]): number {
   return total;
 }
 
-/** Punkt auf halber Länge der Linie (in Grad, für kurze Strecken ausreichend). */
+/** Point at half the length of the line (in degrees, good enough for short distances). */
 function lineMidpoint(line: Position[]): LatLon | null {
   if (line.length === 0) return null;
   let remaining = lineLength(line) / 2;
@@ -165,7 +165,7 @@ function lineMidpoint(line: Position[]): LatLon | null {
   return toLatLon(line[0]);
 }
 
-/** Flächenschwerpunkt eines Rings; bei entarteten Ringen der Mittelwert der Punkte. */
+/** Centroid of a ring; for degenerate rings the mean of the points. */
 function ringCentroid(ring: Position[]): { point: LatLon; area: number } | null {
   if (ring.length === 0) return null;
   let area = 0;
@@ -199,7 +199,7 @@ function largestCentroid(rings: (Position[] | undefined)[]): LatLon | null {
   return best?.point ?? null;
 }
 
-/** Ein Punkt, der das Objekt repräsentiert (Punkt, Linienmitte oder Schwerpunkt). */
+/** A point representing the object (point, middle of the line, or centroid). */
 export function representativePoint(geometry: Geometry): LatLon | null {
   switch (geometry.type) {
     case 'Point':
@@ -222,23 +222,24 @@ export function representativePoint(geometry: Geometry): LatLon | null {
 
 const RECORD_SEPARATOR = '\u001e';
 
-/** Parst eine Zeile von `osmium export -f geojsonseq` (mit oder ohne RS-Zeichen). */
+/** Parses a line of `osmium export -f geojsonseq` (with or without the RS character). */
 export function parseGeoJsonSeqLine(line: string): Feature | null {
   const text = (line.startsWith(RECORD_SEPARATOR) ? line.slice(1) : line).trim();
   if (text === '') return null;
   return JSON.parse(text) as Feature;
 }
 
-/** Land und Bundesland aus den Verwaltungsgrenzen (siehe `boundaries.ts`). */
+/** Country and state from the administrative boundaries (see `boundaries.ts`). */
 export interface PlaceLocation {
   country: string | null;
   state: string | null;
 }
 
 /**
- * Übernimmt Land und Bundesland aus den Grenzen; sie haben Vorrang vor `addr:country`
- * und `addr:state`. Die Tags bleiben nur, wo die Grenzen nichts hergeben. Liegt der Punkt
- * laut Grenzen in einem anderen Land als `addr:country`, passt auch `addr:state` nicht.
+ * Takes country and state from the boundaries; they take precedence over `addr:country`
+ * and `addr:state`. The tags stay only where the boundaries give nothing. If, according to
+ * the boundaries, the point lies in a different country than `addr:country`, then
+ * `addr:state` does not fit either.
  */
 export function withLocation(place: Place, location: PlaceLocation): Place {
   const country = location.country ?? place.country;

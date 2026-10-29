@@ -33,7 +33,7 @@ async function search(query: string) {
 const q = (text: string, extra = '') => `q=${encodeURIComponent(text)}${extra}`;
 
 describe('GET /api', () => {
-  it('liefert die Königsallee für "Königsall" in den ersten Ergebnissen', async () => {
+  it('returns Königsallee for "Königsall" among the first results', async () => {
     const { res, body } = await search(q('Königsall'));
 
     expect(res.statusCode).toBe(200);
@@ -43,7 +43,7 @@ describe('GET /api', () => {
     expect(top).toContain('Königsallee');
   });
 
-  it('liefert GeoJSON-Features mit Attribution', async () => {
+  it('returns GeoJSON features with attribution', async () => {
     const { body } = await search(q('Königsallee 60d'));
 
     expect(body.attribution).toBe('© OpenStreetMap contributors');
@@ -61,11 +61,11 @@ describe('GET /api', () => {
       osm_id: expect.any(Number) as unknown,
       osm_type: expect.stringMatching(/^[NWR]$/) as unknown,
     });
-    // Fehlende Werte werden weggelassen statt als null geliefert.
+    // Missing values are left out instead of returned as null.
     expect(Object.values(feature?.properties ?? {})).not.toContain(null);
   });
 
-  it('findet Straße mit Hausnummer', async () => {
+  it('finds a street with a house number', async () => {
     const { body } = await search(q('Königsallee 60d'));
 
     expect(body.features.length).toBeGreaterThan(0);
@@ -75,9 +75,9 @@ describe('GET /api', () => {
     }
   });
 
-  it('findet Hausnummern per Präfix', async () => {
+  it('finds house numbers by prefix', async () => {
     const { body } = await search(q('Königsallee 6', '&limit=10'));
-    // Treffer ohne Hausnummer sind möglich (z. B. POI-Name "… Königsallee 62").
+    // Hits without a house number are possible (e.g. POI name "… Königsallee 62").
     const numbers = body.features
       .map((f) => f.properties['housenumber'])
       .filter((n): n is string => typeof n === 'string');
@@ -85,12 +85,12 @@ describe('GET /api', () => {
     expect(numbers.every((n) => n.startsWith('6'))).toBe(true);
   });
 
-  it('findet einen Ort und rankt ihn vor Straßen und Adressen', async () => {
+  it('finds a city and ranks it before streets and addresses', async () => {
     const { body } = await search(q('Düsseldorf'));
     expect(body.features[0]?.properties).toMatchObject({ name: 'Düsseldorf', type: 'city' });
   });
 
-  it('toleriert Tippfehler am Wortende', async () => {
+  it('tolerates typos at the end of a word', async () => {
     for (const typo of ['Königsalleh', 'Königsallle', 'Königsalleee']) {
       const { body } = await search(q(typo));
       const names = body.features.map((f) => f.properties['name']);
@@ -98,44 +98,44 @@ describe('GET /api', () => {
     }
   });
 
-  it('ist unabhängig von Groß-/Kleinschreibung', async () => {
+  it('is case-insensitive', async () => {
     const { body } = await search(q('königsall'));
     expect(body.features.map((f) => f.properties['name'])).toContain('Königsallee');
   });
 
-  it('liefert eine leere FeatureCollection ohne Treffer', async () => {
+  it('returns an empty FeatureCollection without hits', async () => {
     const { res, body } = await search(q('Xyzzyquux'));
     expect(res.statusCode).toBe(200);
     expect(body.features).toEqual([]);
   });
 
-  it('beachtet limit (Default 5)', async () => {
+  it('respects limit (default 5)', async () => {
     expect((await search(q('Königsallee'))).body.features).toHaveLength(5);
     expect((await search(q('Königsallee', '&limit=3'))).body.features).toHaveLength(3);
     expect((await search(q('Königsallee', '&limit=10'))).body.features).toHaveLength(10);
   });
 
-  it('liefert bei lat/lon den nächstgelegenen Abschnitt einer Straße', async () => {
-    // Nördliches und südliches Ende der Kö (ca. 750 m auseinander)
+  it('returns the nearest segment of a street with lat/lon', async () => {
+    // Northern and southern end of the Kö (about 750 m apart)
     for (const [lat, lon] of [
       [51.2261, 6.7796],
       [51.2195, 6.7805],
     ] as const) {
       const { body } = await search(q('Königsallee', `&lat=${String(lat)}&lon=${String(lon)}`));
       const streets = body.features.filter((f) => f.properties['type'] === 'street');
-      // Abschnitte derselben Straße werden zu einem Treffer zusammengefasst.
+      // Segments of the same street are merged into one hit.
       expect(streets).toHaveLength(1);
       const [sLon, sLat] = streets[0]?.geometry.coordinates ?? [0, 0];
       expect(distanceMeters(lat, lon, sLat, sLon)).toBeLessThan(250);
     }
   });
 
-  it('setzt Cache-Control für erfolgreiche Antworten', async () => {
+  it('sets Cache-Control for successful responses', async () => {
     const { res } = await search(q('Königsall'));
     expect(res.headers['cache-control']).toMatch(/public, max-age=\d+/);
   });
 
-  describe('Validierung', () => {
+  describe('validation', () => {
     it.each([
       ['', 'q'],
       ['q=', 'q'],
@@ -152,7 +152,7 @@ describe('GET /api', () => {
       [q('Königsallee', '&lat=51&lon=-181'), 'lon'],
       [q('Königsallee', '&lang=deutsch'), 'lang'],
       ['q=foo&q=bar', 'q'],
-    ])('lehnt "%s" mit 400 ab (%s)', async (query, param) => {
+    ])('rejects "%s" with 400 (%s)', async (query, param) => {
       const { res, body } = await search(query);
       expect(res.statusCode).toBe(400);
       expect(body).toMatchObject({ statusCode: 400, error: 'Bad Request' });
@@ -160,14 +160,14 @@ describe('GET /api', () => {
       expect(res.headers['cache-control']).toBe('no-store');
     });
 
-    it('akzeptiert lang in Groß- und Kleinschreibung', async () => {
+    it('accepts lang in upper and lower case', async () => {
       expect((await search(q('Königsall', '&lang=EN'))).res.statusCode).toBe(200);
     });
   });
 });
 
 describe('CORS', () => {
-  it('erlaubt per Default alle Origins', async () => {
+  it('allows all origins by default', async () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api?${q('Königsall')}`,
@@ -176,7 +176,7 @@ describe('CORS', () => {
     expect(res.headers['access-control-allow-origin']).toBe('*');
   });
 
-  it('erlaubt nur die konfigurierten Origins', async () => {
+  it('allows only the configured origins', async () => {
     const restricted = buildTestServer(fixture.dir, {
       CORS_ORIGINS: 'https://shop.example, https://admin.example',
     });
@@ -207,8 +207,8 @@ describe('CORS', () => {
   });
 });
 
-describe('ohne Index', () => {
-  it('antwortet mit 503', async () => {
+describe('without an index', () => {
+  it('answers 503', async () => {
     const empty = await mkdtemp(join(tmpdir(), 'doorstep-empty-'));
     const server = buildTestServer(empty);
     try {
@@ -218,7 +218,7 @@ describe('ohne Index', () => {
         expect(res.json()).toMatchObject({ statusCode: 503, error: 'Service Unavailable' });
         expect(res.headers['cache-control']).toBe('no-store');
       }
-      // Validierung greift trotzdem zuerst
+      // Validation still comes first
       expect((await server.inject({ method: 'GET', url: '/api?q=a' })).statusCode).toBe(400);
     } finally {
       await server.close();
@@ -227,29 +227,29 @@ describe('ohne Index', () => {
   });
 });
 
-describe('Phase 4: Normalisierung, Fallback, Sprache', () => {
+describe('phase 4: normalization, fallback, language', () => {
   const names = async (text: string, extra = '') =>
     (await search(q(text, extra))).body.features.map((f) => f.properties['name']);
 
   it.each(['Koenigsallee', 'KÖNIGSALLEE', 'koenigsall', 'Königsallee'])(
-    'findet die Königsallee auch als "%s"',
+    'also finds Königsallee as "%s"',
     async (text) => {
       expect(await names(text)).toContain('Königsallee');
     },
   );
 
-  it('versteht "Str." als Straße', async () => {
+  it('understands "Str." as Straße', async () => {
     const { body } = await search(q('Graf-Adolf-Str.'));
     expect(body.features[0]?.properties['name']).toBe('Graf-Adolf-Straße');
   });
 
-  it('findet eine Adresse mit abgetrennter Hausnummer-Ergänzung', async () => {
+  it('finds an address with a separate house number suffix', async () => {
     const { body } = await search(q('Königsallee 60 d'));
     expect(body.features[0]?.properties['street']).toBe('Königsallee');
     expect(String(body.features[0]?.properties['housenumber'])).toMatch(/^60d$/i);
   });
 
-  it('liefert bei unbekannter Hausnummer die Straße', async () => {
+  it('returns the street for an unknown house number', async () => {
     const { res, body } = await search(q('Königsallee 999'));
     expect(res.statusCode).toBe(200);
     expect(body.features.length).toBeGreaterThan(0);
@@ -257,7 +257,7 @@ describe('Phase 4: Normalisierung, Fallback, Sprache', () => {
     expect(body.features.some((f) => f.properties['type'] === 'house')).toBe(false);
   });
 
-  it('wählt den Namen nach lang aus (Fallback auf name)', async () => {
+  it('picks the name by lang (fallback to name)', async () => {
     expect((await names('Düsseldorf', '&lang=en'))[0]).toBe('Dusseldorf');
     expect((await names('Düsseldorf', '&lang=de'))[0]).toBe('Düsseldorf');
     expect((await names('Düsseldorf', '&lang=fr'))[0]).toBe('Düsseldorf');
@@ -265,11 +265,11 @@ describe('Phase 4: Normalisierung, Fallback, Sprache', () => {
     expect((await names('Düsseldorf'))[0]).toBe('Düsseldorf');
   });
 
-  it('findet Orte auch über ihren englischen Namen', async () => {
+  it('also finds places by their English name', async () => {
     expect((await names('Dusseldorf'))[0]).toBe('Düsseldorf');
   });
 
-  it('nutzt DEFAULT_LANG, wenn lang fehlt', async () => {
+  it('uses DEFAULT_LANG when lang is missing', async () => {
     const english = buildTestServer(fixture.dir, { DEFAULT_LANG: 'en' });
     try {
       const res = await english.inject({ method: 'GET', url: `/api?${q('Düsseldorf')}` });
@@ -279,14 +279,14 @@ describe('Phase 4: Normalisierung, Fallback, Sprache', () => {
     }
   });
 
-  it('meldet die Suchdauer im Header Server-Timing', async () => {
+  it('reports the search duration in the Server-Timing header', async () => {
     const { res } = await search(q('Königsall'));
     expect(res.headers['server-timing']).toMatch(/^search;dur=\d+(\.\d+)?$/);
   });
 });
 
-describe('Index mit altem Schema', () => {
-  it('antwortet mit 503 und Hinweis auf einen neuen Import', async () => {
+describe('index with an old schema', () => {
+  it('answers 503 with a hint to import again', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'doorstep-old-'));
     const db = new DatabaseSync(join(dir, 'index.sqlite'));
     db.exec(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -296,7 +296,7 @@ describe('Index mit altem Schema', () => {
     try {
       const res = await server.inject({ method: 'GET', url: `/api?${q('Königsall')}` });
       expect(res.statusCode).toBe(503);
-      expect(res.json<{ message: string }>().message).toMatch(/Schema.*neu importieren/);
+      expect(res.json<{ message: string }>().message).toMatch(/schema.*import again/);
     } finally {
       await server.close();
       await rm(dir, { recursive: true, force: true });

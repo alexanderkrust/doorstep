@@ -5,11 +5,11 @@ import { VERSION } from '../version.js';
 
 export interface HealthRoutesOptions {
   index: SearchIndex;
-  /** Läuft gerade ein Import im Hintergrund? */
+  /** Is an import running in the background? */
   importing: () => boolean;
 }
 
-/** Ist ein nutzbarer Index da? Ein Index mit altem Schema zählt nicht. */
+/** Is a usable index available? An index with an old schema does not count. */
 function indexAvailable(index: SearchIndex): boolean {
   try {
     return index.open();

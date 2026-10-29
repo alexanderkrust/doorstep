@@ -1,25 +1,25 @@
 /**
- * Normalisierung für Index und Suche. Beide Seiten nutzen dieselben Funktionen,
- * damit "Königsallee", "koenigsallee" und "KÖNIGSALLEE" gleich behandelt werden.
- * Reine Funktionen.
+ * Normalization for index and search. Both sides use the same functions so that
+ * "Königsallee", "koenigsallee" and "KÖNIGSALLEE" are treated the same.
+ * Pure functions.
  */
 
 const UMLAUTS: Record<string, string> = { ä: 'ae', ö: 'oe', ü: 'ue', ß: 'ss' };
 
-/** Kombinierende diakritische Zeichen nach NFD-Zerlegung. */
+/** Combining diacritical marks after NFD decomposition. */
 const COMBINING = /\p{M}/gu;
-/** Buchstaben ohne NFD-Zerlegung, die sonst übrig blieben. */
+/** Letters without an NFD decomposition that would otherwise remain. */
 const SPECIAL: Record<string, string> = { ł: 'l', đ: 'd', ø: 'o', æ: 'ae', œ: 'oe', ı: 'i' };
 
-/** "…str" am Wortende ist die übliche Abkürzung für "…straße". */
+/** "…str" at the end of a word is the usual abbreviation for "…straße". */
 const STR_SUFFIX = /str$/;
 /**
- * Drei s hintereinander ("Schloßstraße" → "schlossstrasse") werden zu zwei, damit
- * die verbreitete Schreibweise "Schlosstr." dieselbe Form ergibt.
+ * Three s in a row ("Schloßstraße" → "schlossstrasse") become two, so that the common
+ * spelling "Schlosstr." gives the same form.
  */
 const TRIPLE_S = /s{3,}/g;
 
-/** Wie `fold`, aber ohne das Kürzen von "sss": Dort ist die Wortgrenze noch zu sehen. */
+/** Like `fold`, but without collapsing "sss": there the word boundary is still visible. */
 function foldKeepingS(word: string, umlaut: (char: string) => string): string {
   return word
     .normalize('NFC')
@@ -35,11 +35,11 @@ function fold(word: string, umlaut: (char: string) => string): string {
   return foldKeepingS(word, umlaut).replace(TRIPLE_S, 'ss');
 }
 
-/** "St." als eigenes Wort ist in Orts- und Straßennamen die Abkürzung für "Sankt". */
+/** "St." as a separate word in place and street names is the abbreviation for "Sankt". */
 const SANKT_SHORT = 'st';
 const SANKT = 'sankt';
 
-/** Wie `normalizeWord`, dazu "st" → "sankt". Nur für vollständige Wörter (Index, Namen). */
+/** Like `normalizeWord`, plus "st" → "sankt". Only for complete words (index, names). */
 function canonicalWord(word: string, fold: (word: string) => string): string {
   const folded = fold(word);
   return folded === SANKT_SHORT ? SANKT : folded;
@@ -48,12 +48,12 @@ function canonicalWord(word: string, fold: (word: string) => string): string {
 const withUmlautE = (c: string) => UMLAUTS[c] ?? c;
 const withoutUmlautE = (c: string) => (c === 'ß' ? 'ss' : c);
 
-/** Kleinschreibung, ä → ae, ß → ss, andere Akzente entfernt, "…str" → "…strasse". */
+/** Lowercase, ä → ae, ß → ss, other accents removed, "…str" → "…strasse". */
 export function normalizeWord(word: string): string {
   return fold(word, withUmlautE);
 }
 
-/** Eine Schreibweise für Index und Namen: mit Umlaut-e ("duesseldorf") oder ohne ("dusseldorf"). */
+/** One spelling for index and names: with umlaut e ("duesseldorf") or without ("dusseldorf"). */
 interface Folding {
   word: (word: string) => string;
   keepingS: (word: string) => string;
@@ -64,14 +64,14 @@ const FOLDINGS: readonly Folding[] = [
   { word: (w) => fold(w, withoutUmlautE), keepingS: (w) => foldKeepingS(w, withoutUmlautE) },
 ];
 
-/** Wörter aus Buchstaben und Ziffern; alles andere trennt (auch FTS5-Syntax). */
+/** Words of letters and digits; everything else separates (FTS5 syntax too). */
 function words(text: string): string[] {
   return text.normalize('NFC').match(/[\p{L}\p{N}]+/gu) ?? [];
 }
 
 /**
- * Eine ohne Leerzeichen angehängte Hausnummer ("Hauptstraße12a") wird abgetrennt.
- * Erst ab drei Buchstaben, damit Bezeichnungen wie "A7" oder "B1" zusammenbleiben.
+ * A house number attached without a space ("Hauptstraße12a") is split off.
+ * Only from three letters on, so names like "A7" or "B1" stay together.
  */
 const GLUED_HOUSENUMBER = /^(\p{L}{3,})(\d+\p{L}?)$/u;
 
@@ -84,10 +84,10 @@ const HOUSENUMBER = /^\d+$/;
 const SUFFIX = /^[a-z]$/;
 
 /**
- * Zerlegt eine Suchanfrage in normalisierte Wörter. Eine abgetrennte
- * Hausnummer-Ergänzung ("60 d") wird angehängt ("60d"), wie sie in OSM steht; eine
- * angehängte Hausnummer ("Hauptstraße12") wird abgetrennt. "St." vor einem weiteren
- * Wort wird zu "sankt"; als letztes Wort bleibt "st" ein angefangenes Wort ("Stuttgart").
+ * Splits a search query into normalized words. A separate house number suffix
+ * ("60 d") is attached ("60d"), as it appears in OSM; an attached house number
+ * ("Hauptstraße12") is split off. "St." before another word becomes "sankt"; as the
+ * last word, "st" stays a partial word ("Stuttgart").
  */
 export function normalizeTokens(query: string): string[] {
   const tokens = words(query).flatMap(splitGluedHousenumber).map(normalizeWord);
@@ -108,8 +108,8 @@ export function normalizeTokens(query: string): string[] {
 }
 
 /**
- * Speichert die Ergebnisse einer Funktion je Text. Straße und Ort wiederholen sich
- * unter den Kandidaten einer Anfrage und beim Import ständig. Wird geleert, wenn er voll ist.
+ * Stores a function's results per text. Street and city repeat constantly among a
+ * query's candidates and during the import. Cleared when full.
  */
 function memoize<T>(fn: (value: string) => T, maxSize = 10_000): (value: string) => T {
   const results = new Map<string, T>();
@@ -124,7 +124,7 @@ function memoize<T>(fn: (value: string) => T, maxSize = 10_000): (value: string)
   };
 }
 
-/** Wörter eines Werts für den Volltextindex, in beiden Schreibweisen und mit Varianten. */
+/** Words of a value for the full-text index, in both spellings and with variants. */
 const indexWords = memoize((value: string): readonly string[] => {
   const out = new Set<string>();
   const parts = words(value);
@@ -139,8 +139,8 @@ const indexWords = memoize((value: string): readonly string[] => {
 });
 
 /**
- * Text für eine Spalte des Volltextindex: alle Werte normalisiert, dazu die
- * Schreibweise ohne Umlaut-e ("dusseldorf"), damit auch sie gefunden wird.
+ * Text for a column of the full-text index: all values normalized, plus the spelling
+ * without umlaut e ("dusseldorf"), so that it is found as well.
  */
 export function indexText(values: readonly (string | null | undefined)[]): string {
   const out = new Set<string>();
@@ -152,21 +152,21 @@ export function indexText(values: readonly (string | null | undefined)[]): strin
 }
 
 /**
- * Grundwörter, die in Straßennamen mal angehängt ("Friedrichstraße"), mal
- * getrennt ("Friedrich Straße", "Konrad-Adenauer-Straße") stehen.
+ * Base words that are sometimes attached in street names ("Friedrichstraße") and
+ * sometimes separate ("Friedrich Straße", "Konrad-Adenauer-Straße").
  */
 const STREET_SUFFIXES = ['strasse', 'allee', 'platz', 'gasse', 'damm', 'ring', 'weg'];
 /**
- * So lang muss der Wortanfang mindestens sein: beim Abtrennen ("Ostring" bleibt)
- * und beim Anhängen ("Am Ring" wird nicht zu "amring").
+ * Minimum length of the word stem, both when splitting ("Ostring" stays) and when
+ * joining ("Am Ring" does not become "amring").
  */
 const MIN_STEM_LENGTH = 4;
 
 /**
- * Andere Schreibweisen eines Namens: mit abgetrenntem Grundwort
- * ("friedrichstrasse" → "friedrich strasse") und mit angehängtem
- * ("adenauer strasse" → "adenauerstrasse"). Leer, wenn es keine gibt.
- * `parts` sind die Wörter vor, `folded` nach der Normalisierung.
+ * Other spellings of a name: with the base word split off
+ * ("friedrichstrasse" → "friedrich strasse") and with it attached
+ * ("adenauer strasse" → "adenauerstrasse"). Empty if there are none.
+ * `parts` are the words before normalization, `folded` the words after.
  */
 function compoundVariants(
   parts: readonly string[],
@@ -178,7 +178,7 @@ function compoundVariants(
   let changedSplit = false;
   let changedJoin = false;
   for (const [i, word] of folded.entries()) {
-    // Vor dem Kürzen von "sss" trennen: "schlossstrasse" → "schloss", aber "rathausstrasse" → "rathaus".
+    // Split before collapsing "sss": "schlossstrasse" → "schloss", but "rathausstrasse" → "rathaus".
     const long = folding.keepingS(parts[i] ?? '');
     const suffix = STREET_SUFFIXES.find(
       (s) => long.endsWith(s) && long.length - s.length >= MIN_STEM_LENGTH,
@@ -205,12 +205,12 @@ function compoundVariants(
   return [...(changedSplit ? [split] : []), ...(changedJoin ? [joined] : [])];
 }
 
-/** Ziffern mit einzelnem Buchstaben, auch mit Leerzeichen dazwischen ("12 a"). */
+/** Digits with a single letter, also with a space in between ("12 a"). */
 const NUMBER_WITH_SUFFIX = /(\d+)\s*([a-z])(?![a-z])/g;
 
 /**
- * Text für die Hausnummer-Spalte: wie `indexText`, dazu die zusammengeschriebene
- * Form ("12 a" → auch "12a"), weil die Suche eine Ergänzung immer anhängt.
+ * Text for the house number column: like `indexText`, plus the joined form
+ * ("12 a" → also "12a"), because the search always attaches a suffix.
  */
 export function housenumberText(value: string | null | undefined): string {
   if (!value) return '';
@@ -222,7 +222,7 @@ export function housenumberText(value: string | null | undefined): string {
   return [...out].join(' ');
 }
 
-/** Normalisierte Formen eines Namens für den Namensvergleich im Ranking. */
+/** Normalized forms of a name for the name comparison in the ranking. */
 const nameFormsOf = memoize((value: string): readonly string[] => {
   const parts = words(value);
   const forms = new Set<string>();

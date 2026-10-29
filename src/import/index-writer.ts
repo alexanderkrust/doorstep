@@ -7,20 +7,20 @@ import { withLocation, type Place, type PlaceLocation } from './place.js';
 import { Progress, type Logger } from './progress.js';
 
 /**
- * 2: name_de/name_en, normalisierter Volltextindex, IDs nach Wichtigkeit (Phase 4).
- * 3: Rasterzellen für die Umkreissuche.
- * 4: Ortsteil (`district`), "St." = "Sankt", "sss" → "ss", Hausnummer "12 a" auch als "12a".
- * 5: Land und Bundesland aus Verwaltungsgrenzen statt nur aus `addr:country`/`addr:state`.
- * 6: Wortstatistik (`terms`, `prefixes`, Meta `fts_tokens`) für bm25 in JS und die
- *    Zerlegung langer Präfixe (src/search/bm25.ts, `expandPrefix`).
- * 7: Straßennamen auch getrennt und zusammengeschrieben ("Friedrich Straße", "Adenauerstraße").
+ * 2: name_de/name_en, normalized full-text index, IDs by importance (phase 4).
+ * 3: grid cells for the nearby search.
+ * 4: district (`district`), "St." = "Sankt", "sss" → "ss", house number "12 a" also as "12a".
+ * 5: country and state from administrative boundaries instead of only `addr:country`/`addr:state`.
+ * 6: word statistics (`terms`, `prefixes`, meta `fts_tokens`) for bm25 in JS and the
+ *    expansion of long prefixes (src/search/bm25.ts, `expandPrefix`).
+ * 7: street names also split and joined ("Friedrich Straße", "Adenauerstraße").
  */
 export const SCHEMA_VERSION = 7;
 
 const PLACE_COLUMNS = `osm_type, osm_id, type, name, name_de, name_en, street, housenumber,
   postcode, city, district, state, country, lat, lon, importance`;
 
-/** Zwischentabelle in einer eigenen Datei; am Ende sortiert nach places kopiert. */
+/** Staging table in a separate file; copied into places, sorted, at the end. */
 const STAGING_SCHEMA = `
 CREATE TABLE staging.places (
   osm_type    TEXT    NOT NULL,
@@ -44,7 +44,7 @@ CREATE TABLE staging.places (
 `;
 
 const SCHEMA = `
--- id steigt mit fallender importance (Städte zuerst, Hausnummern zuletzt).
+-- id grows with falling importance (cities first, house numbers last).
 CREATE TABLE places (
   id          INTEGER PRIMARY KEY,
   osm_type    TEXT    NOT NULL CHECK (osm_type IN ('N', 'W', 'R')),
@@ -66,11 +66,11 @@ CREATE TABLE places (
   UNIQUE (osm_type, osm_id)
 );
 
--- Volltextindex mit normalisiertem Text (siehe src/search/normalize.ts), rowid = places.id.
--- Ohne eigenen Inhalt (contentless): angezeigt wird immer die Zeile aus places.
--- Spalte name enthält name, name:de und name:en, Spalte city auch den Ortsteil. Treffer kommen in rowid-Reihenfolge,
--- also nach Wichtigkeit. Präfix 1 für einstellige Hausnummern ("Hauptstraße 1").
--- Spalte cell: Rasterzelle des Punkts (src/search/geo.ts) für die Umkreissuche.
+-- Full-text index with normalized text (see src/search/normalize.ts), rowid = places.id.
+-- Contentless: what is shown is always the row from places.
+-- Column name holds name, name:de and name:en; column city also holds the district. Hits come
+-- in rowid order, i.e. by importance. Prefix 1 for single-digit house numbers ("Hauptstraße 1").
+-- Column cell: grid cell of the point (src/search/geo.ts) for the nearby search.
 CREATE VIRTUAL TABLE places_fts USING fts5(
   name, street, housenumber, postcode, city, cell,
   content = '',
@@ -78,11 +78,11 @@ CREATE VIRTUAL TABLE places_fts USING fts5(
   tokenize = 'unicode61 remove_diacritics 2'
 );
 
--- Punkte als entartete Rechtecke; id = places.id.
+-- Points as degenerate rectangles; id = places.id.
 CREATE VIRTUAL TABLE places_rtree USING rtree(id, min_lat, max_lat, min_lon, max_lon);
 
--- Wortstatistik des Volltextindex ohne Rasterzellen: Dokumente je Wort und je
--- Präfix bis 4 Zeichen (Summe über die Wörter). Ersetzt das Zählen in bm25().
+-- Word statistics of the full-text index without grid cells: documents per word and per
+-- prefix up to 4 characters (summed over the words). Replaces the counting in bm25().
 CREATE TABLE terms (term TEXT PRIMARY KEY, docs INTEGER NOT NULL) WITHOUT ROWID;
 CREATE TABLE prefixes (prefix TEXT PRIMARY KEY, docs INTEGER NOT NULL) WITHOUT ROWID;
 
@@ -91,30 +91,30 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 const BATCH_SIZE = 10_000;
 /**
- * FTS und R*Tree werden in Blöcken dieser Größe aufgebaut. Node gibt den Speicher
- * der JS-Funktionen (index_text, …) erst nach dem Ende eines Statements frei; in
- * einem einzigen Statement über ganz Deutschland (25 Mio. Zeilen) läuft der Heap voll.
+ * FTS and R*Tree are built in blocks of this size. Node frees the memory of the JS
+ * functions (index_text, …) only at the end of a statement; in a single statement over
+ * all of Germany (25 million rows) the heap runs full.
  */
 const DEFAULT_INDEX_BATCH_SIZE = 250_000;
 
 export interface IndexWriterOptions {
-  /** Zeilen je Statement beim Aufbau von FTS und R*Tree; kleiner nur für Tests. */
+  /** Rows per statement when building FTS and R*Tree; smaller only for tests. */
   indexBatchSize?: number;
   /**
-   * Land und Bundesland eines Punkts aus den Verwaltungsgrenzen (`BoundaryIndex.locate`).
-   * Ohne: Werte aus `addr:country`/`addr:state`.
+   * Country and state of a point from the administrative boundaries (`BoundaryIndex.locate`).
+   * Without it: values from `addr:country`/`addr:state`.
    */
   locate?: (lat: number, lon: number) => PlaceLocation;
-  /** Meldungen zum Fortschritt beim Aufbau des Index (`finish`). */
+  /** Progress messages while building the index (`finish`). */
   log?: Logger;
-  /** Abstand der Fortschrittsmeldungen; 0 meldet jeden Fortschritt (Tests). */
+  /** Interval of the progress messages; 0 reports every step of progress (tests). */
   progressIntervalMs?: number;
 }
 
 /**
- * Umkreise, in denen für eine Straße nach Adressen an derselben Straße gesucht
- * wird. Der Punkt einer Straße liegt in der Mitte des Abschnitts; lange Abschnitte
- * haben ihre Hausnummern oft weiter entfernt.
+ * Radii in which addresses on the same street are searched for a street. A street's
+ * point lies in the middle of the segment; long segments often have their house
+ * numbers farther away.
  */
 const STREET_ADDRESS_RADII_KM = [0.5, 2];
 
@@ -127,8 +127,8 @@ interface AddressRow {
 }
 
 /**
- * Schreibt einen neuen Index. Zeilen landen erst in einer Zwischendatei, am Ende
- * werden sie nach Wichtigkeit sortiert übernommen und FTS und R*Tree aufgebaut.
+ * Writes a new index. Rows first go into a staging file; at the end they are copied
+ * over sorted by importance, and FTS and R*Tree are built.
  */
 export class IndexWriter {
   private readonly db: DatabaseSync;
@@ -149,18 +149,18 @@ export class IndexWriter {
     this.stagingPath = `${path}.staging`;
     rmSync(this.stagingPath, { force: true });
     this.db = new DatabaseSync(path);
-    // Import schreibt in frische Dateien, die bei Fehlern verworfen werden.
+    // The import writes to fresh files that are discarded on errors.
     this.db.exec('PRAGMA journal_mode = OFF; PRAGMA synchronous = OFF;');
     this.db.exec(SCHEMA);
     this.db.prepare('ATTACH DATABASE ? AS staging').run(this.stagingPath);
     this.db.exec('PRAGMA staging.journal_mode = OFF; PRAGMA staging.synchronous = OFF;');
     this.db.exec(STAGING_SCHEMA);
-    // Doppelte OSM-Objekte (osmium exportiert manche geschlossenen Wege als Linie
-    // und als Fläche) werden ignoriert; der erste Eintrag gewinnt.
+    // Duplicate OSM objects (osmium exports some closed ways as a line and as an
+    // area) are ignored; the first entry wins.
     this.insert = this.db.prepare(`
       INSERT OR IGNORE INTO staging.places (${PLACE_COLUMNS})
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-    // Normalisierung in JS, damit Import und Suche dieselbe Funktion nutzen.
+    // Normalization in JS, so import and search use the same function.
     this.db.function('index_text', { varargs: true, deterministic: true }, (...values) =>
       indexText(values.map((v) => (typeof v === 'string' ? v : null))),
     );
@@ -174,8 +174,8 @@ export class IndexWriter {
   }
 
   add(input: Place): void {
-    // Beim Einfügen statt in einem eigenen Durchlauf über alle Zeilen: Die Grenzen liegen
-    // im Speicher, und so gibt es kein zusätzliches UPDATE über 25 Mio. Zeilen.
+    // On insert instead of a separate pass over all rows: the boundaries are in memory,
+    // and this avoids an extra UPDATE over 25 million rows.
     const place = this.locate ? withLocation(input, this.locate(input.lat, input.lon)) : input;
     const result = this.insert.run(
       place.osmType,
@@ -202,10 +202,10 @@ export class IndexWriter {
     }
   }
 
-  /** Baut FTS und R*Tree auf, schreibt Metadaten und schließt die Datei. Liefert die Zeilenzahl. */
+  /** Builds FTS and R*Tree, writes metadata and closes the file. Returns the row count. */
   finish(meta: Record<string, string>): number {
     this.db.exec('COMMIT');
-    this.log('Einträge sortieren');
+    this.log('Sorting entries');
     this.db.exec(`
       BEGIN;
       INSERT INTO places (${PLACE_COLUMNS})
@@ -216,7 +216,7 @@ export class IndexWriter {
     rmSync(this.stagingPath, { force: true });
     this.assignStreetAddresses();
     this.buildSearchIndexes();
-    this.log('Wortstatistik und Optimierung');
+    this.log('Word statistics and optimization');
     const ftsTokens = this.buildTermStats();
     const setMeta = this.db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
     const entries: Record<string, string> = {
@@ -234,7 +234,7 @@ export class IndexWriter {
     return this.count;
   }
 
-  /** Füllt FTS und R*Tree blockweise nach id (siehe `DEFAULT_INDEX_BATCH_SIZE`). */
+  /** Fills FTS and R*Tree in blocks by id (see `DEFAULT_INDEX_BATCH_SIZE`). */
   private buildSearchIndexes(): void {
     const fts = this.db.prepare(`
       INSERT INTO places_fts (rowid, name, street, housenumber, postcode, city, cell)
@@ -248,7 +248,7 @@ export class IndexWriter {
     const { maxId } = this.db.prepare('SELECT coalesce(max(id), 0) AS maxId FROM places').get() as {
       maxId: number;
     };
-    const progress = this.progress('Suchindex aufbauen', maxId);
+    const progress = this.progress('Building search index', maxId);
     this.db.exec('BEGIN');
     for (let from = 0; from < maxId; from += this.indexBatchSize) {
       fts.run(from, from + this.indexBatchSize);
@@ -260,8 +260,8 @@ export class IndexWriter {
   }
 
   /**
-   * Füllt `terms` und `prefixes` aus dem fertigen Volltextindex. Liefert die Zahl
-   * aller Wörter im Index (mit Rasterzellen), für die mittlere Dokumentlänge in bm25.
+   * Fills `terms` and `prefixes` from the finished full-text index. Returns the number of
+   * all words in the index (including grid cells), for the average document length in bm25.
    */
   private buildTermStats(): number {
     this.db.exec(`
@@ -289,10 +289,10 @@ export class IndexWriter {
   }
 
   /**
-   * Straßen tragen in OSM selten `addr:city` oder `addr:postcode`. Sie übernehmen
-   * Ort, Ortsteil und PLZ von der nächsten Adresse, deren `addr:street` dem
-   * Straßennamen entspricht. So lässt sich "Hauptstraße Musterstadt" finden, und gleichnamige
-   * Straßen sind in den Ergebnissen unterscheidbar.
+   * Streets in OSM rarely carry `addr:city` or `addr:postcode`. They take city, district
+   * and postcode from the nearest address whose `addr:street` equals the street name.
+   * This way "Hauptstraße Musterstadt" can be found, and streets with the same name can
+   * be told apart in the results.
    */
   private assignStreetAddresses(): void {
     this.db.exec('BEGIN');
@@ -306,7 +306,7 @@ export class IndexWriter {
   }
 
   private assignStreetAddressesInTransaction(): void {
-    // Nur für diesen Schritt: Adressen einer Straße in einem Breitenband finden.
+    // Only for this step: find a street's addresses within a latitude band.
     this.db.exec(`
       CREATE INDEX places_street_lat ON places (street, lat)
         WHERE street IS NOT NULL AND (city IS NOT NULL OR postcode IS NOT NULL);
@@ -320,7 +320,7 @@ export class IndexWriter {
     const { total } = this.db
       .prepare(`SELECT count(*) AS total FROM places WHERE ${where}`)
       .get() as { total: number };
-    const progress = this.progress('Straßen zuordnen', total);
+    const progress = this.progress('Assigning streets', total);
     let done = 0;
     const addresses = this.db.prepare(`
       SELECT city, district, postcode, lat, lon FROM places INDEXED BY places_street_lat
@@ -333,10 +333,10 @@ export class IndexWriter {
     for (const row of streets.iterate()) {
       progress.update(++done);
       const street = row as unknown as AddressRow & { id: number; name: string };
-      // Nur suchen, was der Straße noch fehlt.
+      // Only look for what the street is still missing.
       const needsCity = street.city === null;
       const needsPostcode = street.postcode === null;
-      // Ortsteile gibt es nicht überall: Sie werden mitgenommen, aber nicht eigens gesucht.
+      // Districts do not exist everywhere: they are taken along, but not searched for separately.
       const needsDistrict = street.district === null;
       let city: AddressRow | null = null;
       let district: AddressRow | null = null;
@@ -395,7 +395,7 @@ export class IndexWriter {
     });
   }
 
-  /** Bricht ab und löscht die Zwischendatei; die Indexdatei räumt der Aufrufer auf. */
+  /** Aborts and deletes the staging file; the caller cleans up the index file. */
   abort(): void {
     if (this.db.isOpen) this.db.close();
     rmSync(this.stagingPath, { force: true });

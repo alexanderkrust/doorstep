@@ -2,25 +2,23 @@ import { isAbsolute } from 'node:path';
 import { z } from 'zod';
 import { CronError, nextRun, parseCron } from '../import/cron.js';
 
-/** Leere Strings gelten als "nicht gesetzt", damit Defaults greifen. */
+/** Empty strings count as "not set" so that defaults apply. */
 const optional = <T extends z.ZodType>(schema: T) =>
   z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), schema);
 
-/** `true`/`false`, `1`/`0`, `yes`/`no` (Groß-/Kleinschreibung egal). */
+/** `true`/`false`, `1`/`0`, `yes`/`no` (case-insensitive). */
 const flag = (fallback: boolean) =>
   optional(
     z
       .string()
       .trim()
       .toLowerCase()
-      .pipe(
-        z.enum(['true', 'false', '1', '0', 'yes', 'no'], { error: 'muss true oder false sein' }),
-      )
+      .pipe(z.enum(['true', 'false', '1', '0', 'yes', 'no'], { error: 'must be true or false' }))
       .transform((v) => v === 'true' || v === '1' || v === 'yes')
       .default(fallback),
   );
 
-/** Kommagetrennte Liste ohne leere Einträge. */
+/** Comma-separated list without empty entries. */
 const list = z.string().transform((s) =>
   s
     .split(',')
@@ -28,7 +26,7 @@ const list = z.string().transform((s) =>
     .filter(Boolean),
 );
 
-/** Cron-Ausdruck, der geparst werden kann und irgendwann zutrifft. */
+/** Cron expression that parses and matches at some point. */
 const cronExpression = z
   .string()
   .trim()
@@ -39,7 +37,7 @@ const cronExpression = z
       return schedule.expression;
     } catch (err) {
       if (!(err instanceof CronError)) throw err;
-      ctx.addIssue({ code: 'custom', message: `ungültiger Cron-Ausdruck: ${err.message}` });
+      ctx.addIssue({ code: 'custom', message: `invalid cron expression: ${err.message}` });
       return z.NEVER;
     }
   });
@@ -47,42 +45,40 @@ const cronExpression = z
 const envSchema = z.object({
   REGION_URL: optional(
     z
-      .url({ protocol: /^https?$/, error: 'muss eine http(s)-URL sein' })
+      .url({ protocol: /^https?$/, error: 'must be an http(s) URL' })
       .default('https://download.geofabrik.de/europe/germany-latest.osm.pbf'),
   ),
   HOST: optional(z.string().default('0.0.0.0')),
   PORT: optional(z.coerce.number().int().min(1).max(65535).default(2322)),
-  DATA_DIR: optional(
-    z.string().refine(isAbsolute, 'muss ein absoluter Pfad sein').default('/data'),
-  ),
+  DATA_DIR: optional(z.string().refine(isAbsolute, 'must be an absolute path').default('/data')),
   DEFAULT_LANG: optional(
     z
       .string()
       .trim()
       .toLowerCase()
-      .regex(/^[a-z]{2}$/, 'muss ein zweistelliger Sprachcode sein (z. B. de)')
+      .regex(/^[a-z]{2}$/, 'must be a two-letter language code (e.g. de)')
       .default('de'),
   ),
-  /** Rate-Limiting an oder aus. */
+  /** Rate limiting on or off. */
   RATE_LIMIT_ENABLED: flag(true),
-  /** Anfragen pro Minute und IP; 0 = aus. */
+  /** Requests per minute and IP; 0 = off. */
   RATE_LIMIT: optional(z.coerce.number().int().min(0).default(60)),
-  /** Kommagetrennte API-Keys; mit gültigem Key gilt RATE_LIMIT_API_KEY pro Key. */
+  /** Comma-separated API keys; with a valid key, RATE_LIMIT_API_KEY applies per key. */
   API_KEYS: optional(list.default([])),
-  /** Anfragen pro Minute und API-Key. */
+  /** Requests per minute and API key. */
   RATE_LIMIT_API_KEY: optional(z.coerce.number().int().min(1).default(600)),
-  /** Client-IP aus X-Forwarded-For übernehmen (nur hinter einem eigenen Reverse-Proxy). */
+  /** Take the client IP from X-Forwarded-For (only behind your own reverse proxy). */
   TRUST_PROXY: flag(false),
-  /** Einträge im LRU-Cache für Suchanfragen; 0 = aus. */
+  /** Entries in the LRU cache for search requests; 0 = off. */
   CACHE_SIZE: optional(z.coerce.number().int().min(0).default(10_000)),
-  /** Zeitplan für automatische Updates im Cron-Format, z. B. "0 3 * * *". */
+  /** Schedule for automatic updates in cron format, e.g. "0 3 * * *". */
   UPDATE_CRON: optional(cronExpression.optional()),
-  /** Kommagetrennte Liste erlaubter Origins, "*" = alle. */
+  /** Comma-separated list of allowed origins, "*" = all. */
   CORS_ORIGINS: optional(list.default(['*'])),
   LOG_LEVEL: optional(
     z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   ),
-  /** `serve` startet den Import im Hintergrund, falls noch kein Index existiert. */
+  /** `serve` starts the import in the background if no index exists yet. */
   AUTO_IMPORT: flag(false),
 });
 
@@ -108,14 +104,14 @@ export class ConfigError extends Error {
   override name = 'ConfigError';
 }
 
-/** Liest und validiert die Konfiguration aus Umgebungsvariablen. */
+/** Reads and validates the configuration from environment variables. */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const result = envSchema.safeParse(env);
   if (!result.success) {
     const details = result.error.issues
       .map((issue) => `  ${issue.path.join('.')}: ${issue.message}`)
       .join('\n');
-    throw new ConfigError(`Ungültige Konfiguration:\n${details}`);
+    throw new ConfigError(`Invalid configuration:\n${details}`);
   }
   const e = result.data;
   return {

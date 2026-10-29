@@ -1,6 +1,6 @@
 /**
- * Kleiner LRU-Cache auf Basis der Einfügereihenfolge einer `Map`: Der erste
- * Eintrag ist immer der am längsten nicht genutzte.
+ * Small LRU cache based on the insertion order of a `Map`: the first entry is
+ * always the least recently used.
  */
 export class LruCache<K, V> {
   private readonly entries = new Map<K, V>();

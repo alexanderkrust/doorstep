@@ -1,2 +1,2 @@
-/** OSM-Daten stehen unter der ODbL; jede API-Antwort nennt die Quelle. */
+/** OSM data is licensed under the ODbL; every API response names the source. */
 export const ATTRIBUTION = '© OpenStreetMap contributors';

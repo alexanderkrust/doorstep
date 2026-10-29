@@ -7,7 +7,7 @@ export interface MetricsRoutesOptions {
   metrics: Metrics;
 }
 
-/** `GET /metrics` – Kennzahlen im Prometheus-Format. */
+/** `GET /metrics` – metrics in Prometheus format. */
 export const metricsRoutes: FastifyPluginAsync<MetricsRoutesOptions> = async (
   app,
   { index, metrics },

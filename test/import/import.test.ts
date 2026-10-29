@@ -29,7 +29,7 @@ interface Row {
   lon: number;
 }
 
-/** Stichproben, die in jedem erzeugten Index auffindbar sein müssen. */
+/** Samples that must be findable in every index built. */
 function checkSamples(dbPath: string): void {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
@@ -42,11 +42,11 @@ function checkSamples(dbPath: string): void {
         )
         .all(query) as unknown as Row[];
 
-    // Straße
+    // Street
     const streets = fts('name:Königsallee').filter((r) => r.type === 'street');
     expect(streets.length).toBeGreaterThan(0);
 
-    // Straßen bekommen Ort und PLZ von der nächsten Adresse an derselben Straße
+    // Streets get city and postcode from the nearest address on the same street
     for (const street of streets.filter((s) => s.name === 'Königsallee')) {
       expect(street).toMatchObject({
         city: 'Düsseldorf',
@@ -55,24 +55,24 @@ function checkSamples(dbPath: string): void {
     }
     expect(fts('name:Königsallee AND city:Düsseldorf').some((r) => r.type === 'street')).toBe(true);
 
-    // Adresse mit Hausnummer
+    // Address with a house number
     const house = fts('street:Königsallee AND housenumber:"60d"');
     expect(house[0]).toMatchObject({ postcode: '40212', city: 'Düsseldorf' });
     expect(house[0]?.lat).toBeCloseTo(51.222, 2);
     expect(house[0]?.lon).toBeCloseTo(6.781, 2);
 
-    // Ort, vor Straßen und Hausnummern gerankt
+    // City, ranked before streets and house numbers
     const city = fts('Düsseldorf');
     expect(city[0]).toMatchObject({ type: 'city', name: 'Düsseldorf' });
 
-    // Präfix-Suche über den FTS5-Präfix-Index
+    // Prefix search via the FTS5 prefix index
     expect(fts('name:Königsal*').some((r) => r.name === 'Königsallee')).toBe(true);
 
-    // Rasterzelle für die Umkreissuche: Die Kö liegt in Zelle g564x747
+    // Grid cell for the nearby search: the Kö lies in cell g564x747
     expect(fts('name:Königsallee AND cell:g564x747').some((r) => r.type === 'street')).toBe(true);
     expect(fts('name:Königsallee AND cell:g1x1')).toEqual([]);
 
-    // R*Tree: Objekte im Umkreis der Kö
+    // R*Tree: objects around the Kö
     const near = db
       .prepare(
         `SELECT count(*) AS n FROM places_rtree
@@ -81,7 +81,7 @@ function checkSamples(dbPath: string): void {
       .get() as { n: number };
     expect(near.n).toBeGreaterThan(10);
 
-    // Keine doppelten OSM-Objekte (osmium exportiert geschlossene Wege teils zweifach)
+    // No duplicate OSM objects (osmium exports some closed ways twice)
     const dupes = db
       .prepare(
         'SELECT count(*) AS n FROM (SELECT 1 FROM places GROUP BY osm_type, osm_id HAVING count(*) > 1)',
@@ -89,7 +89,7 @@ function checkSamples(dbPath: string): void {
       .get() as { n: number };
     expect(dupes.n).toBe(0);
 
-    // FTS und R*Tree enthalten genau die Zeilen aus places
+    // FTS and R*Tree contain exactly the rows from places
     const counts = db
       .prepare(
         `SELECT (SELECT count(*) FROM places) AS places,
@@ -101,8 +101,8 @@ function checkSamples(dbPath: string): void {
     expect(counts.fts).toBe(counts.places);
     expect(counts.rtree).toBe(counts.places);
 
-    // IDs absteigend nach Wichtigkeit: FTS5 liefert Treffer in ID-Reihenfolge,
-    // die Suche bekommt mit LIMIT so zuerst die wichtigsten Kandidaten.
+    // IDs by descending importance: FTS5 returns hits in ID order, so with LIMIT the
+    // search gets the most important candidates first.
     const unordered = db
       .prepare(
         `SELECT count(*) AS n FROM places a JOIN places b ON b.id = a.id + 1
@@ -114,7 +114,7 @@ function checkSamples(dbPath: string): void {
       (db.prepare('SELECT type FROM places ORDER BY id LIMIT 1').get() as { type: string }).type,
     ).toBe('city');
 
-    // Metadaten inkl. Attribution
+    // Metadata including attribution
     const meta = Object.fromEntries(
       (db.prepare('SELECT key, value FROM meta').all() as { key: string; value: string }[]).map(
         (r) => [r.key, r.value],
@@ -136,8 +136,8 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-describe('Import aus GeoJSON-Sequenz', () => {
-  it('erzeugt einen Index, in dem Stichproben auffindbar sind', async () => {
+describe('import from a GeoJSON sequence', () => {
+  it('builds an index in which the samples can be found', async () => {
     const out = join(dir, 'seq', 'index.sqlite');
     const result = await importFromGeoJsonSeq(GEOJSONSEQ, out);
 
@@ -146,13 +146,13 @@ describe('Import aus GeoJSON-Sequenz', () => {
     expect(result.places).toBeGreaterThan(500);
     expect(result.skipped).toBeGreaterThan(0);
     checkSamples(out);
-    // Zwischendatei index.next.sqlite wurde per rename ersetzt
+    // The intermediate file index.next.sqlite was swapped in via rename
     expect(await readdir(join(dir, 'seq'))).toEqual(['index.sqlite']);
   });
 });
 
-describe.skipIf(!isOsmiumAvailable())('Import aus PBF mit osmium', () => {
-  it('filtert, exportiert und importiert den Beispiel-Extrakt', async () => {
+describe.skipIf(!isOsmiumAvailable())('import from PBF with osmium', () => {
+  it('filters, exports and imports the sample extract', async () => {
     const out = join(dir, 'pbf', 'index.sqlite');
     const result = await importFromPbf(PBF, out, { workDir: join(dir, 'pbf') });
 
@@ -160,8 +160,8 @@ describe.skipIf(!isOsmiumAvailable())('Import aus PBF mit osmium', () => {
     checkSamples(out);
   });
 
-  it('lässt sich von einer alten Sperrdatei aus einem anderen Container nicht aufhalten', async () => {
-    // So hinterlassen ältere Versionen ihre Sperre, wenn der Container mitten im Import endet.
+  it('is not stopped by an old lock file from another container', async () => {
+    // This is how older versions leave their lock when the container ends mid-import.
     const dataDir = join(dir, 'alte-sperre');
     await mkdir(dataDir, { recursive: true });
     const legacy = join(dataDir, LEGACY_LOCK_FILE);
@@ -181,7 +181,7 @@ describe.skipIf(!isOsmiumAvailable())('Import aus PBF mit osmium', () => {
     checkSamples(join(dataDir, INDEX_FILE));
   });
 
-  it('ersetzt einen vorhandenen Index', async () => {
+  it('replaces an existing index', async () => {
     const out = join(dir, 'pbf', 'index.sqlite');
     const first = await importFromPbf(PBF, out, { workDir: join(dir, 'pbf') });
     const second = await importFromPbf(PBF, out, { workDir: join(dir, 'pbf') });

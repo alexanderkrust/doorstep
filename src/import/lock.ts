@@ -2,7 +2,7 @@ import { readFile, rm, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 
-/** Ein anderer Import oder ein Update läuft bereits. */
+/** Another import or update is already running. */
 export class LockError extends Error {
   override name = 'LockError';
 }
@@ -13,10 +13,10 @@ interface Holder {
   startedAt: string;
 }
 
-/** SQLITE_BUSY: Ein anderer Prozess hält die Sperre. */
+/** SQLITE_BUSY: another process holds the lock. */
 const SQLITE_BUSY = 5;
 
-/** Angaben zum Halter, nur für die Fehlermeldung; sie entscheiden nicht über die Sperre. */
+/** Details about the holder, only for the error message; they do not decide the lock. */
 async function readHolder(path: string): Promise<Holder | null> {
   try {
     const data = JSON.parse(await readFile(path, 'utf8')) as Partial<Holder>;
@@ -29,21 +29,21 @@ async function readHolder(path: string): Promise<Holder | null> {
 
 function lockedMessage(holder: Holder | null): string {
   return holder
-    ? `Es läuft bereits ein Import (PID ${String(holder.pid)} auf ${holder.host}, seit ${holder.startedAt}).`
-    : 'Es läuft bereits ein Import.';
+    ? `An import is already running (PID ${String(holder.pid)} on ${holder.host}, since ${holder.startedAt}).`
+    : 'An import is already running.';
 }
 
 /**
- * Sperrt `path` exklusiv für diesen Prozess, damit nie zwei Imports gleichzeitig
- * `index.next.sqlite` schreiben (z. B. UPDATE_CRON und `docker exec … update`).
- * Liefert eine Funktion, die die Sperre wieder freigibt.
+ * Locks `path` exclusively for this process so that two imports never write
+ * `index.next.sqlite` at the same time (e.g. UPDATE_CRON and `docker exec … update`).
+ * Returns a function that releases the lock.
  *
- * Die Sperre ist eine exklusive SQLite-Transaktion auf der Datei `path`, also eine
- * Dateisperre des Betriebssystems. Endet der Prozess, gibt das System sie sofort
- * frei, auch nach `kill -9` oder wenn der Container mitten im Import ersetzt wird.
- * Eine verwaiste Sperre gibt es damit nicht; PID und Host in `<path>.json` dienen
- * nur der Fehlermeldung. Das Dateisystem muss POSIX-Sperren können (lokales
- * Docker-Volume oder Bind-Mount, nicht NFS).
+ * The lock is an exclusive SQLite transaction on the file `path`, i.e. an operating
+ * system file lock. When the process ends, the system releases it immediately, even
+ * after `kill -9` or when the container is replaced in the middle of an import. So
+ * there are no stale locks; PID and host in `<path>.json` are only for the error
+ * message. The file system must support POSIX locks (local Docker volume or bind
+ * mount, not NFS).
  */
 export async function acquireLock(path: string): Promise<() => Promise<void>> {
   const infoPath = `${path}.json`;
@@ -66,8 +66,8 @@ export async function acquireLock(path: string): Promise<() => Promise<void>> {
   await writeFile(infoPath, `${JSON.stringify(holder)}\n`);
 
   return async () => {
-    // Die Datei der Sperre bleibt liegen: Löschen könnte einem wartenden Prozess
-    // eine zweite, unabhängige Sperre auf einer neuen Datei ermöglichen.
+    // The lock file stays: deleting it could let a waiting process take a second,
+    // independent lock on a new file.
     await rm(infoPath, { force: true });
     if (db.isOpen) {
       db.exec('ROLLBACK');

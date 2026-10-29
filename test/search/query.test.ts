@@ -12,13 +12,13 @@ import {
 } from '../../src/search/query.js';
 
 describe('inTextColumns', () => {
-  it('beschränkt die Anfrage auf die Textspalten (nicht auf die Rasterzelle)', () => {
+  it('restricts the query to the text columns (not the grid cell)', () => {
     expect(inTextColumns('"g5"*')).toBe('{name street housenumber postcode city} : ("g5"*)');
   });
 });
 
 describe('withinCells', () => {
-  it('verlangt zusätzlich eine der Rasterzellen', () => {
+  it('additionally requires one of the grid cells', () => {
     expect(withinCells('"ha"*', ['g570x773', 'g570x774'])).toBe(
       '{name street housenumber postcode city} : ("ha"*) AND cell : ("g570x773" OR "g570x774")',
     );
@@ -26,41 +26,41 @@ describe('withinCells', () => {
 });
 
 describe('buildFtsQuery', () => {
-  it('sucht das letzte Token als Präfix, die übrigen exakt', () => {
+  it('searches the last token as a prefix, the others exactly', () => {
     expect(buildFtsQuery(['Königsallee', 'Düss'])).toBe('"Königsallee" "Düss"*');
     expect(buildFtsQuery(['Königsall'])).toBe('"Königsall"*');
   });
 
-  it('setzt Operatoren als Literale in Anführungszeichen', () => {
+  it('quotes operators as literals', () => {
     expect(buildFtsQuery(['foo', 'OR', 'bar'])).toBe('"foo" "OR" "bar"*');
   });
 
-  it('maskiert Anführungszeichen', () => {
+  it('escapes quotes', () => {
     expect(buildFtsQuery(['a"b'])).toBe('"a""b"*');
   });
 
-  it('liefert null ohne Tokens', () => {
+  it('returns null without tokens', () => {
     expect(buildFtsQuery([])).toBeNull();
   });
 
-  it('sucht eine angefangene Hausnummer nicht in der Postleitzahl', () => {
-    // "4"* passte sonst auf jede Adresse mit PLZ 4xxxx.
+  it('does not search a partial house number in the postcode', () => {
+    // "4"* would otherwise match every address with postcode 4xxxx.
     expect(buildFtsQuery(['koenigsallee', '4'])).toBe('"koenigsallee" - {postcode} : "4"*');
     expect(buildFtsQuery(['koenigsallee', '60d'])).toBe('"koenigsallee" - {postcode} : "60d"*');
   });
 
-  it('lässt ab vier Ziffern auch die Postleitzahl zu', () => {
+  it('allows the postcode from four digits on', () => {
     expect(buildFtsQuery(['4021'])).toBe('"4021"*');
     expect(buildFtsQuery(['40212'])).toBe('"40212"*');
   });
 
-  it('schränkt nur das letzte Token ein', () => {
+  it('restricts only the last token', () => {
     expect(buildFtsQuery(['4', 'koenigsallee'])).toBe('"4" "koenigsallee"*');
   });
 });
 
-describe('buildFtsQuery mit zerlegtem Präfix', () => {
-  it('ersetzt das Präfix durch die Teile, verknüpft mit AND', () => {
+describe('buildFtsQuery with an expanded prefix', () => {
+  it('replaces the prefix with the parts, joined with AND', () => {
     expect(buildFtsQuery(['breite', 'strasse'], ['"strasse"', '"strassen"*'])).toBe(
       '"breite" AND ("strasse" OR "strassen"*)',
     );
@@ -69,7 +69,7 @@ describe('buildFtsQuery mit zerlegtem Präfix', () => {
     );
   });
 
-  it('behält die Postleitzahl-Ausnahme für Hausnummern', () => {
+  it('keeps the postcode exception for house numbers', () => {
     expect(buildFtsQuery(['weg', '12a'], ['"12a"', '"12ab"*'])).toBe(
       '"weg" AND - {postcode} : ("12a" OR "12ab"*)',
     );
@@ -87,12 +87,12 @@ describe('expandPrefix', () => {
   ];
   const completions = (prefix: string) => terms.filter((t) => t.term.startsWith(prefix));
 
-  it('lässt Präfixe ohne häufiges Wort unverändert', () => {
+  it('leaves prefixes without a frequent word unchanged', () => {
     expect(expandPrefix('strassen', completions('strassen'), 100)).toBeNull();
     expect(expandPrefix('xyz', [], 100)).toBeNull();
   });
 
-  it('sucht das häufige Wort exakt und den Rest über längere Präfixe', () => {
+  it('searches the frequent word exactly and the rest via longer prefixes', () => {
     expect(expandPrefix('strasse', completions('strasse'), 100)).toEqual([
       '"strasse"',
       '"strassen"*',
@@ -100,7 +100,7 @@ describe('expandPrefix', () => {
     ]);
   });
 
-  it('zerlegt schrittweise bis zum häufigen Wort', () => {
+  it('expands step by step down to the frequent word', () => {
     expect(expandPrefix('stras', completions('stras'), 100)).toEqual([
       '"strasb"*',
       '"strassb"*',
@@ -110,7 +110,7 @@ describe('expandPrefix', () => {
     ]);
   });
 
-  it('deckt genau die Wörter des Präfixes ab', () => {
+  it('covers exactly the words of the prefix', () => {
     const parts = expandPrefix('stras', completions('stras'), 10) ?? [];
     const covers = (part: string, term: string) =>
       part.endsWith('*') ? term.startsWith(part.slice(1, -2)) : term === part.slice(1, -1);
@@ -119,7 +119,7 @@ describe('expandPrefix', () => {
     }
   });
 
-  it('maskiert Anführungszeichen', () => {
+  it('escapes quotes', () => {
     const quoted = [
       { term: 'a"', docs: 10 },
       { term: 'a"b', docs: 1 },
@@ -129,7 +129,7 @@ describe('expandPrefix', () => {
 });
 
 describe('tokenVariants', () => {
-  it('liefert die Wörter der Anfrage und der Tippfehler-Varianten', () => {
+  it('returns the words of the query and of the typo variants', () => {
     expect(tokenVariants(['koe', 'abcd'])).toEqual([
       ['koe', 'abcd'],
       ['koe', 'abc'],
@@ -139,20 +139,20 @@ describe('tokenVariants', () => {
 });
 
 describe('phrasesFor', () => {
-  it('sucht das letzte Wort als Präfix', () => {
+  it('searches the last word as a prefix', () => {
     expect(phrasesFor(['breite', 'str'])).toEqual([
       { token: 'breite', prefix: false, notInPostcode: false },
       { token: 'str', prefix: true, notInPostcode: false },
     ]);
   });
 
-  it('sucht eine angefangene Hausnummer nicht in der Postleitzahl', () => {
+  it('does not search a partial house number in the postcode', () => {
     expect(phrasesFor(['weg', '4'])[1]).toEqual({ token: '4', prefix: true, notInPostcode: true });
   });
 });
 
 describe('queryVariants', () => {
-  it('kürzt bei Tippfehlern das letzte Token schrittweise', () => {
+  it('trims the last token step by step for typos', () => {
     expect(queryVariants(['Königsalleh'])).toEqual([
       '"Königsalleh"*',
       '"Königsalle"*',
@@ -160,22 +160,22 @@ describe('queryVariants', () => {
     ]);
   });
 
-  it('kürzt nicht unter drei Zeichen', () => {
+  it('does not trim below three characters', () => {
     expect(queryVariants(['Kö', 'abcd'])).toEqual(['"Kö" "abcd"*', '"Kö" "abc"*']);
     expect(queryVariants(['abc'])).toEqual(['"abc"*']);
   });
 
-  it('kürzt keine Zahlen (Tippfehler-Toleranz gilt nur für Wörter)', () => {
+  it('does not trim numbers (typo tolerance applies only to words)', () => {
     expect(queryVariants(['hauptstrasse', '1234'])).toEqual(['"hauptstrasse" "1234"*']);
   });
 
-  it('liefert keine Varianten ohne Tokens', () => {
+  it('returns no variants without tokens', () => {
     expect(queryVariants([])).toEqual([]);
   });
 });
 
 describe('withoutHousenumbers', () => {
-  it('entfernt Hausnummern', () => {
+  it('removes house numbers', () => {
     expect(withoutHousenumbers(['koenigsallee', '999'])).toEqual(['koenigsallee']);
     expect(withoutHousenumbers(['koenigsallee', '60d', 'duesseldorf'])).toEqual([
       'koenigsallee',
@@ -183,14 +183,14 @@ describe('withoutHousenumbers', () => {
     ]);
   });
 
-  it('liefert null ohne Hausnummer oder wenn nichts übrig bleibt', () => {
+  it('returns null without a house number or when nothing is left', () => {
     expect(withoutHousenumbers(['koenigsallee'])).toBeNull();
     expect(withoutHousenumbers(['12'])).toBeNull();
   });
 });
 
 describe('withoutSingleLetters', () => {
-  it('lässt einzelne Buchstaben aus Abkürzungen weg ("Frankfurt a.M.")', () => {
+  it('drops single letters from abbreviations ("Frankfurt a.M.")', () => {
     expect(withoutSingleLetters(['zeil', '106', 'frankfurt', 'a', 'm'])).toEqual([
       'zeil',
       '106',
@@ -198,11 +198,11 @@ describe('withoutSingleLetters', () => {
     ]);
   });
 
-  it('behält einstellige Hausnummern', () => {
+  it('keeps single-digit house numbers', () => {
     expect(withoutSingleLetters(['hauptstrasse', '1', 'a'])).toEqual(['hauptstrasse', '1']);
   });
 
-  it('liefert null, wenn nichts wegfällt oder nichts übrig bleibt', () => {
+  it('returns null when nothing is dropped or nothing is left', () => {
     expect(withoutSingleLetters(['hauptstrasse', '1'])).toBeNull();
     expect(withoutSingleLetters(['a', 'b'])).toBeNull();
   });

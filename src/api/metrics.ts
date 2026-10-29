@@ -1,15 +1,15 @@
 /**
- * Kennzahlen im Prometheus-Textformat (Version 0.0.4). Bewusst ohne `prom-client`:
- * Es gibt nur wenige feste Reihen, und der Server ist ein einzelner Prozess.
+ * Metrics in the Prometheus text format (version 0.0.4). Deliberately without `prom-client`:
+ * there are only a few fixed series, and the server is a single process.
  */
 
 export const METRICS_CONTENT_TYPE = 'text/plain; version=0.0.4; charset=utf-8';
 
-/** Bucket-Grenzen der Antwortzeit in Sekunden (Ziel: deutlich unter 50 ms). */
+/** Bucket bounds of the response time in seconds (target: well below 50 ms). */
 const DURATION_BUCKETS = [0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5];
 
 interface Histogram {
-  /** Anzahl je Bucket (nicht kumuliert), letzter Eintrag = über der größten Grenze. */
+  /** Count per bucket (not cumulative); the last entry is above the largest bound. */
   counts: number[];
   sum: number;
   count: number;
@@ -40,7 +40,7 @@ export class Metrics {
   indexReloads = 0;
   indexReloadErrors = 0;
 
-  /** Eine beantwortete Anfrage; `route` ist das Routenmuster, nie die konkrete URL. */
+  /** One answered request; `route` is the route pattern, never the concrete URL. */
   observeRequest(method: string, route: string, status: number, seconds: number): void {
     const key = labels({ method, route, status: String(status) });
     this.requests.set(key, (this.requests.get(key) ?? 0) + 1);
@@ -76,7 +76,7 @@ export class Metrics {
     metric(
       'doorstep_http_requests_total',
       'counter',
-      'Beantwortete HTTP-Anfragen nach Methode, Route und Status.',
+      'Answered HTTP requests by method, route and status.',
       [...this.requests],
     );
 
@@ -94,58 +94,58 @@ export class Metrics {
     metric(
       'doorstep_http_request_duration_seconds',
       'histogram',
-      'Antwortzeit der HTTP-Anfragen in Sekunden.',
+      'Response time of HTTP requests in seconds.',
       histogramSamples,
     );
 
-    metric('doorstep_search_cache_hits_total', 'counter', 'Suchanfragen aus dem LRU-Cache.', [
-      ['', this.cacheHits],
-    ]);
+    metric(
+      'doorstep_search_cache_hits_total',
+      'counter',
+      'Search requests served from the LRU cache.',
+      [['', this.cacheHits]],
+    );
     metric(
       'doorstep_search_cache_misses_total',
       'counter',
-      'Cachebare Suchanfragen, die nicht im Cache lagen.',
+      'Cacheable search requests that were not in the cache.',
       [['', this.cacheMisses]],
     );
-    metric(
-      'doorstep_rate_limited_total',
-      'counter',
-      'Wegen Rate-Limit abgewiesene Anfragen (429).',
-      [['', this.rateLimited]],
-    );
+    metric('doorstep_rate_limited_total', 'counter', 'Requests rejected by the rate limit (429).', [
+      ['', this.rateLimited],
+    ]);
 
-    metric('doorstep_index_available', 'gauge', '1, wenn ein nutzbarer Index geladen ist.', [
+    metric('doorstep_index_available', 'gauge', '1 if a usable index is loaded.', [
       ['', index.available ? 1 : 0],
     ]);
     const places = Number(index.meta?.['places']);
     if (Number.isFinite(places)) {
-      metric('doorstep_index_places', 'gauge', 'Einträge im geladenen Index.', [['', places]]);
+      metric('doorstep_index_places', 'gauge', 'Entries in the loaded index.', [['', places]]);
     }
     const importedAt = Date.parse(index.meta?.['imported_at'] ?? '');
     if (Number.isFinite(importedAt)) {
       metric(
         'doorstep_index_imported_timestamp_seconds',
         'gauge',
-        'Zeitpunkt, zu dem der geladene Index gebaut wurde (Unix-Zeit).',
+        'Time the loaded index was built (Unix time).',
         [['', importedAt / 1000]],
       );
     }
     metric(
       'doorstep_index_reloads_total',
       'counter',
-      'Wechsel auf eine neue Indexdatei ohne Neustart.',
+      'Switches to a new index file without a restart.',
       [['', this.indexReloads]],
     );
     metric(
       'doorstep_index_reload_errors_total',
       'counter',
-      'Neue Indexdateien, die nicht geladen werden konnten.',
+      'New index files that could not be loaded.',
       [['', this.indexReloadErrors]],
     );
     metric(
       'doorstep_updates_total',
       'counter',
-      'Geplante Updates (UPDATE_CRON) nach Ergebnis.',
+      'Scheduled updates (UPDATE_CRON) by result.',
       (['success', 'failure', 'skipped'] as const).map((result) => [
         labels({ result }),
         this.updates.get(result) ?? 0,
@@ -153,11 +153,11 @@ export class Metrics {
     );
 
     const memory = process.memoryUsage();
-    metric('process_resident_memory_bytes', 'gauge', 'Resident Set Size des Prozesses.', [
+    metric('process_resident_memory_bytes', 'gauge', 'Resident set size of the process.', [
       ['', memory.rss],
     ]);
-    metric('nodejs_heap_used_bytes', 'gauge', 'Belegter V8-Heap.', [['', memory.heapUsed]]);
-    metric('process_start_time_seconds', 'gauge', 'Startzeit des Prozesses (Unix-Zeit).', [
+    metric('nodejs_heap_used_bytes', 'gauge', 'Used V8 heap.', [['', memory.heapUsed]]);
+    metric('process_start_time_seconds', 'gauge', 'Start time of the process (Unix time).', [
       ['', Math.round(Date.now() / 1000 - process.uptime())],
     ]);
 
