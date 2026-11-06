@@ -80,8 +80,8 @@ export function queryWords(tokens: readonly string[], lookahead: boolean): Query
 }
 
 /**
- * FTS5 query in which all words must occur. `parts[i]` replaces a prefix word with its
- * expansion (see `expandPrefix`).
+ * FTS5 query in which all words must occur. `parts[i]` replaces a word with an OR group: the
+ * expansion of a prefix (see `expandPrefix`) or the corrections of a typo.
  */
 export function buildWordsQuery(
   words: readonly QueryWord[],
@@ -90,7 +90,7 @@ export function buildWordsQuery(
   if (words.length === 0) return null;
   const terms = words.map((word, i) => {
     const filter = word.notInPostcode ? '- {postcode} : ' : '';
-    const expanded = word.prefix ? parts[i] : null;
+    const expanded = parts[i];
     if (expanded && expanded.length > 0)
       return { text: `${filter}(${expanded.join(' OR ')})`, group: true };
     return { text: `${filter}${quote(word.token)}${word.prefix ? '*' : ''}`, group: false };
@@ -206,4 +206,44 @@ const SINGLE_LETTER = /^\p{L}$/u;
 export function withoutSingleLetters(tokens: readonly string[]): string[] | null {
   const rest = tokens.filter((t) => !SINGLE_LETTER.test(t));
   return rest.length === tokens.length || rest.length === 0 ? null : rest;
+}
+
+/** OR group of a word's corrections for `buildWordsQuery`. */
+export function correctionGroup(tokens: readonly string[], prefix: boolean): string[] {
+  return tokens.map((token) => `${quote(token)}${prefix ? '*' : ''}`);
+}
+
+/** Words shorter than this are not corrected: too many other words are one edit away. */
+const MIN_FUZZY_LENGTH = 5;
+/** Characters of normalized words (see `normalizeWord`): no umlauts, no ß. */
+const FUZZY_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
+
+/** A word that the typo tolerance may correct: letters only, at least 5 characters. */
+export function isFuzzyCandidate(token: string): boolean {
+  return /^\p{L}+$/u.test(token) && Array.from(token).length >= MIN_FUZZY_LENGTH;
+}
+
+/**
+ * All words one edit away (Damerau-Levenshtein distance 1): a letter missing, an extra one, a
+ * wrong one, or two neighbors swapped. Without the word itself and without duplicates; the
+ * swaps and missing letters, the most common typos, come first.
+ */
+export function editVariants(token: string): string[] {
+  const chars = Array.from(token);
+  const out = new Set<string>();
+  const join = (parts: readonly string[]) => parts.join('');
+  for (let i = 0; i < chars.length - 1; i++) {
+    const swapped = [...chars];
+    [swapped[i], swapped[i + 1]] = [chars[i + 1] ?? '', chars[i] ?? ''];
+    out.add(join(swapped));
+  }
+  for (let i = 0; i < chars.length; i++) out.add(join(chars.toSpliced(i, 1)));
+  for (let i = 0; i < chars.length; i++) {
+    for (const c of FUZZY_ALPHABET) out.add(join(chars.toSpliced(i, 1, c)));
+  }
+  for (let i = 0; i <= chars.length; i++) {
+    for (const c of FUZZY_ALPHABET) out.add(join(chars.toSpliced(i, 0, c)));
+  }
+  out.delete(token);
+  return [...out];
 }

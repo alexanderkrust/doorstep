@@ -303,3 +303,13 @@ in Düsseldorf.
 - [x] Düsseldorf administrative region: normal queries unchanged (p95 3.2 ms), lookahead
       queries p95 2.3 ms
 - [ ] Measure on Germany (frequent prefixes like `haupt` or `bahnh` in the middle of a query)
+
+## Typo tolerance in every word (2026-11-06)
+
+- [x] Last stage: words of letters with at least 5 characters that occur nowhere in the index
+      are replaced by the words one edit away (Damerau-Levenshtein 1, `editVariants`), looked
+      up in the `terms` table; the other words pick the right correction
+- [x] Düsseldorf administrative region: typo queries p95 12.3 ms, normal queries unchanged
+- [ ] Measure on Germany
+- [ ] Two typos in one word, and typos in words under 5 characters (would need an index of
+      deletions, e.g. SymSpell, instead of generating the variants)

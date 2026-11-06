@@ -397,8 +397,14 @@ tried in order:
    returned).
 4. Only then the last word trimmed by up to two characters (typo at the end of a word), with
    lookahead.
+5. **One typo in any word:** a word of letters with at least 5 characters that occurs nowhere
+   in the index is replaced by the words of the index one edit away (a letter missing, an extra
+   or a wrong one, two neighbors swapped; Damerau-Levenshtein distance 1). The other words of the
+   query pick the right one: `gnies 62 düs` and `gneis 62 dsseldorf` find Gneisenaustraße 62 in
+   Düsseldorf. House numbers and postcodes are never corrected.
 
-Fully typed words keep the fast exact query; lookahead only runs when it finds nothing. So when a house
+Fully typed words keep the fast exact query; lookahead and typo tolerance only run when the
+stages before find nothing. So when a house
 number is missing, the street in the named city comes before a house number in a similarly
 spelled city (`… 1 Bonn` does not return `… 1 Bönen`).
 
@@ -753,7 +759,8 @@ administrative region (217 MB PBF, Geofabrik 2026-11-05 → 1.32 million entries
 import 58 s), schema 11 (2026-11-06): p50 1.6 ms, p95 3.3 ms, p99 3.9 ms, max 5.3 ms; with
 schema 4: p50 2.0 ms, p95 10.1 ms, p99 16.6 ms. With lookahead (2026-11-06) unchanged (p50
 1.6 ms, p95 3.2 ms); the 20 partly typed lookahead queries of the benchmark (`gneis 62 düss`) have
-p95 2.3 ms. Germany is not measured with lookahead yet. The benchmark measures the search itself, in one
+p95 2.3 ms, the 20 queries with one typo (`gnies 62 düs`) p95 12.3 ms. Germany is not
+measured with lookahead and typo tolerance yet. The benchmark measures the search itself, in one
 thread; search workers do not change it, they run several such searches at the same time.
 
 What keeps the search fast: the hit list in FTS5 is sorted by importance, and only the first 200

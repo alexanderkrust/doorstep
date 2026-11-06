@@ -2,12 +2,15 @@ import { existsSync, statSync } from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { SCHEMA_VERSION } from '../import/index-writer.js';
 import { importanceFor } from '../import/place.js';
-import { bm25, ftsColumns, idf } from './bm25.js';
+import { bm25, ftsColumns, idf, type FtsColumns } from './bm25.js';
 import { boundingBox, distanceKm, gridCellsInBox } from './geo.js';
 import { nameForms, normalizeTokens } from './normalize.js';
 import {
   buildWordsQuery,
+  correctionGroup,
+  editVariants,
   expandPrefix,
+  isFuzzyCandidate,
   inTextColumns,
   phrasesForWords,
   queryWords,
@@ -107,6 +110,11 @@ const MAX_LOCAL_CELLS = 64;
 const LOCAL_DENSE_HITS = 10;
 /** Looks like a house number ("12", "60d"). */
 const HOUSENUMBER_TOKEN = /^\d+[a-z]?$/;
+/**
+ * Corrections per word in the typo stage. More rarely help, and every prefix in the OR group
+ * costs FTS5 a merge of its hit lists.
+ */
+const MAX_CORRECTIONS = 12;
 /** Hits with the same name (e.g. segments of a street) within this distance are merged. */
 const DEDUPE_RADIUS_KM = 2;
 
@@ -352,7 +360,8 @@ export class SearchIndex {
    * 1. the query as typed, otherwise without single letters ("Frankfurt a.M."). Each first
    *    with the earlier words exact, then with lookahead (every word as the start of a word,
    *    "gneis 62 düss"), then the same at street level (house number missing in OSM);
-   * 2. the same with lookahead and typo tolerance on the last word.
+   * 2. the same with lookahead and typo tolerance on the last word;
+   * 3. one typo in any word (see `correctTypos`), with and without the house number.
    * So the street in the named city comes before a house number in a similarly
    * spelled city ("… 1 Bonn" does not find "… 1 Bönen"), and fully typed words keep the fast
    * exact query.
@@ -382,19 +391,95 @@ export class SearchIndex {
         }
       }
     }
+
+    for (const set of tokenSets) {
+      const streetTokens = withoutHousenumbers(set);
+      for (const candidate of streetTokens ? [set, streetTokens] : [set]) {
+        const corrected = this.correctTypos(candidate, options.types);
+        if (!corrected) continue;
+        let hits = this.rankedSearch(corrected, options, {
+          lookahead: true,
+          typos: false,
+          corrected: true,
+        });
+        if (candidate !== set) hits = hits.filter((row) => row.type !== 'house');
+        if (hits.length > 0) return hits.slice(0, options.limit);
+      }
+    }
     return [];
+  }
+
+  /**
+   * One typo in any word: a letter missing, an extra one, a wrong one or two swapped
+   * ("gnies 62 düs"). Words of letters with at least 5 characters that occur nowhere in the
+   * index are replaced by the words one edit away that do (see `editVariants`); the other words
+   * of the query pick the right one. Returns the corrected words, or `null` if nothing can be
+   * corrected or no hit is left.
+   */
+  private correctTypos(
+    tokens: readonly string[],
+    types: readonly ResultType[] | undefined,
+  ): string[] | null {
+    const current = this.current;
+    if (!current || tokens.length === 0) return null;
+    const { stats } = current;
+    const words = queryWords(tokens, true);
+    const corrections: (string[] | null)[] = [];
+    for (const { token, prefix } of words) {
+      if (stats.exists(token, prefix)) {
+        corrections.push(null);
+        continue;
+      }
+      // A word that is not in the index and cannot be corrected: nothing can match.
+      if (!isFuzzyCandidate(token)) return null;
+      const found = editVariants(token)
+        .filter((variant) => stats.exists(variant, prefix))
+        .slice(0, MAX_CORRECTIONS);
+      if (found.length === 0) return null;
+      corrections.push(found);
+    }
+    if (corrections.every((c) => c === null)) return null;
+
+    const parts = corrections.map((found, i) =>
+      found ? correctionGroup(found, words[i]?.prefix ?? false) : null,
+    );
+    const match = buildWordsQuery(words, parts);
+    if (match === null) return null;
+    const rows = current.search.all(inTextColumns(match, types)) as unknown as CandidateRow[];
+    if (rows.length === 0) return null;
+
+    // Per word, the correction that most hits contain.
+    const columns = rows.map(ftsColumns);
+    return words.map(({ token, prefix }, i) => {
+      const found = corrections[i];
+      if (!found) return token;
+      let best = found[0] ?? token;
+      let bestCount = -1;
+      for (const variant of found) {
+        const count = columns.filter((c) => containsWord(c, variant, prefix)).length;
+        if (count > bestCount) {
+          best = variant;
+          bestCount = count;
+        }
+      }
+      return best;
+    });
   }
 
   /**
    * First query variant with hits, ranked. Without `typos` only the query itself, with
    * `typos` only the variants with a trimmed last word. With `lookahead`, earlier words are
    * prefixes too (see `queryWords`); `[]` if that changes no word, since the exact form
-   * already ran.
+   * already ran, unless the words are `corrected` ones from `correctTypos`.
    */
   private rankedSearch(
     tokens: readonly string[],
     options: SearchOptions,
-    { lookahead, typos }: { lookahead: boolean; typos: boolean },
+    {
+      lookahead,
+      typos,
+      corrected = false,
+    }: { lookahead: boolean; typos: boolean; corrected?: boolean },
   ): RankedRow[] {
     const current = this.current;
     if (!current) return [];
@@ -404,7 +489,8 @@ export class SearchIndex {
     const variants = typos ? trimmed : exact === undefined ? [] : [exact];
     for (const variant of variants) {
       const words = queryWords(variant, lookahead);
-      if (lookahead && !typos && words.every((w, i) => w.prefix === (i === words.length - 1))) {
+      const unchanged = words.every((w, i) => w.prefix === (i === words.length - 1));
+      if (lookahead && !typos && !corrected && unchanged) {
         return [];
       }
       const { match, idfs } = this.prepareQuery(current.stats, words);
@@ -577,4 +663,11 @@ export class SearchIndex {
     this.current?.db.close();
     this.current = null;
   }
+}
+
+/** Does a column contain the word (or, with `prefix`, a word starting with it)? */
+function containsWord(columns: FtsColumns, token: string, prefix: boolean): boolean {
+  return Object.values(columns).some((words: readonly string[]) =>
+    words.some((word) => (prefix ? word.startsWith(token) : word === token)),
+  );
 }

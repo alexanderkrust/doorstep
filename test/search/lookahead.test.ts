@@ -141,3 +141,37 @@ describe('lookahead: every word as the start of a word', () => {
     expect(first('Königsallee')).toMatchObject({ type: 'street' });
   });
 });
+
+describe('typo tolerance in every word', () => {
+  it('finds a swapped pair of letters in the first word', () => {
+    expect(first('gnies 62 düs')).toMatchObject({
+      street: 'Gneisenaustraße',
+      housenumber: '62',
+      city: 'Düsseldorf',
+    });
+  });
+
+  it('finds a missing letter in a fully typed word', () => {
+    expect(first('gneisenaustrase 62 düss')).toMatchObject({
+      housenumber: '62',
+      city: 'Düsseldorf',
+    });
+    expect(first('gneis 62 düseldorf')).toMatchObject({ housenumber: '62', city: 'Düsseldorf' });
+  });
+
+  it('finds a wrong letter in the city', () => {
+    expect(first('gneis 62 bxrlin')).toMatchObject({ housenumber: '62', city: 'Berlin' });
+  });
+
+  it('finds an extra letter', () => {
+    expect(first('gneisenaux 62 düss')).toMatchObject({ housenumber: '62', city: 'Düsseldorf' });
+  });
+
+  it('does not correct house numbers: a missing number gives the street', () => {
+    expect(first('gneis 63 düss')).toMatchObject({ type: 'street', city: 'Düsseldorf' });
+  });
+
+  it('finds nothing for words with more than one typo', () => {
+    expect(search('gxexsenau 62 düss')).toEqual([]);
+  });
+});

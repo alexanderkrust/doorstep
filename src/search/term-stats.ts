@@ -27,6 +27,7 @@ export class TermStats {
     private readonly term: StatementSync,
     private readonly prefix: StatementSync,
     private readonly range: StatementSync,
+    private readonly first: StatementSync,
   ) {}
 
   static open(db: DatabaseSync): TermStats {
@@ -45,6 +46,7 @@ export class TermStats {
       db.prepare('SELECT docs FROM terms WHERE term = ?'),
       db.prepare('SELECT docs FROM prefixes WHERE prefix = ?'),
       db.prepare('SELECT term, docs FROM terms WHERE term >= ? AND term < ? ORDER BY term'),
+      db.prepare('SELECT 1 AS found FROM terms WHERE term >= ? AND term < ? LIMIT 1'),
     );
   }
 
@@ -62,6 +64,12 @@ export class TermStats {
       return (this.prefix.get(prefix) as { docs?: number } | undefined)?.docs ?? 0;
     }
     return (completions ?? this.completions(prefix)).reduce((sum, t) => sum + t.docs, 0);
+  }
+
+  /** Is there a word that equals `token` or, with `prefix`, starts with it? */
+  exists(token: string, prefix: boolean): boolean {
+    if (!prefix) return this.docs(token) > 0;
+    return this.first.get(token, token + MAX_CHAR) !== undefined;
   }
 
   /** All words starting with `prefix`, in alphabetical order. */
