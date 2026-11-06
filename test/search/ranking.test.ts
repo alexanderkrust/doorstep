@@ -62,6 +62,23 @@ describe('nameMatch', () => {
     expect(nameMatch(['koenigsallee'], [])).toBe(0);
     expect(nameMatch([], ['koenigsallee'])).toBe(0);
   });
+
+  it('counts earlier words as prefixes only when they are marked as such (lookahead)', () => {
+    const name = ['gneisenaustrasse 62'];
+    expect(nameMatch(['gneis', '62'], name)).toBeLessThan(0.5);
+    const lookahead = nameMatch(['gneis', '62'], name, [true, true]);
+    expect(lookahead).toBeGreaterThan(0.5);
+    // A prefix still counts less than the whole word.
+    expect(lookahead).toBeLessThan(nameMatch(['gneisenaustrasse', '62'], name));
+  });
+});
+
+describe('rank with lookahead', () => {
+  it('puts the street whose name starts with the first word before a POI that does not', () => {
+    const street = candidate({ names: ['gneisenaustrasse'], importance: 0.3 });
+    const poi = candidate({ names: ['cafe gneisenau'], importance: 0.3 });
+    expect(rank([poi, street], ['gneis', 'duess'], [true, true])[0]).toBe(street);
+  });
 });
 
 describe('scoreCandidate', () => {

@@ -47,6 +47,16 @@ describe('GET /api', () => {
     expect(top).toContain('Königsallee');
   });
 
+  it('finds an address when every word is only typed in part (lookahead)', async () => {
+    const { res, body } = await search(q('Königsa 60d Düss'));
+    expect(res.statusCode).toBe(200);
+    expect(address(body.features[0] as PointFeature)).toMatchObject({
+      street: 'Königsallee',
+      housenumber: '60d',
+      city: 'Düsseldorf',
+    });
+  });
+
   it('returns GeoJSON features with display texts, an address and attribution', async () => {
     const { body } = await search(q('Königsallee 60d'));
 

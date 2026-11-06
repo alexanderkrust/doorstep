@@ -387,9 +387,18 @@ All responses are GeoJSON `FeatureCollection`s and contain the `attribution` fie
 | `api_key`    | no       | API key (alternatively the `X-API-Key` header)          |
 
 The last word is searched as a prefix, all others exactly. If the query finds nothing, these are
-tried in order: without single letters (`Frankfurt a.M.`, `Mülheim a.d. Ruhr`), the street
-without the house number (if the house number does not exist, the street is returned), and only
-then the last word trimmed by up to two characters (typo at the end of a word). So when a house
+tried in order:
+
+1. **Lookahead:** every earlier word with letters and at least 3 characters as a prefix too, so
+   `gneis 62 düss` finds Gneisenaustraße 62 in Düsseldorf. House numbers before the end stay
+   exact (`62` does not find 620), and so do shorter words (`am`).
+2. Without single letters (`Frankfurt a.M.`, `Mülheim a.d. Ruhr`).
+3. The street without the house number (if the house number does not exist, the street is
+   returned).
+4. Only then the last word trimmed by up to two characters (typo at the end of a word), with
+   lookahead.
+
+Fully typed words keep the fast exact query; lookahead only runs when it finds nothing. So when a house
 number is missing, the street in the named city comes before a house number in a similarly
 spelled city (`… 1 Bonn` does not return `… 1 Bönen`).
 
@@ -742,7 +751,9 @@ and spelling variants: p50 2.5 ms, p95 16.9 ms, max 56 ms with a warm cache. Imp
 for very frequent words (`Am Markt 1` 41 ms, `Friedrichstraße 3` 20–90 ms). Düsseldorf
 administrative region (217 MB PBF, Geofabrik 2026-11-05 → 1.32 million entries, 547 MB index,
 import 58 s), schema 11 (2026-11-06): p50 1.6 ms, p95 3.3 ms, p99 3.9 ms, max 5.3 ms; with
-schema 4: p50 2.0 ms, p95 10.1 ms, p99 16.6 ms. The benchmark measures the search itself, in one
+schema 4: p50 2.0 ms, p95 10.1 ms, p99 16.6 ms. With lookahead (2026-11-06) unchanged (p50
+1.6 ms, p95 3.2 ms); the 20 partly typed lookahead queries of the benchmark (`gneis 62 düss`) have
+p95 2.3 ms. Germany is not measured with lookahead yet. The benchmark measures the search itself, in one
 thread; search workers do not change it, they run several such searches at the same time.
 
 What keeps the search fast: the hit list in FTS5 is sorted by importance, and only the first 200

@@ -6,11 +6,13 @@ import { bm25, ftsColumns, idf } from './bm25.js';
 import { boundingBox, distanceKm, gridCellsInBox } from './geo.js';
 import { nameForms, normalizeTokens } from './normalize.js';
 import {
-  buildFtsQuery,
+  buildWordsQuery,
   expandPrefix,
   inTextColumns,
-  phrasesFor,
+  phrasesForWords,
+  queryWords,
   tokenVariants,
+  type QueryWord,
   withinCells,
   withoutHousenumbers,
   withoutSingleLetters,
@@ -347,11 +349,13 @@ export class SearchIndex {
    * Autosuggest; `null` if there is no index.
    *
    * Order; the first with hits wins:
-   * 1. the query as typed, otherwise without single letters ("Frankfurt a.M."),
-   *    each with the house number and otherwise at street level (house number missing in OSM);
-   * 2. the same with typo tolerance on the last word.
+   * 1. the query as typed, otherwise without single letters ("Frankfurt a.M."). Each first
+   *    with the earlier words exact, then with lookahead (every word as the start of a word,
+   *    "gneis 62 düss"), then the same at street level (house number missing in OSM);
+   * 2. the same with lookahead and typo tolerance on the last word.
    * So the street in the named city comes before a house number in a similarly
-   * spelled city ("… 1 Bonn" does not find "… 1 Bönen").
+   * spelled city ("… 1 Bonn" does not find "… 1 Bönen"), and fully typed words keep the fast
+   * exact query.
    */
   search(options: SearchOptions): PlaceRow[] | null {
     if (!this.open()) return null;
@@ -361,16 +365,21 @@ export class SearchIndex {
     if (withoutLetters) tokenSets.push(withoutLetters);
 
     for (const typos of [false, true]) {
+      // Typos only on top of lookahead: the exact form already ran without them.
+      const modes = typos ? [true] : [false, true];
       for (const set of tokenSets) {
-        const hits = this.rankedSearch(set, options, typos);
-        if (hits.length > 0) return hits.slice(0, options.limit);
-
+        for (const lookahead of modes) {
+          const hits = this.rankedSearch(set, options, { lookahead, typos });
+          if (hits.length > 0) return hits.slice(0, options.limit);
+        }
         const streetTokens = withoutHousenumbers(set);
         if (!streetTokens) continue;
-        const streets = this.rankedSearch(streetTokens, options, typos).filter(
-          (row) => row.type !== 'house',
-        );
-        if (streets.length > 0) return streets.slice(0, options.limit);
+        for (const lookahead of modes) {
+          const streets = this.rankedSearch(streetTokens, options, { lookahead, typos }).filter(
+            (row) => row.type !== 'house',
+          );
+          if (streets.length > 0) return streets.slice(0, options.limit);
+        }
       }
     }
     return [];
@@ -378,12 +387,14 @@ export class SearchIndex {
 
   /**
    * First query variant with hits, ranked. Without `typos` only the query itself, with
-   * `typos` only the variants with a trimmed last word.
+   * `typos` only the variants with a trimmed last word. With `lookahead`, earlier words are
+   * prefixes too (see `queryWords`); `[]` if that changes no word, since the exact form
+   * already ran.
    */
   private rankedSearch(
     tokens: readonly string[],
     options: SearchOptions,
-    typos: boolean,
+    { lookahead, typos }: { lookahead: boolean; typos: boolean },
   ): RankedRow[] {
     const current = this.current;
     if (!current) return [];
@@ -392,7 +403,11 @@ export class SearchIndex {
     const [exact, ...trimmed] = tokenVariants(tokens);
     const variants = typos ? trimmed : exact === undefined ? [] : [exact];
     for (const variant of variants) {
-      const { match, idfs } = this.prepareQuery(current.stats, variant);
+      const words = queryWords(variant, lookahead);
+      if (lookahead && !typos && words.every((w, i) => w.prefix === (i === words.length - 1))) {
+        return [];
+      }
+      const { match, idfs } = this.prepareQuery(current.stats, words);
       if (match === null) continue;
       const rows = current.search.all(inTextColumns(match, types)) as unknown as CandidateRow[];
       // A query with a house number looks for an address, but on a common street the
@@ -421,7 +436,7 @@ export class SearchIndex {
       if (rows.length === 0) continue;
       if (hasLocation) this.moveToNearestSegment(rows, lat, lon);
 
-      const phrases = phrasesFor(variant);
+      const phrases = phrasesForWords(words);
       const candidates: RankedRow[] = rows.map((row) => ({
         ...row,
         bm25: bm25(phrases, idfs, ftsColumns(row), current.stats.avgTokens),
@@ -430,33 +445,38 @@ export class SearchIndex {
         plainAddress: row.type === 'house' && !row.name && !row.name_de && !row.name_en,
         ...(hasLocation ? { distanceKm: distanceKm(lat, lon, row.lat, row.lon) } : {}),
       }));
-      return dedupeNearby(rank(candidates, tokens), dedupeKey, dedupeRadius);
+      const prefixes = words.map((w) => w.prefix);
+      return dedupeNearby(rank(candidates, tokens, prefixes), dedupeKey, dedupeRadius);
     }
     return [];
   }
 
   /**
    * FTS5 query and IDF per search word from the word statistics. A long prefix with a
-   * frequent word ("strasse"*) is expanded, see `expandPrefix`.
+   * frequent word ("strasse"*) is expanded, see `expandPrefix`; with lookahead, that applies
+   * to every prefix word.
    */
   private prepareQuery(
     stats: TermStats,
-    tokens: readonly string[],
+    words: readonly QueryWord[],
   ): { match: string | null; idfs: number[] } {
-    const last = tokens[tokens.length - 1] ?? '';
-    let lastParts: string[] | null = null;
-    let lastDocs: number;
-    if (charLength(last) > MAX_INDEXED_PREFIX) {
-      const completions = stats.completions(last);
-      lastDocs = stats.prefixDocs(last, completions);
-      lastParts = expandPrefix(last, completions, this.expandPrefixDocs);
-    } else {
-      lastDocs = stats.prefixDocs(last);
-    }
-    const idfs = tokens.map((token, i) =>
-      idf(stats.rows, Math.min(stats.rows, i === tokens.length - 1 ? lastDocs : stats.docs(token))),
-    );
-    return { match: buildFtsQuery(tokens, lastParts), idfs };
+    const parts: (string[] | null)[] = [];
+    const idfs = words.map(({ token, prefix }) => {
+      let docs: number;
+      if (!prefix) {
+        docs = stats.docs(token);
+        parts.push(null);
+      } else if (charLength(token) > MAX_INDEXED_PREFIX) {
+        const completions = stats.completions(token);
+        docs = stats.prefixDocs(token, completions);
+        parts.push(expandPrefix(token, completions, this.expandPrefixDocs));
+      } else {
+        docs = stats.prefixDocs(token);
+        parts.push(null);
+      }
+      return idf(stats.rows, Math.min(stats.rows, docs));
+    });
+    return { match: buildWordsQuery(words, parts), idfs };
   }
 
   /**

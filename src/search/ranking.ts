@@ -26,8 +26,10 @@ export interface Candidate {
 }
 
 export interface ScoreContext {
-  /** Normalized words of the query; the last one is a prefix. */
+  /** Normalized words of the query. */
   queryTokens: readonly string[];
+  /** Which words may match as a prefix; default only the last one. */
+  prefixes?: readonly boolean[];
   /** Smallest (best) bm25 value of all candidates. */
   bestBm25: number;
 }
@@ -53,7 +55,11 @@ const PREFIX_ONLY = 0.9;
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
-function matchOne(query: readonly string[], name: string): number {
+function matchOne(
+  query: readonly string[],
+  name: string,
+  prefixes: readonly boolean[] | undefined,
+): number {
   const nameTokens = name.split(' ').filter(Boolean);
   const nameChars = nameTokens.reduce((sum, t) => sum + t.length, 0);
   if (nameChars === 0 || query.length === 0) return 0;
@@ -63,9 +69,9 @@ function matchOne(query: readonly string[], name: string): number {
   let matchedQuery = 0;
   let allExact = true;
   for (const [i, q] of query.entries()) {
-    const isLast = i === query.length - 1;
+    const canPrefix = prefixes ? prefixes[i] === true : i === query.length - 1;
     const exact = nameTokens.findIndex((t, j) => !used.has(j) && t === q);
-    const prefix = isLast ? nameTokens.findIndex((t, j) => !used.has(j) && t.startsWith(q)) : -1;
+    const prefix = canPrefix ? nameTokens.findIndex((t, j) => !used.has(j) && t.startsWith(q)) : -1;
     const hit = exact >= 0 ? exact : prefix;
     if (hit < 0) continue;
     used.add(hit);
@@ -79,8 +85,9 @@ function matchOne(query: readonly string[], name: string): number {
   const nameCoverage = Math.sqrt(matchedChars / nameChars);
   const queryCoverage = matchedQuery / query.length;
   const first = query[0] ?? '';
+  const firstIsPrefix = prefixes ? prefixes[0] === true : query.length === 1;
   const startsWith =
-    nameTokens[0] === first || (query.length === 1 && nameTokens[0]?.startsWith(first));
+    nameTokens[0] === first || (firstIsPrefix && nameTokens[0]?.startsWith(first) === true);
   return clamp01(
     nameCoverage * queryCoverage * (startsWith ? 1 : NOT_AT_START) * (allExact ? 1 : PREFIX_ONLY),
   );
@@ -89,10 +96,15 @@ function matchOne(query: readonly string[], name: string): number {
 /**
  * How well does the query match one of the names? 1 = exactly equal; less if the name
  * is longer than the query, contains only part of the query, or does not start with it.
+ * `prefixes`: which query words may match as a prefix; default only the last one.
  */
-export function nameMatch(queryTokens: readonly string[], names: readonly string[]): number {
+export function nameMatch(
+  queryTokens: readonly string[],
+  names: readonly string[],
+  prefixes?: readonly boolean[],
+): number {
   let best = 0;
-  for (const name of names) best = Math.max(best, matchOne(queryTokens, name));
+  for (const name of names) best = Math.max(best, matchOne(queryTokens, name, prefixes));
   return best;
 }
 
@@ -103,13 +115,13 @@ export function proximity(distanceKm: number): number {
 
 export function scoreCandidate(candidate: Candidate, ctx: ScoreContext): number {
   const relevance = ctx.bestBm25 < 0 ? clamp01(candidate.bm25 / ctx.bestBm25) : 1;
-  const text = 0.5 * relevance + 0.5 * nameMatch(ctx.queryTokens, candidate.names);
+  const text = 0.5 * relevance + 0.5 * nameMatch(ctx.queryTokens, candidate.names, ctx.prefixes);
   const importance = clamp01(candidate.importance);
   const base =
     candidate.distanceKm === undefined
       ? 0.6 * text + 0.4 * importance
       : 0.45 * text + 0.3 * importance + 0.25 * proximity(candidate.distanceKm);
-  return clamp01(base + addressQueryAdjustment(candidate, ctx.queryTokens));
+  return clamp01(base + addressQueryAdjustment(candidate, ctx.queryTokens, ctx.prefixes));
 }
 
 /**
@@ -117,9 +129,13 @@ export function scoreCandidate(candidate: Candidate, ctx: ScoreContext): number 
  * that only share it. Without one, a street name looks for the street, not for what lies on
  * it: addresses and POIs that only match via their address come after the streets.
  */
-function addressQueryAdjustment(candidate: Candidate, queryTokens: readonly string[]): number {
+function addressQueryAdjustment(
+  candidate: Candidate,
+  queryTokens: readonly string[],
+  prefixes: readonly boolean[] | undefined,
+): number {
   const own = candidate.ownNames;
-  const onlyViaAddress = own && own.length > 0 && nameMatch(queryTokens, own) === 0;
+  const onlyViaAddress = own && own.length > 0 && nameMatch(queryTokens, own, prefixes) === 0;
   if (!queryTokens.some((t) => HOUSENUMBER.test(t))) {
     return candidate.plainAddress || onlyViaAddress ? -STREET_QUERY_PENALTY : 0;
   }
@@ -131,9 +147,10 @@ function addressQueryAdjustment(candidate: Candidate, queryTokens: readonly stri
 export function rank<T extends Candidate>(
   candidates: readonly T[],
   queryTokens: readonly string[],
+  prefixes?: readonly boolean[],
 ): T[] {
   const bestBm25 = candidates.reduce((best, c) => Math.min(best, c.bm25), 0);
-  const ctx = { queryTokens, bestBm25 };
+  const ctx: ScoreContext = { queryTokens, bestBm25, ...(prefixes ? { prefixes } : {}) };
   return candidates
     .map((candidate) => ({ candidate, score: scoreCandidate(candidate, ctx) }))
     .sort((a, b) => b.score - a.score)

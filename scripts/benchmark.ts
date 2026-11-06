@@ -25,6 +25,19 @@ const TYPED = [
   'Friedrichstraße 3',
   'Gartenstraße',
 ];
+/** Lookahead: every word only typed in part ("gneis 62 düss" for Gneisenaustraße 62). */
+const LOOKAHEAD = [
+  'gneis 62 düss',
+  'haupt 5 kref',
+  'königs 1 düss',
+  'schad 11 düss',
+  'berl all düss',
+  'fried 3 ess',
+  'bahnh 1 dui',
+  'kirchw 2 mön',
+  'garten 10 wupp',
+  'am mark 1 sol',
+];
 /** Düsseldorf; location bias enlarges the candidate set. */
 const LOCATION = { lat: 51.2254, lon: 6.7763 };
 
@@ -62,6 +75,8 @@ for (const text of TYPED) {
   }
 }
 
+for (const q of LOOKAHEAD) queries.push({ q, limit: 10 }, { q, limit: 10, ...LOCATION });
+
 const index = new SearchIndex(values.index);
 if (!index.open()) {
   console.error(`No index at ${values.index}`);
@@ -96,6 +111,9 @@ console.log(`p50:       ${fmt(pct(50))}`);
 console.log(`p95:       ${fmt(p95)}`);
 console.log(`p99:       ${fmt(pct(99))}`);
 console.log(`max:       ${fmt(times.at(-1)?.ms ?? 0)}`);
+const lookahead = times.filter((t) => LOOKAHEAD.includes(t.q.q)).map((t) => t.ms);
+const lookaheadP95 = lookahead[Math.min(lookahead.length - 1, Math.floor(0.95 * lookahead.length))];
+console.log(`Lookahead: p95 ${fmt(lookaheadP95 ?? 0)} over ${String(lookahead.length)} queries`);
 console.log('Slowest queries:');
 const seen = new Set<string>();
 for (const t of [...times].reverse()) {

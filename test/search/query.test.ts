@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildFtsQuery,
+  buildWordsQuery,
   expandPrefix,
   inTextColumns,
   phrasesFor,
+  phrasesForWords,
+  queryWords,
   queryVariants,
   tokenVariants,
   withinCells,
@@ -205,5 +208,76 @@ describe('withoutSingleLetters', () => {
   it('returns null when nothing is dropped or nothing is left', () => {
     expect(withoutSingleLetters(['hauptstrasse', '1'])).toBeNull();
     expect(withoutSingleLetters(['a', 'b'])).toBeNull();
+  });
+});
+
+describe('queryWords', () => {
+  it('searches only the last word as a prefix without lookahead', () => {
+    expect(queryWords(['gneis', '62', 'duess'], false).map((w) => w.prefix)).toEqual([
+      false,
+      false,
+      true,
+    ]);
+  });
+
+  it('searches every word with letters as a prefix with lookahead', () => {
+    expect(queryWords(['gneis', '62', 'duess'], true)).toEqual([
+      { token: 'gneis', prefix: true, notInPostcode: false },
+      { token: '62', prefix: false, notInPostcode: false },
+      { token: 'duess', prefix: true, notInPostcode: false },
+    ]);
+  });
+
+  it('keeps words under 3 characters and numbers before the end exact', () => {
+    expect(queryWords(['am', '5', 'duess'], true).map((w) => w.prefix)).toEqual([
+      false,
+      false,
+      true,
+    ]);
+    expect(queryWords(['40212', 'koenigs'], true)[0]?.prefix).toBe(false);
+  });
+
+  it('keeps a partial house number at the end out of the postcode', () => {
+    expect(queryWords(['gneis', '6'], true)[1]).toEqual({
+      token: '6',
+      prefix: true,
+      notInPostcode: true,
+    });
+  });
+});
+
+describe('buildWordsQuery', () => {
+  it('writes every prefix word with *', () => {
+    expect(buildWordsQuery(queryWords(['gneis', '62', 'duess'], true))).toBe(
+      '"gneis"* "62" "duess"*',
+    );
+  });
+
+  it('puts an expanded word in the middle into an AND group', () => {
+    expect(
+      buildWordsQuery(queryWords(['haupt', '5', 'koeln'], true), [
+        ['"hauptstrasse"', '"haupts"*'],
+        null,
+        null,
+      ]),
+    ).toBe('("hauptstrasse" OR "haupts"*) AND "5" AND "koeln"*');
+  });
+
+  it('gives the same query as buildFtsQuery without lookahead', () => {
+    const tokens = ['koenigsallee', '4'];
+    expect(buildWordsQuery(queryWords(tokens, false))).toBe(buildFtsQuery(tokens));
+  });
+
+  it('is null without words', () => {
+    expect(buildWordsQuery([])).toBeNull();
+  });
+});
+
+describe('phrasesForWords', () => {
+  it('takes the prefix flags of the words for bm25', () => {
+    expect(phrasesForWords(queryWords(['gneis', 'duess'], true))).toEqual([
+      { token: 'gneis', prefix: true, notInPostcode: false },
+      { token: 'duess', prefix: true, notInPostcode: false },
+    ]);
   });
 });

@@ -290,3 +290,16 @@ Open questions:
 - [x] Tests: config, result type mapping, filtered import (streets keep city/postcode, ids without gaps, word statistics only of the remaining rows), API (`types` with and without location, addresses behind more important hits, cache, 400, `/reverse`, `/health`), startup warning.
 - [ ] **Measure on Germany:** index size and import time with `INDEX_TYPES=street`; latency of `types=address`/`types=street` on frequent prefixes (FTS5 intersects with the large `kind` doclists, e.g. 20 million entries for `kindaddress`).
 - [ ] **Faster import for few types:** the import still filters and reads everything with osmium. With `INDEX_TYPES=street`, the POI tags (`shop`, `amenity`, …) could be left out of `TAG_FILTERS`; addresses are still needed for the city and postcode of streets.
+
+## Lookahead search (2026-11-06)
+
+**Goal:** every typed word can be the start of a word: `gneis 62 düss` finds Gneisenaustraße 62
+in Düsseldorf.
+
+- [x] New stage after the exact query: earlier words with letters and at least 3 characters as
+      prefixes too; house numbers before the end stay exact
+- [x] Every prefix word over 4 characters is expanded like the last one (`expandPrefix`)
+- [x] Ranking: a prefix of the first name word counts as "starts with" for lookahead words
+- [x] Düsseldorf administrative region: normal queries unchanged (p95 3.2 ms), lookahead
+      queries p95 2.3 ms
+- [ ] Measure on Germany (frequent prefixes like `haupt` or `bahnh` in the middle of a query)
