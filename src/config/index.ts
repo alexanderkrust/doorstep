@@ -1,3 +1,4 @@
+import { availableParallelism } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import { CronError, nextRun, parseCron } from '../import/cron.js';
@@ -56,6 +57,10 @@ export const INDEX_FILE = 'index.sqlite';
  * `mounted`: the index is built elsewhere and mounted; no download, no import.
  */
 export type IndexMode = 'build' | 'mounted';
+
+const MAX_SEARCH_WORKERS = 64;
+/** One worker per core except the main thread's, at most 8; 0 on a single core. */
+const autoSearchWorkers = () => Math.max(0, Math.min(8, availableParallelism() - 1));
 
 const DEFAULT_REGION_URL = 'https://download.geofabrik.de/europe/germany-latest.osm.pbf';
 const regionUrl = z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' });
@@ -121,6 +126,29 @@ const envSchema = z
     METRICS_TOKEN: optional(
       z.string().trim().min(16, 'must be at least 16 characters long').optional(),
     ),
+    /**
+     * Worker threads for /api and /reverse; 0 = in the main thread. `auto`: one per core
+     * except the main thread's, at most 8.
+     */
+    SEARCH_WORKERS: optional(
+      z
+        .string()
+        .trim()
+        .toLowerCase()
+        .transform((value, ctx) => {
+          if (value === 'auto') return autoSearchWorkers();
+          const n = /^\d+$/.test(value) ? Number(value) : NaN;
+          if (!Number.isInteger(n) || n > MAX_SEARCH_WORKERS) {
+            ctx.addIssue({
+              code: 'custom',
+              message: `must be auto or a number from 0 to ${String(MAX_SEARCH_WORKERS)}`,
+            });
+            return z.NEVER;
+          }
+          return n;
+        })
+        .default(autoSearchWorkers()),
+    ),
     /** Schedule for automatic updates in cron format, e.g. "0 3 * * *". */
     UPDATE_CRON: optional(cronExpression.optional()),
     /** Comma-separated list of allowed origins, "*" = all. */
@@ -169,6 +197,8 @@ export interface Config {
   /** `max-age` for `/api` and `/reverse` in seconds; 0 = `no-store`. */
   cacheMaxAge: number;
   metricsToken: string | null;
+  /** Worker threads for searches; 0 = in the main thread. */
+  searchWorkers: number;
 }
 
 export class ConfigError extends Error {
@@ -206,5 +236,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     indexTypes: e.INDEX_TYPES,
     cacheMaxAge: e.CACHE_MAX_AGE,
     metricsToken: e.METRICS_TOKEN ?? null,
+    searchWorkers: e.SEARCH_WORKERS,
   };
 }

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { availableParallelism } from 'node:os';
 import { ConfigError, loadConfig } from '../src/config/index.js';
+
+/** SEARCH_WORKERS=auto: one per core except the main thread's, at most 8. */
+const AUTO_WORKERS = Math.max(0, Math.min(8, availableParallelism() - 1));
 
 describe('loadConfig', () => {
   it('sets defaults when no env variables are set', () => {
@@ -25,6 +29,7 @@ describe('loadConfig', () => {
       indexTypes: ['address', 'street', 'poi', 'locality', 'sublocality', 'place'],
       cacheMaxAge: 3600,
       metricsToken: null,
+      searchWorkers: AUTO_WORKERS,
     });
   });
 
@@ -67,6 +72,7 @@ describe('loadConfig', () => {
       indexTypes: ['address', 'street', 'poi', 'locality', 'sublocality', 'place'],
       cacheMaxAge: 3600,
       metricsToken: null,
+      searchWorkers: AUTO_WORKERS,
     });
   });
 
@@ -120,6 +126,9 @@ describe('loadConfig', () => {
     ['CACHE_MAX_AGE', '1.5'],
     ['CACHE_MAX_AGE', 'eine Stunde'],
     ['METRICS_TOKEN', 'kurz'],
+    ['SEARCH_WORKERS', '-1'],
+    ['SEARCH_WORKERS', '65'],
+    ['SEARCH_WORKERS', 'viele'],
     ['INDEX_TYPES', 'street,house'],
   ])('rejects the invalid value %s=%s', (key, value) => {
     expect(() => loadConfig({ [key]: value })).toThrow(ConfigError);
@@ -183,5 +192,11 @@ describe('loadConfig', () => {
     expect(loadConfig({ METRICS_TOKEN: ' s3cr3t-metrics-token ' }).metricsToken).toBe(
       's3cr3t-metrics-token',
     );
+  });
+
+  it('reads SEARCH_WORKERS as a number or auto', () => {
+    expect(loadConfig({ SEARCH_WORKERS: '0' }).searchWorkers).toBe(0);
+    expect(loadConfig({ SEARCH_WORKERS: '3' }).searchWorkers).toBe(3);
+    expect(loadConfig({ SEARCH_WORKERS: ' AUTO ' }).searchWorkers).toBe(AUTO_WORKERS);
   });
 });

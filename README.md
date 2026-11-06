@@ -104,7 +104,7 @@ Guide values for the Germany extract. Only the Düsseldorf administrative region
 | Disk (volume)     | **at least 30 GB free**                | Extract about 4.9 GB, index about 10 GB. During an update, the filtered intermediate file, `index.next.sqlite` and its staging file are on the volume as well |
 | RAM, API          | 1 GB for the process, **better 8 GB+** | The process itself needs little; SQLite reads the index from disk. For response times below 50 ms, the index should fit into the system's page cache          |
 | RAM, import       | **4–8 GB**                             | `osmium export` keeps the node coordinates in memory; the import runs as a separate process next to the API                                                   |
-| CPU               | 2 cores                                | The API uses one core; the second keeps import and update away from the API                                                                                   |
+| CPU               | 2 cores, more for more throughput      | Searches run in worker threads, one per core except the main thread's (`SEARCH_WORKERS`); import and update run as a separate process                         |
 | First import time | about 15–30 min plus download          | Düsseldorf administrative region: 45 s for 1.4 million entries                                                                                                |
 
 ## Operations
@@ -275,29 +275,30 @@ its `HEALTHCHECK`.
 Configuration happens exclusively via environment variables. Invalid values lead to an error
 message at startup listing all affected variables.
 
-| Variable             | Default                                                       | Description                                                              |
-| -------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `REGION_URL`         | `https://download.geofabrik.de/europe/germany-latest.osm.pbf` | Geofabrik extract for import and update (not needed when `mounted`)      |
-| `HOST`               | `0.0.0.0`                                                     | Bind address of the API                                                  |
-| `PORT`               | `2322`                                                        | Port of the API                                                          |
-| `DATA_DIR`           | `/data`                                                       | Directory for extract and index (absolute path)                          |
-| `INDEX_MODE`         | `build`                                                       | `build`: the container builds the index; `mounted`: prebuilt, see above  |
-| `INDEX_TYPES`        | all                                                           | Result types the import puts into the index, e.g. `street`; see below    |
-| `INDEX_PATH`         | `$DATA_DIR/index.sqlite`                                      | Path of the index file (absolute path)                                   |
-| `DEFAULT_LANG`       | `de`                                                          | Default language (two-letter code)                                       |
-| `AUTO_IMPORT`        | `false` (`true` in the Docker image)                          | `serve` imports in the background if no index exists                     |
-| `UPDATE_CRON`        | – (no updates)                                                | Schedule for automatic updates in cron format, e.g. `0 3 * * *`          |
-| `RATE_LIMIT_ENABLED` | `true`                                                        | Rate limiting on or off                                                  |
-| `RATE_LIMIT`         | `60`                                                          | Requests per minute and IP, `0` = off                                    |
-| `API_KEYS`           | –                                                             | Comma-separated API keys                                                 |
-| `RATE_LIMIT_API_KEY` | `600`                                                         | Requests per minute and API key                                          |
-| `TRUST_PROXY`        | `false`                                                       | Take the client IP from `X-Forwarded-For` (only behind a reverse proxy)  |
-| `CACHE_SIZE`         | `10000`                                                       | Entries in the cache for search requests, `0` = off                      |
-| `CORS_ORIGINS`       | `*`                                                           | Comma-separated list of allowed origins                                  |
-| `CACHE_MAX_AGE`      | `3600`                                                        | `Cache-Control: max-age` of `/api` and `/reverse` in seconds, `0` = none |
-| `METRICS_TOKEN`      | – (open)                                                      | Bearer token that `/metrics` requires, at least 16 characters            |
-| `LOG_LEVEL`          | `info`                                                        | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`             |
-| `TZ`                 | `UTC` (container)                                             | Time zone for `UPDATE_CRON`                                              |
+| Variable             | Default                                                       | Description                                                                             |
+| -------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `REGION_URL`         | `https://download.geofabrik.de/europe/germany-latest.osm.pbf` | Geofabrik extract for import and update (not needed when `mounted`)                     |
+| `HOST`               | `0.0.0.0`                                                     | Bind address of the API                                                                 |
+| `PORT`               | `2322`                                                        | Port of the API                                                                         |
+| `DATA_DIR`           | `/data`                                                       | Directory for extract and index (absolute path)                                         |
+| `INDEX_MODE`         | `build`                                                       | `build`: the container builds the index; `mounted`: prebuilt, see above                 |
+| `INDEX_TYPES`        | all                                                           | Result types the import puts into the index, e.g. `street`; see below                   |
+| `INDEX_PATH`         | `$DATA_DIR/index.sqlite`                                      | Path of the index file (absolute path)                                                  |
+| `DEFAULT_LANG`       | `de`                                                          | Default language (two-letter code)                                                      |
+| `AUTO_IMPORT`        | `false` (`true` in the Docker image)                          | `serve` imports in the background if no index exists                                    |
+| `UPDATE_CRON`        | – (no updates)                                                | Schedule for automatic updates in cron format, e.g. `0 3 * * *`                         |
+| `RATE_LIMIT_ENABLED` | `true`                                                        | Rate limiting on or off                                                                 |
+| `RATE_LIMIT`         | `60`                                                          | Requests per minute and IP, `0` = off                                                   |
+| `API_KEYS`           | –                                                             | Comma-separated API keys                                                                |
+| `RATE_LIMIT_API_KEY` | `600`                                                         | Requests per minute and API key                                                         |
+| `TRUST_PROXY`        | `false`                                                       | Take the client IP from `X-Forwarded-For` (only behind a reverse proxy)                 |
+| `SEARCH_WORKERS`     | `auto`                                                        | Worker threads for `/api` and `/reverse`; `auto` = cores − 1 (max 8), `0` = main thread |
+| `CACHE_SIZE`         | `10000`                                                       | Entries in the cache for search requests, `0` = off                                     |
+| `CORS_ORIGINS`       | `*`                                                           | Comma-separated list of allowed origins                                                 |
+| `CACHE_MAX_AGE`      | `3600`                                                        | `Cache-Control: max-age` of `/api` and `/reverse` in seconds, `0` = none                |
+| `METRICS_TOKEN`      | – (open)                                                      | Bearer token that `/metrics` requires, at least 16 characters                           |
+| `LOG_LEVEL`          | `info`                                                        | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                            |
+| `TZ`                 | `UTC` (container)                                             | Time zone for `UPDATE_CRON`                                                             |
 
 Flags (`AUTO_IMPORT`, `RATE_LIMIT_ENABLED`, `TRUST_PROXY`) accept `true`/`false`, `1`/`0` and
 `yes`/`no`.
@@ -548,7 +549,24 @@ under 1 ms on average (see `Server-Timing`). With only 234 different requests, t
 higher than in real operation. In both update scenarios, not a single one of 132,549 and 155,411
 requests respectively failed.
 
-**Germany index** (schema 7, 25.6 million entries, 9.3 GB, otherwise as above, warm page cache):
+**Search workers** (`SEARCH_WORKERS`, 2026-11-06, Apple M3 with 8 cores, index of the Düsseldorf
+administrative region with 1.32 million entries, schema 11, without cache, 50 connections for
+15 s; the load test runs on the same machine):
+
+| Scenario                             | Requests/s | p50   | p90    | p99    | Errors |
+| ------------------------------------ | ---------- | ----- | ------ | ------ | ------ |
+| `SEARCH_WORKERS=0`, without location | 711        | 68 ms | 90 ms  | 132 ms | 0      |
+| `SEARCH_WORKERS=0`, with location    | 542        | 91 ms | 129 ms | 176 ms | 0      |
+| `auto` (7 workers), without location | 2,301      | 20 ms | 30 ms  | 42 ms  | 0      |
+| `auto` (7 workers), with location    | 1,537      | 31 ms | 46 ms  | 64 ms  | 0      |
+
+Each worker opens the index file itself (read-only) and searches in parallel; the main thread
+parses requests, keeps the cache and sends the answers. With a single connection, both answer in
+1 ms (p50) and 2 ms (p99): handing a search to a worker costs nothing measurable. After an index
+swap, the server tells the workers and clears the cache again once they have switched.
+
+**Germany index** (schema 7, 25.6 million entries, 9.3 GB, one API process without search
+workers, otherwise as above, warm page cache):
 
 | Scenario                                         | Requests/s | p50    | p90    | p99    | Errors |
 | ------------------------------------------------ | ---------- | ------ | ------ | ------ | ------ |
@@ -562,8 +580,8 @@ the requests without cache mostly wait for each other. The values with cache are
 the test repeats 234 requests, 99.98 % come from the cache (process at 264 MB RSS afterwards). In
 real operation, long queries are mostly unique, so the throughput lies between both rows. Until
 2026-10-28 the cache only took queries up to 10 characters; with that, the test with a location
-reached 545 requests/s. For more throughput without cache, see the ROADMAP ("Throughput on large
-indexes").
+reached 545 requests/s. Without cache, search workers spread the searches over the cores (see
+"Search workers" above).
 
 ## Search quality and latency
 

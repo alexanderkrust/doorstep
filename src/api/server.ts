@@ -3,6 +3,7 @@ import Fastify, { LogController, type FastifyInstance } from 'fastify';
 import type { Config } from '../config/index.js';
 import { LruCache } from '../search/cache.js';
 import { IndexUnavailableError, SearchIndex } from '../search/search-index.js';
+import { InProcessSearch, SearchPool, type SearchBackend } from '../search/search-pool.js';
 import type { FeatureCollection } from './geojson.js';
 import { Metrics } from './metrics.js';
 import { registerRateLimit } from './rate-limit.js';
@@ -48,11 +49,28 @@ export function buildServer(config: Config, options: ServerOptions = {}): Fastif
   });
 
   const metrics = options.metrics ?? new Metrics();
+  // The server's own connection: /health, /metrics and noticing index swaps. Searches use it
+  // too, unless they run in worker threads with their own connections (SEARCH_WORKERS).
   const index = new SearchIndex(config.indexPath);
+  const search: SearchBackend =
+    config.searchWorkers > 0
+      ? new SearchPool(config.indexPath, config.searchWorkers)
+      : new InProcessSearch(index);
   const cache = new LruCache<string, FeatureCollection>(config.cacheSize);
+  if (config.searchWorkers > 0) {
+    // Open now, before the workers: otherwise a swap before the first reload check would go
+    // unnoticed here, and the workers would keep the old file.
+    try {
+      index.open();
+    } catch (err) {
+      if (!(err instanceof IndexUnavailableError)) throw err;
+    }
+  }
 
   app.decorate('reloadIndex', () => {
     try {
+      // Searches in workers never open the server's connection; open it to notice a swap.
+      if (!index.isOpen) index.open();
       if (!index.reloadIfChanged()) return false;
     } catch (err) {
       if (!(err instanceof IndexUnavailableError)) throw err;
@@ -63,6 +81,16 @@ export function buildServer(config: Config, options: ServerOptions = {}): Fastif
     cache.clear();
     metrics.indexReloads++;
     app.log.info({ index: index.meta() }, 'Loaded new index');
+    // Workers switch a moment later; clear the cache again once they have, so that no answer
+    // from the old index stays in it.
+    search.reload().then(
+      () => {
+        cache.clear();
+      },
+      (err: unknown) => {
+        app.log.error({ err }, 'Search workers could not load the new index');
+      },
+    );
     return true;
   });
 
@@ -75,9 +103,9 @@ export function buildServer(config: Config, options: ServerOptions = {}): Fastif
       return Promise.resolve();
     });
   }
-  app.addHook('onClose', () => {
+  app.addHook('onClose', async () => {
+    await search.close();
     index.close();
-    return Promise.resolve();
   });
 
   app.addHook('onSend', (_request, reply, payload, done) => {
@@ -117,14 +145,14 @@ export function buildServer(config: Config, options: ServerOptions = {}): Fastif
   });
   void app.register(metricsRoutes, { index, metrics, token: config.metricsToken });
   void app.register(searchRoutes, {
-    index,
+    index: search,
     defaultLang: config.defaultLang,
     cache,
     metrics,
     cacheMaxAge: config.cacheMaxAge,
   });
   void app.register(reverseRoutes, {
-    index,
+    index: search,
     defaultLang: config.defaultLang,
     cacheMaxAge: config.cacheMaxAge,
   });

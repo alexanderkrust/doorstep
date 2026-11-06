@@ -43,14 +43,17 @@ export function sendNoIndex(
 }
 
 /**
- * Runs an index query. If the index is missing or unusable, sends 503 and returns
- * `null`. The duration goes into the `Server-Timing` header.
+ * Runs an index query (in the main thread or in a search worker). If the index is missing or
+ * unusable, sends 503 and returns `null`. The duration goes into the `Server-Timing` header.
  */
-export function queryIndex<T>(reply: FastifyReply, run: () => T | null): T | null {
+export async function queryIndex<T>(
+  reply: FastifyReply,
+  run: () => Promise<T | null>,
+): Promise<T | null> {
   const started = performance.now();
   let result: T | null;
   try {
-    result = run();
+    result = await run();
   } catch (err) {
     if (err instanceof IndexUnavailableError) {
       reply.log.error(err.message);

@@ -24,7 +24,8 @@ export async function createFixtureIndex(): Promise<FixtureIndex> {
 
 /**
  * Server against a DATA_DIR, without log output. Rate limiting is off unless `env`
- * turns it on; tests send many requests from the same IP.
+ * turns it on; tests send many requests from the same IP. Searches run in the main thread
+ * unless `env` sets SEARCH_WORKERS.
  */
 export function buildTestServer(
   dataDir: string,
@@ -32,7 +33,13 @@ export function buildTestServer(
   options: ServerOptions = {},
 ): FastifyInstance {
   return buildServer(
-    loadConfig({ LOG_LEVEL: 'silent', DATA_DIR: dataDir, RATE_LIMIT_ENABLED: 'false', ...env }),
+    loadConfig({
+      LOG_LEVEL: 'silent',
+      DATA_DIR: dataDir,
+      RATE_LIMIT_ENABLED: 'false',
+      SEARCH_WORKERS: '0',
+      ...env,
+    }),
     options,
   );
 }

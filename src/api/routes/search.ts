@@ -1,14 +1,15 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { LruCache } from '../../search/cache.js';
 import { normalizeTokens } from '../../search/normalize.js';
-import type { SearchIndex } from '../../search/search-index.js';
+import type { SearchBackend } from '../../search/search-pool.js';
 import { toFeatureCollection, type FeatureCollection } from '../geojson.js';
 import type { Metrics } from '../metrics.js';
 import { DEFAULT_SEARCH_LIMIT, searchParams } from '../params.js';
 import { queryIndex, sendBadRequest, sendCached } from '../replies.js';
 
 export interface SearchRoutesOptions {
-  index: SearchIndex;
+  /** Searches in the main thread or in worker threads (SEARCH_WORKERS). */
+  index: SearchBackend;
   defaultLang: string;
   cache: LruCache<string, FeatureCollection>;
   metrics: Metrics;
@@ -21,7 +22,7 @@ export const searchRoutes: FastifyPluginAsync<SearchRoutesOptions> = async (
   app,
   { index, defaultLang, cache, metrics, cacheMaxAge },
 ) => {
-  app.get('/api', (request, reply) => {
+  app.get('/api', async (request, reply) => {
     const parsed = searchParams.safeParse(request.query);
     if (!parsed.success) return sendBadRequest(reply, parsed.error);
     const { q, limit = DEFAULT_SEARCH_LIMIT, lat, lon, lang = defaultLang, types } = parsed.data;
@@ -54,7 +55,7 @@ export const searchRoutes: FastifyPluginAsync<SearchRoutesOptions> = async (
       void reply.header('x-cache', 'MISS');
     }
 
-    const rows = queryIndex(reply, () =>
+    const rows = await queryIndex(reply, () =>
       index.search({
         q,
         limit,
