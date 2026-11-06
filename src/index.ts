@@ -130,15 +130,20 @@ async function importCommand(command: 'import' | 'update', argv: string[]): Prom
     indexTypes: config.indexTypes,
     regionUrl: args.regionUrl,
     ...(args.input ? { input: args.input } : {}),
+    mode: command,
+    diffUpdates: config.diffUpdates,
     log: (message) => {
       log.info(message);
     },
   });
   log.info('Done', {
     seconds: Math.round((Date.now() - started) / 100) / 10,
+    extract: result.extract.kind,
+    ...(result.extract.kind === 'diff' ? { diffs: result.extract.diffs } : {}),
+    rebuilt: result.rebuilt,
     places: result.places,
     skipped: result.skipped,
-    ...(command === 'update'
+    ...(command === 'update' && result.rebuilt
       ? { hint: 'A running API loads the new index automatically (within 5 s)' }
       : {}),
   });

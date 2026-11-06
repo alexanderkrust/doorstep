@@ -143,7 +143,7 @@ Fixed: districts (`addr:suburb`/`addr:hamlet` → `district`, 4.8 million addres
 - [x] **Spelling variants:** split ("Friedrich Straße") and differently joined ("Konrad-Adenauerstraße") spellings are found (schema 7): names with a base word (Straße, Allee, Platz, Gasse, Damm, Ring, Weg) are also in the index split and joined.
 - [ ] **Typos in the middle of a word** ("Friedrichstrase") are not found, only at the end of a word. Would need a fuzzy search (e.g. trigrams), which makes the index considerably larger.
 - [x] **Browser and CDN cache after updates** (2026-11-06): `max-age` of `/api` and `/reverse` is configurable via `CACHE_MAX_AGE` (seconds, default 3600; `0` sends `no-store`, also for answers from the server's LRU cache).
-- [ ] **Update without new data:** `update` rebuilds the index even if the extract (MD5) has not changed. Could be skipped to save compute time. Planned as part of "Diff updates" (see below).
+- [x] **Update without new data** (2026-11-06, with the diff updates): `update` skips the rebuild when the replication has nothing new and the index was built from the same state of the extract, with the current schema and `INDEX_TYPES`.
 - [x] **`/metrics` is public** (2026-11-06): with `METRICS_TOKEN` (at least 16 characters), `/metrics` requires `Authorization: Bearer <token>` and answers `401` with `WWW-Authenticate: Bearer` otherwise; compared in constant time. Without the variable it stays open. `/health` stays open for the `HEALTHCHECK`.
 - [ ] **Docker smoke test not in `npm run ci`:** it needs Docker and therefore runs separately (`npm run smoke`).
 
@@ -207,25 +207,25 @@ Background: Geofabrik publishes daily change files (osmChange, `.osc.gz`) for ev
 
 Decided against: updating the index itself from the diffs (the way Nominatim does). The IDs are assigned by importance and the search relies on that order; a moved node changes the geometry of every way it belongs to; changed boundaries change country, state, city and postcode of many entries; the word statistics and values merged across entries (city of a street) would have to be kept in sync. That would need a permanent store of all node coordinates (several GB) and much more code, for little gain with daily updates that already run in the background without downtime.
 
-Tasks:
+Tasks (done 2026-11-06, `src/import/replication.ts`, `refreshExtract` in `src/import/pipeline.ts`):
 
-- [ ] Read the replication URL and sequence number from the header of `extract.osm.pbf` (`osmium fileinfo -g header.option.osmosis_replication_base_url` and `…sequence_number`). Without them (extract not from Geofabrik, or `--input`), fall back to the full download.
-- [ ] Read the latest sequence number from `<base>/state.txt` and download the missing change files `<base>/000/004/321.osc.gz` (path from the 9-digit number), each with its `.state.txt`. Verify each file (Geofabrik provides `.md5` where available; at least check that gzip decompresses).
-- [ ] Apply them with `osmium apply-changes extract.osm.pbf *.osc.gz -o extract.next.osm.pbf` and write the new sequence number into the header (`--output-header=osmosis_replication_sequence_number=…` and the timestamp), then swap via `rename`. On errors, keep the old extract and fall back to the full download.
-- [ ] Nothing new (sequence unchanged): skip the rebuild entirely and log it. This also solves "Update without new data" (phase 6).
-- [ ] Fall back to the full download when too many diffs are missing (e.g. more than 30 days, configurable only if needed), when a diff is no longer on the server, or when applying fails.
-- [ ] Periodic full download to limit drift: applied diffs can differ slightly from a fresh extract, mostly for objects at the region's border (Geofabrik cuts every diff to the region polygon). For example, a full download when the local extract is older than 30 days (counted from the last full download, stored next to the extract).
-- [ ] Keep the existing behavior and locks: one import at a time, swap of the index via `rename`, the old index stays active on errors. `INDEX_MODE=mounted` is not affected (no updates in the container).
-- [ ] Log and metrics: number of diffs, bytes downloaded, full vs. diff download (e.g. `doorstep_update_downloads_total{kind="diff"|"full"}`).
-- [ ] Disk space: applying the diffs needs a second PBF temporarily (Germany about 4 GB more); mention it in the README next to RAM and disk needs.
-- [ ] Tests: header parsing, sequence number → path, choice between diff, full download and skip, fallback on missing or broken diffs. Test fixture: a mini extract with a matching small `.osc.gz` (built with `osmium derive-changes` from two versions of the fixture), served by a local HTTP server as in `download.test.ts`.
-- [ ] Smoke test: the `update` in the running container uses a diff from the helper file server and the index changes (new `importedAt`, an object added by the diff can be found).
-- [ ] Measure on Germany: size of a daily diff, time to download and apply, compared with the full download.
+- [x] Read the replication URL and sequence number from the header of `extract.osm.pbf` (`osmium fileinfo -g header.option.osmosis_replication_base_url` and `…sequence_number`). Without them (extract not from Geofabrik, or `--input`), fall back to the full download.
+- [x] Read the latest sequence number from `<base>/state.txt` and download the missing change files `<base>/000/004/321.osc.gz` (path from the 9-digit number), each with its `.state.txt`. Verify each file (Geofabrik provides `.md5` where available; at least check that gzip decompresses).
+- [x] Apply them with `osmium apply-changes extract.osm.pbf *.osc.gz -o extract.next.osm.pbf` and write the new sequence number into the header (`--output-header=osmosis_replication_sequence_number=…` and the timestamp), then swap via `rename`. On errors, keep the old extract and fall back to the full download.
+- [x] Nothing new (sequence unchanged): skip the rebuild entirely and log it. This also solves "Update without new data" (phase 6).
+- [x] Fall back to the full download when too many diffs are missing (e.g. more than 30 days, configurable only if needed), when a diff is no longer on the server, or when applying fails.
+- [x] Periodic full download to limit drift: applied diffs can differ slightly from a fresh extract, mostly for objects at the region's border (Geofabrik cuts every diff to the region polygon). For example, a full download when the local extract is older than 30 days (counted from the last full download, stored next to the extract).
+- [x] Keep the existing behavior and locks: one import at a time, swap of the index via `rename`, the old index stays active on errors. `INDEX_MODE=mounted` is not affected (no updates in the container).
+- [x] Log: number of diffs, MB downloaded, reason for a full download, "nothing to rebuild"; the final `Done` line carries `extract` (`diff`, `full`, `unchanged`) and `rebuilt`. Not done: the metric `doorstep_update_downloads_total{kind}`, because the update runs as a separate process and the API's metrics do not see how it got the extract.
+- [x] Disk space: applying the diffs needs a second PBF temporarily (Germany about 4 GB more); mention it in the README next to RAM and disk needs.
+- [x] Tests: header parsing, sequence number → path, choice between diff, full download and skip, fallback on missing or broken diffs. Test fixture: a mini extract with a matching small `.osc.gz` (built with `osmium derive-changes` from two versions of the fixture), served by a local HTTP server as in `download.test.ts`.
+- [x] Smoke test: the `update` in the running container uses a diff from the helper file server and the index changes (new `importedAt`, an object added by the diff can be found).
+- [ ] Measure on Germany: time to apply a daily diff to the 4.9 GB extract. Known so far: a daily Germany diff is about 5.6 MB (2026-11-06, sequence 4959). Düsseldorf administrative region (217 MB, real diff 4943 from Geofabrik): 0.2 MB, downloaded in 0.4 s, applied in 3.3 s; a second `update` without new diffs ends after 1 s without a rebuild. Linear, that would be about 75 s for Germany instead of downloading 4.9 GB.
 
 Open questions:
 
-- Does Geofabrik's Germany extract carry the replication headers reliably (check with `osmium fileinfo` on a current download)?
-- Is `osmium apply-changes` on the 4 GB PBF fast enough (expected: a few minutes) and how much RAM does it need?
+- ~~Does Geofabrik's extract carry the replication headers?~~ Yes, checked on the Düsseldorf administrative region (base URL, sequence number and timestamp in the header).
+- Is `osmium apply-changes` on the 4.9 GB PBF fast enough and how much RAM does it need? On 217 MB: 3.3 s.
 - Use the daily diffs, or also offer minutely/hourly ones from planet.openstreetmap.org? Those are not cut to the region and would make the extract grow beyond it; only daily Geofabrik diffs for now.
 
 **Done when:** a second `update` on the Germany extract downloads only the daily diffs instead of over 4 GB, the new index contains the changes, an `update` without new diffs skips the rebuild, and a missing diff leads to the full download instead of an error.

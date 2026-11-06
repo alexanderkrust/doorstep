@@ -5,8 +5,10 @@
 #
 # Same flow as the first start on a fresh machine: empty volume, `serve` finds no index
 # and imports in the background via REGION_URL. At the end, a second container serves the
-# built index as a prebuilt one (INDEX_MODE=mounted): read-only, without network. A helper container from the same image
-# serves the extract (test/fixtures/koenigsallee.osm.pbf) over HTTP, so the test works
+# built index as a prebuilt one (INDEX_MODE=mounted): read-only, without network. A helper
+# container from the same image
+# serves the extract (test/fixtures/koenigsallee.osm.pbf with a replication header) and a diff
+# (test/fixtures/koenigsallee-diff.osc.gz) over HTTP, so the test works
 # without internet access to Geofabrik.
 #
 # ENV: IMAGE (Default doorstep:smoke), SMOKE_PORT (Default 23220), SKIP_BUILD=1
@@ -26,6 +28,8 @@ LOGS_OF=$ID-api
 
 cleanup() {
   docker rm -f "$API" "$FILES" "$MOUNTED" >/dev/null 2>&1 || true
+  [ -n "${SITE:-}" ] && rm -rf "$SITE"
+  true
   docker network rm "$NET" >/dev/null 2>&1 || true
   docker volume rm "$VOLUME" >/dev/null 2>&1 || true
 }
@@ -68,14 +72,30 @@ docker run --rm "$IMAGE" node -e "
 docker network create "$NET" >/dev/null
 docker volume create "$VOLUME" >/dev/null
 
+# The "Geofabrik" of the test: the mini extract with a replication header (sequence 100) and
+# its updates folder, where the diff with sequence 101 is published before the update.
+SITE=$(mktemp -d)
+mkdir -p "$SITE/updates/000/000"
+cp test/fixtures/koenigsallee.osm.pbf "$SITE/source.osm.pbf"
+docker run --rm -v "$SITE:/site" -u "$(id -u):$(id -g)" "$IMAGE" \
+  osmium cat /site/source.osm.pbf -o /site/region-latest.osm.pbf \
+  "--output-header=osmosis_replication_base_url=http://$FILES:8080/updates" \
+  --output-header=osmosis_replication_sequence_number=100 >/dev/null ||
+  fail "Could not prepare the extract with a replication header"
+printf 'sequenceNumber=100\ntimestamp=2026-11-04T21\\:21\\:03Z\n' >"$SITE/updates/state.txt"
+chmod -R a+rX "$SITE"
+
 echo "==> Starting file server with the mini extract"
 docker run -d --name "$FILES" --network "$NET" \
-  -v "$PWD/test/fixtures:/fixtures:ro" "$IMAGE" \
+  -v "$SITE:/site:ro" "$IMAGE" \
   node -e "
     const fs = require('node:fs');
     require('node:http').createServer((req, res) => {
-      const file = '/fixtures' + req.url;
-      if (!req.url.endsWith('.osm.pbf') || !fs.existsSync(file)) { res.statusCode = 404; return res.end(); }
+      const file = '/site' + req.url;
+      if (req.url.includes('..') || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+        res.statusCode = 404;
+        return res.end();
+      }
       res.setHeader('content-length', fs.statSync(file).size);
       fs.createReadStream(file).pipe(res);
     }).listen(8080);
@@ -83,7 +103,7 @@ docker run -d --name "$FILES" --network "$NET" \
 
 echo "==> docker run -p $PORT:2322 -v $VOLUME:/data $IMAGE"
 docker run -d --name "$API" --network "$NET" -p "$PORT:2322" -v "$VOLUME:/data" \
-  -e REGION_URL="http://$FILES:8080/koenigsallee.osm.pbf" \
+  -e REGION_URL="http://$FILES:8080/region-latest.osm.pbf" \
   -e API_KEYS=smoke-key -e RATE_LIMIT_API_KEY=1000000 -e RATE_LIMIT=60 \
   --health-interval=2s --health-start-period=5s \
   "$IMAGE" >/dev/null
@@ -111,7 +131,14 @@ wait_for 30 sh -c "[ \"\$(docker inspect -f '{{.State.Health.Status}}' $API)\" =
 echo "==> GET /metrics"
 curl -fsS "$BASE/metrics" | grep -q '^doorstep_index_available 1$' || fail "/metrics without index status"
 
-echo "==> update in the running container, with constant requests meanwhile"
+echo "==> update without new diffs: no rebuild"
+docker exec "$API" doorstep update 2>&1 | grep -q 'nothing to rebuild' ||
+  fail "update without new diffs rebuilt the index"
+
+echo "==> update with a diff in the running container, with constant requests meanwhile"
+cp test/fixtures/koenigsallee-diff.osc.gz "$SITE/updates/000/000/101.osc.gz"
+printf 'sequenceNumber=101\ntimestamp=2026-11-05T21\\:21\\:03Z\n' >"$SITE/updates/state.txt"
+chmod -R a+rX "$SITE"
 TMP=$(mktemp -d)
 IMPORTED_BEFORE=$(curl -fsS "$BASE/health" | sed -n 's/.*"importedAt":"\([^"]*\)".*/\1/p')
 (
@@ -122,7 +149,8 @@ IMPORTED_BEFORE=$(curl -fsS "$BASE/health" | sed -n 's/.*"importedAt":"\([^"]*\)
   done
 ) &
 LOOP=$!
-docker exec "$API" doorstep update >/dev/null || fail "update failed"
+docker exec "$API" doorstep update >"$TMP/update.log" 2>&1 || fail "update failed: $(cat "$TMP/update.log")"
+grep -q 'Downloaded 1 diff' "$TMP/update.log" || fail "update did not use the diff: $(cat "$TMP/update.log")"
 wait_for 15 sh -c "curl -fsS '$BASE/metrics' | grep -q '^doorstep_index_reloads_total 1$'" ||
   fail "New index was not loaded without a restart"
 touch "$TMP/stop"
@@ -130,6 +158,7 @@ wait "$LOOP"
 REQUESTS=$(wc -l <"$TMP/requests" | tr -d ' ')
 FAILURES=$(cat "$TMP/failures" 2>/dev/null | wc -l | tr -d ' ')
 rm -rf "$TMP"
+curl -fsS "$BASE/api?q=Diffweg" | grep -q '"name":"Diffweg"' || fail "Diffweg from the diff not found"
 IMPORTED_AFTER=$(curl -fsS "$BASE/health" | sed -n 's/.*"importedAt":"\([^"]*\)".*/\1/p')
 echo "    $REQUESTS requests during the update, $FAILURES failed"
 echo "    importedAt: $IMPORTED_BEFORE -> $IMPORTED_AFTER"

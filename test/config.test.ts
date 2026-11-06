@@ -30,6 +30,7 @@ describe('loadConfig', () => {
       cacheMaxAge: 3600,
       metricsToken: null,
       searchWorkers: AUTO_WORKERS,
+      diffUpdates: true,
     });
   });
 
@@ -73,6 +74,7 @@ describe('loadConfig', () => {
       cacheMaxAge: 3600,
       metricsToken: null,
       searchWorkers: AUTO_WORKERS,
+      diffUpdates: true,
     });
   });
 
@@ -84,6 +86,7 @@ describe('loadConfig', () => {
   it.each([
     ['RATE_LIMIT_ENABLED', 'rateLimitEnabled'],
     ['TRUST_PROXY', 'trustProxy'],
+    ['DIFF_UPDATES', 'diffUpdates'],
   ] as const)('reads %s as a flag', (key, field) => {
     expect(loadConfig({ [key]: 'yes' })[field]).toBe(true);
     expect(loadConfig({ [key]: '0' })[field]).toBe(false);

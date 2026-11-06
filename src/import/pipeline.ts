@@ -1,10 +1,11 @@
-import { createReadStream } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { mkdir, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { INDEX_FILE } from '../config/index.js';
-import type { ResultType } from '../search/result-type.js';
+import { RESULT_TYPES, type ResultType } from '../search/result-type.js';
 import { downloadExtract, type DownloadProgress } from './download.js';
-import { IndexWriter } from './index-writer.js';
+import { IndexWriter, SCHEMA_VERSION } from './index-writer.js';
 import { acquireLock } from './lock.js';
 import { readLines } from './lines.js';
 import { BoundaryIndex } from './boundaries.js';
@@ -16,11 +17,27 @@ import {
   filterExtract,
 } from './osmium.js';
 import { featureToPlace, lineEnds, parseGeoJsonSeqLine } from './place.js';
+import {
+  applyDiffs,
+  downloadDiff,
+  fetchState,
+  MAX_DIFFS,
+  planRefresh,
+  readExtractRecord,
+  readReplicationHeader,
+  ReplicationError,
+  writeExtractRecord,
+  type ReplicationHeader,
+} from './replication.js';
 import { formatCount, Progress, Steps, type Logger } from './progress.js';
 
 export const EXTRACT_FILE = 'extract.osm.pbf';
 export { INDEX_FILE };
 export const NEXT_INDEX_FILE = 'index.next.sqlite';
+/** When and from where the extract was last downloaded in full (see `planRefresh`). */
+export const EXTRACT_RECORD_FILE = 'extract.state.json';
+const NEXT_EXTRACT_FILE = 'extract.next.osm.pbf';
+const DIFF_DIR = 'diffs';
 /** Locks `dataDir` while an import or update is running (see `acquireLock`). */
 export const LOCK_FILE = 'import.lock.sqlite';
 /**
@@ -213,10 +230,17 @@ export async function importFromPbf(
     steps.start(`Filtering the extract (osmium tags-filter ${input})`);
     await filterExtract(input, filtered);
     steps.start('Reading features (osmium export)');
+    const replication = await readReplicationHeader(input).catch(() => null);
     const result = await writeIndex(
       () => exportGeoJsonSeq(filtered),
       output,
-      { source: options.source ?? input },
+      {
+        source: options.source ?? input,
+        // Which state of the extract the index was built from: `update` skips the rebuild
+        // when nothing changed since.
+        ...(replication ? { extract_sequence: String(replication.sequence) } : {}),
+        ...(replication?.timestamp ? { extract_timestamp: replication.timestamp } : {}),
+      },
       { boundaries, log, steps, indexTypes: options.indexTypes },
     );
     steps.done();
@@ -241,6 +265,29 @@ export interface RunImportOptions {
   /** Local PBF file instead of a download. */
   input?: string;
   log?: Logger;
+  /**
+   * `update` skips the rebuild when the index already comes from the current extract (same
+   * replication state, schema and INDEX_TYPES); `import` always builds. Default `import`.
+   */
+  mode?: 'import' | 'update';
+  /** Apply the daily diffs instead of downloading the whole extract (DIFF_UPDATES). Default on. */
+  diffUpdates?: boolean;
+}
+
+/** How the extract was brought up to date. */
+export type ExtractRefresh =
+  /** A local file was given (`--input`). */
+  | { kind: 'input' }
+  /** The replication has nothing new. */
+  | { kind: 'unchanged'; sequence: number }
+  | { kind: 'diff'; diffs: number; bytes: number; sequence: number }
+  /** Whole extract; `downloaded` is false when the local one matched the MD5. */
+  | { kind: 'full'; reason: string; downloaded: boolean; bytes: number };
+
+export interface RunImportResult extends ImportResult {
+  extract: ExtractRefresh;
+  /** `false` if `update` found the index up to date and kept it. */
+  rebuilt: boolean;
 }
 
 function formatProgress({ received, total }: DownloadProgress): string {
@@ -254,7 +301,7 @@ function formatProgress({ received, total }: DownloadProgress): string {
  * Complete import: download (if needed), filter, export, index under `dataDir`.
  * Throws `LockError` if an import is already running there.
  */
-export async function runImport(options: RunImportOptions): Promise<ImportResult> {
+export async function runImport(options: RunImportOptions): Promise<RunImportResult> {
   await mkdir(options.dataDir, { recursive: true });
   const release = await acquireLock(join(options.dataDir, LOCK_FILE));
   try {
@@ -265,34 +312,28 @@ export async function runImport(options: RunImportOptions): Promise<ImportResult
   }
 }
 
-async function runLockedImport(options: RunImportOptions): Promise<ImportResult> {
+async function runLockedImport(options: RunImportOptions): Promise<RunImportResult> {
   const log = options.log ?? (() => undefined);
   let input = options.input;
   let source = input;
   const steps = new Steps(log, input ? PBF_STEPS : PBF_STEPS + 1);
+  const output = options.indexPath ?? join(options.dataDir, INDEX_FILE);
 
+  let extract: ExtractRefresh = { kind: 'input' };
   if (!input) {
     input = join(options.dataDir, EXTRACT_FILE);
     source = options.regionUrl;
-    steps.start(`Downloading the extract (${options.regionUrl})`);
-    let lastLog = 0;
-    const download = await downloadExtract(options.regionUrl, input, {
-      onProgress: (p) => {
-        const now = Date.now();
-        if (now - lastLog >= 5000) {
-          lastLog = now;
-          log(`Download: ${formatProgress(p)}`);
-        }
-      },
-    });
-    log(
-      download.skipped
-        ? 'Existing extract is up to date (MD5 matches), no download needed'
-        : `Download done${download.md5Verified ? ', MD5 verified' : ' (no MD5 available)'}`,
-    );
+    steps.start(`Updating the extract (${options.regionUrl})`);
+    extract = await refreshExtract(options, input, log);
+    if (options.mode === 'update') {
+      const kept = await upToDateIndex(output, input, options);
+      if (kept !== null) {
+        log(`Index ${output} is up to date (${kept.reason}), nothing to rebuild`);
+        return { features: 0, places: kept.places, skipped: 0, extract, rebuilt: false };
+      }
+    }
   }
 
-  const output = options.indexPath ?? join(options.dataDir, INDEX_FILE);
   const result = await importFromPbf(input, output, {
     workDir: options.dataDir,
     log,
@@ -301,5 +342,147 @@ async function runLockedImport(options: RunImportOptions): Promise<ImportResult>
     indexTypes: options.indexTypes,
   });
   log(`Created index ${output} with ${formatCount(result.places)} entries`);
-  return result;
+  return { ...result, extract, rebuilt: true };
+}
+
+/**
+ * Brings `extract.osm.pbf` up to date: with the daily diffs where possible, otherwise (and on
+ * any error with the diffs) by downloading the whole extract. The old extract stays until the
+ * new one is complete.
+ */
+async function refreshExtract(
+  options: RunImportOptions,
+  extract: string,
+  log: Logger,
+): Promise<ExtractRefresh> {
+  const recordPath = join(options.dataDir, EXTRACT_RECORD_FILE);
+  const exists = existsSync(extract);
+  const header = exists ? await readReplicationHeader(extract).catch(() => null) : null;
+  const record = exists ? await readExtractRecord(recordPath) : null;
+  const plan = planRefresh({
+    diffUpdates: options.diffUpdates ?? true,
+    regionUrl: options.regionUrl,
+    record,
+    header,
+    now: Date.now(),
+  });
+
+  let reason = plan.kind === 'full' ? plan.reason : '';
+  if (plan.kind === 'diff' && header) {
+    try {
+      return await applyNewDiffs(header, extract, options.dataDir, log);
+    } catch (err) {
+      reason = `diff update failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+  if (exists) log(`Downloading the whole extract: ${reason}`);
+
+  let lastLog = 0;
+  const download = await downloadExtract(options.regionUrl, extract, {
+    onProgress: (p) => {
+      const now = Date.now();
+      if (now - lastLog >= 5000) {
+        lastLog = now;
+        log(`Download: ${formatProgress(p)}`);
+      }
+    },
+  });
+  log(
+    download.skipped
+      ? 'Existing extract is up to date (MD5 matches), no download needed'
+      : `Download done${download.md5Verified ? ', MD5 verified' : ' (no MD5 available)'}`,
+  );
+  // With a matching MD5 the local extract equals a fresh one, so this counts as well.
+  await writeExtractRecord(recordPath, {
+    regionUrl: options.regionUrl,
+    fullDownloadAt: new Date().toISOString(),
+  });
+  return { kind: 'full', reason, downloaded: !download.skipped, bytes: download.bytes };
+}
+
+/** Downloads the diffs since the extract's sequence number and applies them. */
+async function applyNewDiffs(
+  header: ReplicationHeader,
+  extract: string,
+  dataDir: string,
+  log: Logger,
+): Promise<ExtractRefresh> {
+  const state = await fetchState(header.baseUrl);
+  if (state.sequence === header.sequence) {
+    log(`Extract is up to date (replication sequence ${String(state.sequence)})`);
+    return { kind: 'unchanged', sequence: state.sequence };
+  }
+  if (state.sequence < header.sequence) {
+    throw new ReplicationError(
+      `the server is at sequence ${String(state.sequence)}, the extract at ${String(header.sequence)}`,
+    );
+  }
+  const missing = state.sequence - header.sequence;
+  if (missing > MAX_DIFFS) {
+    throw new ReplicationError(`${String(missing)} diffs missing, more than ${String(MAX_DIFFS)}`);
+  }
+
+  const dir = join(dataDir, DIFF_DIR);
+  const next = join(dataDir, NEXT_EXTRACT_FILE);
+  await rm(dir, { recursive: true, force: true });
+  try {
+    const files: string[] = [];
+    let bytes = 0;
+    for (let sequence = header.sequence + 1; sequence <= state.sequence; sequence++) {
+      const file = join(dir, `${String(sequence)}.osc.gz`);
+      bytes += await downloadDiff(header.baseUrl, sequence, file);
+      files.push(file);
+    }
+    log(
+      `Downloaded ${String(missing)} diff${missing === 1 ? '' : 's'} ` +
+        `(${(bytes / 1024 / 1024).toFixed(1)} MB), applying them with osmium`,
+    );
+    await applyDiffs(extract, files, next, { ...header, ...state });
+    await rename(next, extract);
+    return { kind: 'diff', diffs: missing, bytes, sequence: state.sequence };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+    await rm(next, { force: true });
+  }
+}
+
+/**
+ * The index if `update` can keep it: built from this region and replication state of the
+ * extract, with the current schema and INDEX_TYPES. `null` if it has to be rebuilt.
+ */
+async function upToDateIndex(
+  output: string,
+  extract: string,
+  options: RunImportOptions,
+): Promise<{ places: number; reason: string } | null> {
+  if (!existsSync(output)) return null;
+  const header = await readReplicationHeader(extract).catch(() => null);
+  if (!header) return null;
+  let meta: Record<string, string>;
+  try {
+    const db = new DatabaseSync(output, { readOnly: true });
+    try {
+      const rows = db.prepare('SELECT key, value FROM meta').all() as {
+        key: string;
+        value: string;
+      }[];
+      meta = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
+  const types = (options.indexTypes ?? RESULT_TYPES).join(',');
+  const same =
+    meta['schema_version'] === String(SCHEMA_VERSION) &&
+    meta['source'] === options.regionUrl &&
+    meta['extract_sequence'] === String(header.sequence) &&
+    meta['types'] === types;
+  return same
+    ? {
+        places: Number(meta['places'] ?? 0),
+        reason: `replication sequence ${String(header.sequence)}`,
+      }
+    : null;
 }

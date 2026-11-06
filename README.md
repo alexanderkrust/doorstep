@@ -99,19 +99,19 @@ docker run -d --name doorstep --restart unless-stopped \
 Guide values for the Germany extract. Only the Düsseldorf administrative region was measured
 (217 MB PBF → 389 MB index); the values for Germany are extrapolated from it.
 
-| Resource          | Germany (estimate)                     | Note                                                                                                                                                          |
-| ----------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Disk (volume)     | **at least 30 GB free**                | Extract about 4.9 GB, index about 10 GB. During an update, the filtered intermediate file, `index.next.sqlite` and its staging file are on the volume as well |
-| RAM, API          | 1 GB for the process, **better 8 GB+** | The process itself needs little; SQLite reads the index from disk. For response times below 50 ms, the index should fit into the system's page cache          |
-| RAM, import       | **4–8 GB**                             | `osmium export` keeps the node coordinates in memory; the import runs as a separate process next to the API                                                   |
-| CPU               | 2 cores, more for more throughput      | Searches run in worker threads, one per core except the main thread's (`SEARCH_WORKERS`); import and update run as a separate process                         |
-| First import time | about 15–30 min plus download          | Düsseldorf administrative region: 45 s for 1.4 million entries                                                                                                |
+| Resource          | Germany (estimate)                     | Note                                                                                                                                                                                                        |
+| ----------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Disk (volume)     | **at least 30 GB free**                | Extract about 4.9 GB, index about 10 GB. During an update, the filtered intermediate file, `index.next.sqlite` and its staging file are on the volume as well, and while diffs are applied a second extract |
+| RAM, API          | 1 GB for the process, **better 8 GB+** | The process itself needs little; SQLite reads the index from disk. For response times below 50 ms, the index should fit into the system's page cache                                                        |
+| RAM, import       | **4–8 GB**                             | `osmium export` keeps the node coordinates in memory; the import runs as a separate process next to the API                                                                                                 |
+| CPU               | 2 cores, more for more throughput      | Searches run in worker threads, one per core except the main thread's (`SEARCH_WORKERS`); import and update run as a separate process                                                                       |
+| First import time | about 15–30 min plus download          | Düsseldorf administrative region: 45 s for 1.4 million entries                                                                                                                                              |
 
 ## Operations
 
 ### Updates without downtime
 
-An update downloads the extract again (only if the Geofabrik MD5 has changed), builds
+An update brings the extract up to date with the daily diffs (see below), builds
 `index.next.sqlite` next to the running index and replaces `index.sqlite` with an atomic `rename`.
 Until then the API keeps reading the old index unchanged. Every 5 seconds it checks whether a new
 file lies at `index.sqlite`, opens it, switches over and clears the cache. No restart, no failed
@@ -141,6 +141,24 @@ docker exec doorstep doorstep update
   `doorstep_index_reloads_total` and `doorstep_updates_total`.
 
 Geofabrik updates the extracts daily; a daily or weekly update is enough.
+
+**Diff updates** (`DIFF_UPDATES`, on by default): instead of downloading the whole extract again
+(Germany 4.9 GB), `update` loads only the daily change files that Geofabrik publishes for every
+extract (Germany about 5.6 MB per day) and applies them with `osmium apply-changes`. Where they
+are and which sequence number the extract has comes from its PBF header
+(`osmosis_replication_base_url`, `osmosis_replication_sequence_number`).
+
+- Nothing new on the server: the update ends after one request for `state.txt`, without a
+  rebuild, if the index was built from the same state of the extract with the current schema
+  and `INDEX_TYPES` (`Index … is up to date, nothing to rebuild`). `import` always rebuilds.
+- The whole extract is downloaded instead when it has no replication header, `REGION_URL`
+  changed, more than 30 diffs are missing, the last full download is older than 30 days (applied
+  diffs can drift slightly from a fresh extract, mostly at the region's border), or downloading or
+  applying a diff fails. The old extract stays until the new one is complete; the date of the
+  last full download is in `extract.state.json`.
+- Applying the diffs writes a new extract next to the old one (Germany about 5 GB more for a
+  short time). Measured on the Düsseldorf administrative region (217 MB): one daily diff of
+  0.2 MB downloaded in 0.4 s and applied in 3.3 s.
 
 ### Using a prebuilt index
 
@@ -285,6 +303,7 @@ message at startup listing all affected variables.
 | `INDEX_TYPES`        | all                                                           | Result types the import puts into the index, e.g. `street`; see below                   |
 | `INDEX_PATH`         | `$DATA_DIR/index.sqlite`                                      | Path of the index file (absolute path)                                                  |
 | `DEFAULT_LANG`       | `de`                                                          | Default language (two-letter code)                                                      |
+| `DIFF_UPDATES`       | `true`                                                        | `update` applies the daily diffs instead of downloading the whole extract               |
 | `AUTO_IMPORT`        | `false` (`true` in the Docker image)                          | `serve` imports in the background if no index exists                                    |
 | `UPDATE_CRON`        | – (no updates)                                                | Schedule for automatic updates in cron format, e.g. `0 3 * * *`                         |
 | `RATE_LIMIT_ENABLED` | `true`                                                        | Rate limiting on or off                                                                 |
@@ -496,7 +515,7 @@ Node as `node:sqlite` (with FTS5 and R\*Tree); no native modules are compiled.
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
 | `serve` (default)                          | Start the API; without an index, the import runs in the background (`AUTO_IMPORT`), updates per `UPDATE_CRON` |
 | `import [--region <url>] [--input <file>]` | Build the index (download, filter, import) and swap it in atomically                                          |
-| `update`                                   | Download the extract again (only if the Geofabrik MD5 changed), rebuild the index and swap it in              |
+| `update`                                   | Bring the extract up to date with the daily diffs, rebuild the index if anything changed, swap it in          |
 | `--force` (with `import`/`update`)         | Run even with `INDEX_MODE=mounted`                                                                            |
 
 ```bash
@@ -532,22 +551,32 @@ Sends every typing prefix of typical inputs ("Kö", "Kön", "Köni", …) with
 code 1 if a request fails. For this, set `RATE_LIMIT_ENABLED=false` on the server or use a key
 with a high limit via `--api-key`.
 
-Results (Apple M3, Node 24, one API process, index from `test/fixtures/duesseldorf.geojsonseq`
-with 17,618 entries, 50 connections, 234 different requests, `LOG_LEVEL=info`):
+Results (2026-11-06, Apple M3 with 8 cores, Node 24, index from
+`test/fixtures/duesseldorf.geojsonseq` with 20,318 entries, schema 11, 50 connections,
+`LOG_LEVEL=info`; the load test runs on the same machine). Each scenario with search workers
+(`SEARCH_WORKERS=auto`, 7 workers) and in the main thread only (`SEARCH_WORKERS=0`):
 
-| Scenario                                            | Requests/s | p50   | p90   | p99    | Errors |
-| --------------------------------------------------- | ---------- | ----- | ----- | ------ | ------ |
-| Without cache (`CACHE_SIZE=0`), without location    | 1,200      | 40 ms | 69 ms | 96 ms  | 0      |
-| Without cache, with location                        | 1,033      | 50 ms | 84 ms | 128 ms | 0      |
-| With cache, with location                           | 4,090      | 2 ms  | 45 ms | 71 ms  | 0      |
-| With cache, `update` running meanwhile (20 s)       | 6,628      | 2 ms  | 23 ms | 67 ms  | 0      |
-| Without cache, two updates via `UPDATE_CRON` (75 s) | 2,072      | 6 ms  | 75 ms | 93 ms  | 0      |
+| Scenario                                         | Workers | Requests/s | p50   | p90   | p99    | Errors |
+| ------------------------------------------------ | ------- | ---------- | ----- | ----- | ------ | ------ |
+| Without cache (`CACHE_SIZE=0`), without location | 7       | 4,285      | 10 ms | 19 ms | 30 ms  | 0      |
+|                                                  | 0       | 1,262      | 40 ms | 66 ms | 88 ms  | 0      |
+| Without cache, with location                     | 7       | 3,460      | 13 ms | 24 ms | 36 ms  | 0      |
+|                                                  | 0       | 1,080      | 50 ms | 80 ms | 108 ms | 0      |
+| With cache, with location                        | 7       | 35,390     | 1 ms  | 1 ms  | 3 ms   | 0      |
+|                                                  | 0       | 39,290     | 1 ms  | 1 ms  | 2 ms   | 0      |
+| With cache, index swapped meanwhile (20 s)       | 7       | 34,938     | 1 ms  | 1 ms  | 3 ms   | 0      |
+|                                                  | 0       | 33,867     | 1 ms  | 1 ms  | 3 ms   | 0      |
+| Without cache, index swapped twice (75 s)        | 7       | 3,161      | 15 ms | 25 ms | 38 ms  | 0      |
+|                                                  | 0       | 1,071      | 49 ms | 82 ms | 110 ms | 0      |
 
-How to read this: the API handles requests one after another on one core. With 50 concurrent
-connections, the latency is therefore mostly waiting time; a single search without cache takes
-under 1 ms on average (see `Server-Timing`). With only 234 different requests, the cache share is
-higher than in real operation. In both update scenarios, not a single one of 132,549 and 155,411
-requests respectively failed.
+How to read this: without cache, the workers search in parallel and triple the throughput; in the
+main thread alone, the requests mostly wait for each other (a single search takes under 1 ms, see
+`Server-Timing`). With cache, the main thread answers from the cache itself, so the workers do not
+matter there; the test repeats 117 or 234 different requests, so the cache share is higher than in
+real operation. For the swaps, the index was rebuilt next to the running one and swapped in via
+`rename`; not a single one of the 698,697 (with cache) and 237,007 (without cache) requests during
+the swaps failed. Before the search workers and with the cache only for short queries
+(2026-10-28, 17,618 entries): 1,200, 1,033 and 4,090 requests/s for the first three scenarios.
 
 **Search workers** (`SEARCH_WORKERS`, 2026-11-06, Apple M3 with 8 cores, index of the Düsseldorf
 administrative region with 1.32 million entries, schema 11, without cache, 50 connections for
@@ -580,8 +609,8 @@ the requests without cache mostly wait for each other. The values with cache are
 the test repeats 234 requests, 99.98 % come from the cache (process at 264 MB RSS afterwards). In
 real operation, long queries are mostly unique, so the throughput lies between both rows. Until
 2026-10-28 the cache only took queries up to 10 characters; with that, the test with a location
-reached 545 requests/s. Without cache, search workers spread the searches over the cores (see
-"Search workers" above).
+reached 545 requests/s. Not measured again with search workers; on the smaller indexes above they
+triple the throughput without cache.
 
 ## Search quality and latency
 
@@ -604,8 +633,10 @@ and spelling variants: p50 2.5 ms, p95 16.9 ms, max 56 ms with a warm cache. Imp
 5 without boundaries 8.5 GB index, 30 min, max 5.4 GB RAM; with boundaries 8.8 GB, 39 min, max
 4.2 GB RAM; schema 7 9.3 GB, 28 min, max 4.2 GB RAM. The slowest case is a search with a location
 for very frequent words (`Am Markt 1` 41 ms, `Friedrichstraße 3` 20–90 ms). Düsseldorf
-administrative region (217 MB PBF → 1.4 million entries, 389 MB index, import 45 s), measured
-with schema 4: p50 2.0 ms, p95 10.1 ms, p99 16.6 ms.
+administrative region (217 MB PBF, Geofabrik 2026-11-05 → 1.32 million entries, 547 MB index,
+import 58 s), schema 11 (2026-11-06): p50 1.6 ms, p95 3.3 ms, p99 3.9 ms, max 5.3 ms; with
+schema 4: p50 2.0 ms, p95 10.1 ms, p99 16.6 ms. The benchmark measures the search itself, in one
+thread; search workers do not change it, they run several such searches at the same time.
 
 What keeps the search fast: the hit list in FTS5 is sorted by importance, and only the first 200
 candidates are read per query. `bm25` is computed in JS with word statistics precomputed during
@@ -639,9 +670,10 @@ DATA_DIR=$PWD/data npm run import -- --input ./my-extract.osm.pbf   # local file
 Without `--region`, `REGION_URL` applies. Steps:
 
 1. Take the lock `$DATA_DIR/import.lock.sqlite` (never two imports at the same time).
-2. Download to `$DATA_DIR/extract.osm.pbf`. Interrupted downloads are resumed
-   (`extract.osm.pbf.part`), the Geofabrik `.md5` is verified. If an existing file matches the
-   `.md5`, it is not downloaded again.
+2. Bring `$DATA_DIR/extract.osm.pbf` up to date: with an existing extract, apply the daily
+   diffs (see [Updates without downtime](#updates-without-downtime)); otherwise download it.
+   Interrupted downloads are resumed (`extract.osm.pbf.part`), the Geofabrik `.md5` is
+   verified. If an existing file matches the `.md5`, it is not downloaded again.
 3. Load the boundaries: `osmium tags-filter` on `admin_level=2,4–10` and `boundary=postal_code`,
    then areas and boundary ways via `osmium export`, relation members via `osmium cat` (OPL).
    Countries, states, municipalities, districts and postcode areas are then in memory; the

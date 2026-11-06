@@ -15,6 +15,10 @@ the import reads (`IMPORTED_TAGS` in `src/import/place.ts` and `addr:*`) and the
 point as geometry (`scripts/slim-fixture.ts`).
 As of: Geofabrik extract from 2026-11-05.
 
+`koenigsallee-diff.osc.gz` is a daily diff (osmChange) for `koenigsallee.osm.pbf`: it adds a
+street "Diffweg" and a café "Diffcafé". The tests for the diff updates (`test/import/replication.test.ts`)
+and the smoke test serve it as sequence 101 after the extract with sequence 100.
+
 `boundaries.geojsonseq` and `boundaries.opl` are administrative boundaries (`admin_level=2` and
 `4`) from the Geofabrik Germany extract from 2026-10-27, clipped to four test regions:
 Aachen/Kerkrade/Vaals, Kleinwalsertal/Oberstdorf, Büsingen/Schaffhausen and the Moselle
@@ -60,4 +64,17 @@ osmium export admin.pbf -f geojsonseq --geometry-types=polygon,linestring --keep
   --attributes=type,id -x print_record_separator=false -o boundaries-full.geojsonseq
 osmium cat admin.pbf -t relation -f opl,add_metadata=false -o relations.opl
 npx tsx scripts/boundary-fixture.ts boundaries-full.geojsonseq relations.opl test/fixtures/boundaries
+```
+
+### `koenigsallee-diff.osc.gz`
+
+```bash
+cat > new.opl <<'OPL'
+n20000000001 v1 dV c0 t2026-11-05T00:00:00Z i0 u T x6.7801 y51.2238
+n20000000002 v1 dV c0 t2026-11-05T00:00:00Z i0 u T x6.7811 y51.2238
+n20000000003 v1 dV c0 t2026-11-05T00:00:00Z i0 u Tamenity=cafe,name=Diffcafé x6.7806 y51.2240
+w2000000001 v1 dV c0 t2026-11-05T00:00:00Z i0 u Thighway=residential,name=Diffweg Nn20000000001,n20000000002
+OPL
+osmium merge test/fixtures/koenigsallee.osm.pbf new.opl -o v2.osm.pbf
+osmium derive-changes test/fixtures/koenigsallee.osm.pbf v2.osm.pbf -o test/fixtures/koenigsallee-diff.osc.gz
 ```

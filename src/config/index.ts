@@ -156,6 +156,8 @@ const envSchema = z
     LOG_LEVEL: optional(
       z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
     ),
+    /** `update` applies the daily diffs instead of downloading the whole extract again. */
+    DIFF_UPDATES: flag(true),
     /** `serve` starts the import in the background if no index exists yet. */
     AUTO_IMPORT: flag(false),
   })
@@ -199,6 +201,8 @@ export interface Config {
   metricsToken: string | null;
   /** Worker threads for searches; 0 = in the main thread. */
   searchWorkers: number;
+  /** `update` with the daily diffs (DIFF_UPDATES). */
+  diffUpdates: boolean;
 }
 
 export class ConfigError extends Error {
@@ -237,5 +241,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cacheMaxAge: e.CACHE_MAX_AGE,
     metricsToken: e.METRICS_TOKEN ?? null,
     searchWorkers: e.SEARCH_WORKERS,
+    diffUpdates: e.DIFF_UPDATES,
   };
 }
