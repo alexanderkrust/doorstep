@@ -28,7 +28,20 @@ export class TermStats {
     private readonly prefix: StatementSync,
     private readonly range: StatementSync,
     private readonly first: StatementSync,
+    /** `fuzzy_deletes` lookup; `null` for an index from before SymSpell. */
+    private readonly fuzzy: StatementSync | null,
   ) {}
+
+  /** The index has the SymSpell table for the typo tolerance. */
+  get hasFuzzyDeletes(): boolean {
+    return this.fuzzy !== null;
+  }
+
+  /** Word starts in `fuzzy_deletes` with one of these deletions (see `fuzzyCorrections`). */
+  fuzzyPrefixes(keys: readonly string[]): string[] {
+    if (!this.fuzzy) return [];
+    return (this.fuzzy.all(JSON.stringify(keys)) as { prefix: string }[]).map((r) => r.prefix);
+  }
 
   static open(db: DatabaseSync): TermStats {
     const meta = (key: string) =>
@@ -40,6 +53,15 @@ export class TermStats {
       );
     const rows = meta('places');
     const tokens = meta('fts_tokens');
+    const fuzzy =
+      (
+        db.prepare("SELECT value FROM meta WHERE key = 'fuzzy'").get() as
+          { value?: string } | undefined
+      )?.value === 'symspell'
+        ? db.prepare(
+            'SELECT DISTINCT prefix FROM fuzzy_deletes WHERE del IN (SELECT value FROM json_each(?))',
+          )
+        : null;
     return new TermStats(
       rows,
       rows > 0 ? tokens / rows : 1,
@@ -47,6 +69,7 @@ export class TermStats {
       db.prepare('SELECT docs FROM prefixes WHERE prefix = ?'),
       db.prepare('SELECT term, docs FROM terms WHERE term >= ? AND term < ? ORDER BY term'),
       db.prepare('SELECT 1 AS found FROM terms WHERE term >= ? AND term < ? LIMIT 1'),
+      fuzzy,
     );
   }
 

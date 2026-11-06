@@ -38,6 +38,11 @@ First version. Index schema 11.
 - Lookahead search: if the query finds nothing with the earlier words exact, they are searched
   as prefixes too (`gneis 62 düss` → Gneisenaustraße 62, Düsseldorf). House numbers before the
   end and words under 3 characters stay exact.
+- SymSpell for the typo tolerance: up to 2 edits from 7 letters, 1 edit from 4 letters, also for
+  partly typed words (`gxexsenau 62 düss`, `zeli 106 frankfurt`). The import adds the table
+  `fuzzy_deletes` (Germany: 243 MB, 17 s); older indexes keep working with 1 edit from 5
+  letters. `/health` reports `fuzzy`. A typo that is a word of its own in the index is
+  corrected too, but a correct word is never replaced.
 - Typo tolerance in every word: when nothing else finds a hit, words of at least 5 letters
   that are not in the index are replaced by the words one edit away (`gnies 62 düs` →
   Gneisenaustraße 62, Düsseldorf). House numbers and postcodes are never corrected.

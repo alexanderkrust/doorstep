@@ -2,6 +2,7 @@ import { rmSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { ATTRIBUTION } from '../api/attribution.js';
+import { fuzzyRows } from '../search/fuzzy.js';
 import { boundingBox, distanceKm, gridCell } from '../search/geo.js';
 import { housenumberText, indexText } from '../search/normalize.js';
 import { kindToken, RESULT_TYPES, resultType, type ResultType } from '../search/result-type.js';
@@ -101,6 +102,10 @@ CREATE VIRTUAL TABLE places_rtree USING rtree(id, min_lat, max_lat, min_lon, max
 -- prefix up to 4 characters (summed over the words). Replaces the counting in bm25().
 CREATE TABLE terms (term TEXT PRIMARY KEY, docs INTEGER NOT NULL) WITHOUT ROWID;
 CREATE TABLE prefixes (prefix TEXT PRIMARY KEY, docs INTEGER NOT NULL) WITHOUT ROWID;
+-- SymSpell for the typo tolerance: word starts of 4 to 7 letters by their forms with up to
+-- 1 (4–6 letters) or 2 (7 letters) letters removed; see src/search/fuzzy.ts.
+CREATE TABLE fuzzy_deletes (del TEXT NOT NULL, prefix TEXT NOT NULL,
+  PRIMARY KEY (del, prefix)) WITHOUT ROWID;
 
 -- Midpoints of the segments of merged streets (place_id = places.id). The search uses the
 -- nearest one for the distance to the location, /reverse finds the street at every segment.
@@ -315,6 +320,7 @@ export class IndexWriter {
       imported_at: new Date().toISOString(),
       places: String(this.count),
       fts_tokens: String(ftsTokens),
+      fuzzy: 'symspell',
       types: this.indexTypes.join(','),
       ...meta,
     };
@@ -378,7 +384,27 @@ export class IndexWriter {
       tokens: number;
     };
     this.db.exec('DROP TABLE temp.vocab');
+    this.buildFuzzyDeletes();
     return tokens;
+  }
+
+  /** Fills `fuzzy_deletes` from `terms` (SymSpell, see `fuzzyRows`). */
+  private buildFuzzyDeletes(): void {
+    this.log('Typo index (SymSpell)');
+    const terms = this.db.prepare('SELECT term FROM terms').all() as { term: string }[];
+    const insert = this.db.prepare(
+      'INSERT OR IGNORE INTO fuzzy_deletes (del, prefix) VALUES (?, ?)',
+    );
+    let rows = 0;
+    this.db.exec('BEGIN');
+    for (const [del, prefix] of fuzzyRows(terms.map((t) => t.term))) {
+      insert.run(del, prefix);
+      rows++;
+    }
+    this.db.exec('COMMIT');
+    this.log(
+      `Typo index: ${rows.toLocaleString('en-US')} entries for ${terms.length.toLocaleString('en-US')} words`,
+    );
   }
 
   /**

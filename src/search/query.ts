@@ -247,3 +247,67 @@ export function editVariants(token: string): string[] {
   out.delete(token);
   return [...out];
 }
+
+/** Edits the typo tolerance allows: none below 4 letters, 1 for 4–6, 2 from 7 on. */
+export function maxEdits(length: number): number {
+  if (length < 4) return 0;
+  return length <= 6 ? 1 : 2;
+}
+
+/**
+ * The word and every form with up to `d` letters removed, without duplicates (the keys of
+ * SymSpell, see `fuzzyPrefixesOf`).
+ */
+export function deletions(word: string, d: number): string[] {
+  const out = new Set([word]);
+  let frontier = [word];
+  for (let step = 0; step < d; step++) {
+    const next: string[] = [];
+    for (const form of frontier) {
+      const chars = Array.from(form);
+      for (let i = 0; i < chars.length; i++) {
+        const shorter = chars.toSpliced(i, 1).join('');
+        if (!out.has(shorter)) {
+          out.add(shorter);
+          next.push(shorter);
+        }
+      }
+    }
+    frontier = next;
+  }
+  return [...out];
+}
+
+/**
+ * Edit distance with neighbor swaps (optimal string alignment): missing, extra and wrong
+ * letters and two swapped neighbors count 1 each. Stops early once the distance is above `max`
+ * and then returns `max + 1`.
+ */
+export function osaDistance(a: string, b: string, max: number): number {
+  const s = Array.from(a);
+  const t = Array.from(b);
+  if (Math.abs(s.length - t.length) > max) return max + 1;
+  let before: number[] = [];
+  let previous = Array.from({ length: t.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= s.length; i++) {
+    const row = [i];
+    let best = i;
+    for (let j = 1; j <= t.length; j++) {
+      const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+      let value = Math.min(
+        (previous[j] ?? 0) + 1,
+        (row[j - 1] ?? 0) + 1,
+        (previous[j - 1] ?? 0) + cost,
+      );
+      if (i > 1 && j > 1 && s[i - 1] === t[j - 2] && s[i - 2] === t[j - 1]) {
+        value = Math.min(value, (before[j - 2] ?? 0) + 1);
+      }
+      row.push(value);
+      best = Math.min(best, value);
+    }
+    if (best > max) return max + 1;
+    before = previous;
+    previous = row;
+  }
+  return Math.min(previous[t.length] ?? max + 1, max + 1);
+}

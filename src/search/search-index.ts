@@ -3,6 +3,7 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { SCHEMA_VERSION } from '../import/index-writer.js';
 import { importanceFor } from '../import/place.js';
 import { bm25, ftsColumns, idf, type FtsColumns } from './bm25.js';
+import { fuzzyCandidates, type FuzzyCandidate, type FuzzySource } from './fuzzy.js';
 import { boundingBox, distanceKm, gridCellsInBox } from './geo.js';
 import { nameForms, normalizeTokens } from './normalize.js';
 import {
@@ -394,8 +395,16 @@ export class SearchIndex {
 
     for (const set of tokenSets) {
       const streetTokens = withoutHousenumbers(set);
-      for (const candidate of streetTokens ? [set, streetTokens] : [set]) {
-        const corrected = this.correctTypos(candidate, options.types);
+      // First only the words that occur nowhere, then all words (see `correctTypos`); the
+      // house number before the street level.
+      const attempts = [true, false].map((onlyMissing) => ({ tokens: set, onlyMissing }));
+      if (streetTokens) {
+        attempts.push(
+          ...[true, false].map((onlyMissing) => ({ tokens: streetTokens, onlyMissing })),
+        );
+      }
+      for (const { tokens: candidate, onlyMissing } of attempts) {
+        const corrected = this.correctTypos(candidate, options.types, onlyMissing);
         if (!corrected) continue;
         let hits = this.rankedSearch(corrected, options, {
           lookahead: true,
@@ -410,59 +419,82 @@ export class SearchIndex {
   }
 
   /**
-   * One typo in any word: a letter missing, an extra one, a wrong one or two swapped
-   * ("gnies 62 düs"). Words of letters with at least 5 characters that occur nowhere in the
-   * index are replaced by the words one edit away that do (see `editVariants`); the other words
-   * of the query pick the right one. Returns the corrected words, or `null` if nothing can be
+   * Typos in any word: letters missing, extra, wrong or two swapped ("gnies 62 düs"). The words
+   * get the words of the index within reach as alternatives; with `onlyMissing` only the words
+   * that occur nowhere, otherwise every word, also one that occurs itself (in a large index a
+   * typo often does, "gnies"* in "Gniesweg"): with
+   * SymSpell (see `fuzzyCorrections`) up to 1 edit from 4 letters and 2 from 7; in an index from
+   * before SymSpell, 1 edit from 5 letters (see `editVariants`). The other words of the query
+   * pick the right one. Returns the corrected words, or `null` if nothing can be
    * corrected or no hit is left.
    */
   private correctTypos(
     tokens: readonly string[],
     types: readonly ResultType[] | undefined,
+    onlyMissing: boolean,
   ): string[] | null {
     const current = this.current;
     if (!current || tokens.length === 0) return null;
     const { stats } = current;
     const words = queryWords(tokens, true);
-    const corrections: (string[] | null)[] = [];
+    const corrections: (FuzzyCandidate[] | null)[] = [];
     for (const { token, prefix } of words) {
-      if (stats.exists(token, prefix)) {
+      const exists = stats.exists(token, prefix);
+      if (exists && onlyMissing) {
         corrections.push(null);
         continue;
       }
+      const found: FuzzyCandidate[] = stats.hasFuzzyDeletes
+        ? fuzzyCandidates(token, prefix, fuzzySource(stats), MAX_CORRECTIONS)
+        : isFuzzyCandidate(token)
+          ? editVariants(token)
+              .filter((variant) => stats.exists(variant, prefix))
+              .slice(0, MAX_CORRECTIONS)
+              .map((variant) => ({ token: variant, distance: 1 }))
+          : [];
       // A word that is not in the index and cannot be corrected: nothing can match.
-      if (!isFuzzyCandidate(token)) return null;
-      const found = editVariants(token)
-        .filter((variant) => stats.exists(variant, prefix))
-        .slice(0, MAX_CORRECTIONS);
-      if (found.length === 0) return null;
-      corrections.push(found);
+      if (found.length === 0 && !exists) return null;
+      // The word itself stays one alternative, with 0 edits.
+      const alternatives = [
+        ...(exists ? [{ token, distance: 0 }] : []),
+        ...found.filter((c) => c.token !== token),
+      ].slice(0, MAX_CORRECTIONS);
+      corrections.push(alternatives.some((c) => c.token !== token) ? alternatives : null);
     }
     if (corrections.every((c) => c === null)) return null;
 
     const parts = corrections.map((found, i) =>
-      found ? correctionGroup(found, words[i]?.prefix ?? false) : null,
+      found
+        ? correctionGroup(
+            found.map((c) => c.token),
+            words[i]?.prefix ?? false,
+          )
+        : null,
     );
     const match = buildWordsQuery(words, parts);
     if (match === null) return null;
     const rows = current.search.all(inTextColumns(match, types)) as unknown as CandidateRow[];
     if (rows.length === 0) return null;
 
-    // Per word, the correction that most hits contain.
+    // Per word, among the alternatives some hit contains: the fewest edits (the word itself
+    // first), then the most hits. So a correct "krefeld" is not replaced by "seefeld".
     const columns = rows.map(ftsColumns);
     return words.map(({ token, prefix }, i) => {
       const found = corrections[i];
       if (!found) return token;
-      let best = found[0] ?? token;
-      let bestCount = -1;
-      for (const variant of found) {
+      let best: { token: string; distance: number; count: number } | null = null;
+      for (const { token: variant, distance } of found) {
         const count = columns.filter((c) => containsWord(c, variant, prefix)).length;
-        if (count > bestCount) {
-          best = variant;
-          bestCount = count;
+        if (count === 0) continue;
+        if (
+          !best ||
+          distance < best.distance ||
+          (distance === best.distance && count > best.count)
+        ) {
+          best = { token: variant, distance, count };
         }
       }
-      return best;
+      return best?.token ?? token;
     });
   }
 
@@ -670,4 +702,14 @@ function containsWord(columns: FtsColumns, token: string, prefix: boolean): bool
   return Object.values(columns).some((words: readonly string[]) =>
     words.some((word) => (prefix ? word.startsWith(token) : word === token)),
   );
+}
+
+/** The word statistics as a source for `fuzzyCorrections`. */
+function fuzzySource(stats: TermStats): FuzzySource {
+  return {
+    prefixes: (keys) => stats.fuzzyPrefixes(keys),
+    completions: (prefix) => stats.completions(prefix),
+    docs: (term) => stats.docs(term),
+    prefixDocs: (prefix) => stats.prefixDocs(prefix),
+  };
 }

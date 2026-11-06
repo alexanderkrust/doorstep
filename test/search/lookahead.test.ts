@@ -5,6 +5,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { IndexWriter } from '../../src/import/index-writer.js';
 import { featureToPlace } from '../../src/import/place.js';
@@ -63,6 +64,32 @@ const FEATURES = [
     name: 'Gneisenau-Eck',
     ...addr('Nordstraße', '1', '40477', 'Düsseldorf'),
   }),
+  // Words that look like the typos: in a large index, "gnies" is the start of some word and
+  // "hauptsrasse" is a real (misspelled) street somewhere
+  street(53.55, 9.99, 'Gniesweg', 'Hamburg', '20095'),
+  street(48.13, 11.57, 'Hauptsrasse', 'München', '80331'),
+  street(51.3311, 6.5623, 'Hauptstraße', 'Krefeld', '47809'),
+  node(51.3312, 6.5624, addr('Hauptstraße', '5', '47809', 'Krefeld')),
+  // "seefeld" is two edits from "krefeld": a correct word must not be corrected into it
+  street(54.04, 9.56, 'Hauptstraße', 'Seefeld', '25557'),
+  node(54.0401, 9.5601, {
+    ...addr('Hauptstraße', '5', '25557', 'Seefeld'),
+    amenity: 'townhall',
+    name: 'Amt Seefeld',
+  }),
+  node(54.0402, 9.5602, {
+    ...addr('Hauptstraße', '5', '25557', 'Seefeld'),
+    shop: 'bakery',
+    name: 'Bäckerei Holm',
+  }),
+  node(54.0403, 9.5603, {
+    ...addr('Hauptstraße', '5', '25557', 'Seefeld'),
+    amenity: 'doctors',
+    name: 'Praxis Lüders',
+  }),
+  // Frankfurt: a 4-letter street name
+  street(50.1147, 8.6825, 'Zeil', 'Frankfurt am Main', '60313'),
+  node(50.1148, 8.6826, addr('Zeil', '106', '60313', 'Frankfurt am Main')),
   // Fully typed queries must keep their results
   street(51.2235, 6.7795, 'Königsallee', 'Düsseldorf', '40212'),
   node(51.2236, 6.7796, addr('Königsallee', '1', '40212', 'Düsseldorf')),
@@ -151,6 +178,17 @@ describe('typo tolerance in every word', () => {
     });
   });
 
+  it('also corrects a word that exists in the index when the other words do not fit it', () => {
+    // "gnies"* matches Gniesweg in Hamburg, "hauptsrasse" is a street in München
+    expect(first('gnies 62 düs')).toMatchObject({ street: 'Gneisenaustraße', city: 'Düsseldorf' });
+    expect(first('hauptstrsae 5 krefeld')).toMatchObject({ city: 'Krefeld' });
+    expect(first('hauptsrasse 5 krefeld')).toMatchObject({
+      street: 'Hauptstraße',
+      housenumber: '5',
+      city: 'Krefeld',
+    });
+  });
+
   it('finds a missing letter in a fully typed word', () => {
     expect(first('gneisenaustrase 62 düss')).toMatchObject({
       housenumber: '62',
@@ -171,7 +209,55 @@ describe('typo tolerance in every word', () => {
     expect(first('gneis 63 düss')).toMatchObject({ type: 'street', city: 'Düsseldorf' });
   });
 
-  it('finds nothing for words with more than one typo', () => {
-    expect(search('gxexsenau 62 düss')).toEqual([]);
+  it('finds two typos in a long word', () => {
+    expect(first('gxexsenau 62 düss')).toMatchObject({ housenumber: '62', city: 'Düsseldorf' });
+  });
+
+  it('finds a swap after the 7th letter', () => {
+    expect(first('gneisenaustrsae 62 düs')).toMatchObject({
+      housenumber: '62',
+      city: 'Düsseldorf',
+    });
+  });
+
+  it('finds a typo in a 4-letter word', () => {
+    expect(first('zeli 106 frankfurt')).toMatchObject({ street: 'Zeil', housenumber: '106' });
+  });
+
+  it('finds nothing for words with more typos than allowed', () => {
+    expect(search('gxexsxnau 62 düss')).toEqual([]);
+  });
+});
+
+describe('typo tolerance without the SymSpell table (index from an older import)', () => {
+  let oldDir: string;
+  let old: SearchIndex;
+
+  beforeAll(async () => {
+    oldDir = await mkdtemp(join(tmpdir(), 'doorstep-no-symspell-'));
+    const path = join(oldDir, 'index.sqlite');
+    const writer = new IndexWriter(path);
+    for (const feature of FEATURES) {
+      const place = featureToPlace(feature);
+      if (place) writer.add(place);
+    }
+    writer.finish({});
+    const db = new DatabaseSync(path);
+    db.exec("DROP TABLE fuzzy_deletes; DELETE FROM meta WHERE key = 'fuzzy';");
+    db.close();
+    old = new SearchIndex(path);
+  });
+
+  afterAll(async () => {
+    old.close();
+    await rm(oldDir, { recursive: true, force: true });
+  });
+
+  it('still corrects one typo in words of 5 letters or more', () => {
+    expect(old.search({ q: 'gnies 62 düs', limit: 1 })?.[0]).toMatchObject({ housenumber: '62' });
+  });
+
+  it('does not correct two typos', () => {
+    expect(old.search({ q: 'gxexsenau 62 düss', limit: 1 })).toEqual([]);
   });
 });

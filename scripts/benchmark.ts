@@ -126,11 +126,13 @@ console.log(`p50:       ${fmt(pct(50))}`);
 console.log(`p95:       ${fmt(p95)}`);
 console.log(`p99:       ${fmt(pct(99))}`);
 console.log(`max:       ${fmt(times.at(-1)?.ms ?? 0)}`);
-for (const [label, list] of [
-  ['Lookahead', LOOKAHEAD],
-  ['Typos', TYPOS],
+const special = new Set<string>([...LOOKAHEAD, ...TYPOS]);
+for (const [label, keep] of [
+  ['Typed', (q: string) => !special.has(q)],
+  ['Lookahead', (q: string) => LOOKAHEAD.includes(q)],
+  ['Typos', (q: string) => TYPOS.includes(q)],
 ] as const) {
-  const ms = times.filter((t) => list.includes(t.q.q)).map((t) => t.ms);
+  const ms = times.filter((t) => keep(t.q.q)).map((t) => t.ms);
   const p95Of = ms[Math.min(ms.length - 1, Math.floor(0.95 * ms.length))] ?? 0;
   console.log(`${label.padEnd(10)} p95 ${fmt(p95Of)} over ${String(ms.length)} queries`);
 }

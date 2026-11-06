@@ -120,7 +120,17 @@ function checkSamples(dbPath: string): void {
         (r) => [r.key, r.value],
       ),
     );
-    expect(meta).toMatchObject({ attribution: ATTRIBUTION, places: String(counts.places) });
+    expect(meta).toMatchObject({
+      attribution: ATTRIBUTION,
+      places: String(counts.places),
+      fuzzy: 'symspell',
+    });
+
+    // SymSpell: deletions of the word starts, e.g. "koenigs" without the "i"
+    const deletion = db.prepare("SELECT prefix FROM fuzzy_deletes WHERE del = 'koengs'").all() as {
+      prefix: string;
+    }[];
+    expect(deletion.map((r) => r.prefix)).toContain('koenigs');
   } finally {
     db.close();
   }

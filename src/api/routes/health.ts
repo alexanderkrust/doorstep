@@ -49,6 +49,8 @@ export const healthResponseSchema = {
     source: { type: 'string' },
     /** Result types in the index (INDEX_TYPES at import). */
     types: { type: 'array', items: { type: 'string' } },
+    /** Typo tolerance: SymSpell (up to 2 edits) or, in an older index, 1 edit from 5 letters. */
+    fuzzy: { type: 'string', enum: ['symspell', 'edits'] },
   },
 } as const;
 
@@ -85,6 +87,7 @@ export const healthRoutes: FastifyPluginAsync<HealthRoutesOptions> = async (
         ...(state.schemaVersion === undefined ? {} : { indexSchemaVersion: state.schemaVersion }),
         ...(source ? { source } : {}),
         ...(meta?.['types'] ? { types: meta['types'].split(',') } : {}),
+        ...(meta ? { fuzzy: meta['fuzzy'] === 'symspell' ? 'symspell' : 'edits' } : {}),
       };
     },
   );
