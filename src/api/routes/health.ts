@@ -28,6 +28,30 @@ function indexState(index: SearchIndex): { available: boolean; schemaVersion?: n
   }
 }
 
+/** Answer of `/health`, also used in the OpenAPI document. */
+export const healthResponseSchema = {
+  type: 'object',
+  required: ['status', 'version', 'uptime', 'index', 'importing', 'attribution'],
+  properties: {
+    status: { type: 'string', enum: ['ok'] },
+    version: { type: 'string' },
+    uptime: { type: 'number' },
+    index: { type: 'boolean' },
+    importing: { type: 'boolean' },
+    attribution: { type: 'string' },
+    importedAt: { type: 'string' },
+    indexMode: { type: 'string', enum: ['build', 'mounted'] },
+    /** Schema version this image reads. */
+    schemaVersion: { type: 'integer' },
+    /** Schema version of the index file, also when it does not match. */
+    indexSchemaVersion: { type: 'integer' },
+    /** Region or file the index was built from. */
+    source: { type: 'string' },
+    /** Result types in the index (INDEX_TYPES at import). */
+    types: { type: 'array', items: { type: 'string' } },
+  },
+} as const;
+
 export const healthRoutes: FastifyPluginAsync<HealthRoutesOptions> = async (
   app,
   { index, importing, indexMode },
@@ -38,28 +62,7 @@ export const healthRoutes: FastifyPluginAsync<HealthRoutesOptions> = async (
       config: { rateLimit: false, public: true },
       schema: {
         response: {
-          200: {
-            type: 'object',
-            required: ['status', 'version', 'uptime', 'index', 'importing', 'attribution'],
-            properties: {
-              status: { type: 'string', enum: ['ok'] },
-              version: { type: 'string' },
-              uptime: { type: 'number' },
-              index: { type: 'boolean' },
-              importing: { type: 'boolean' },
-              attribution: { type: 'string' },
-              importedAt: { type: 'string' },
-              indexMode: { type: 'string', enum: ['build', 'mounted'] },
-              /** Schema version this image reads. */
-              schemaVersion: { type: 'integer' },
-              /** Schema version of the index file, also when it does not match. */
-              indexSchemaVersion: { type: 'integer' },
-              /** Region or file the index was built from. */
-              source: { type: 'string' },
-              /** Result types in the index (INDEX_TYPES at import). */
-              types: { type: 'array', items: { type: 'string' } },
-            },
-          },
+          200: healthResponseSchema,
         },
       },
     },

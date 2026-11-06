@@ -65,7 +65,7 @@ The container holds the API, the importer and `osmium-tool`; the index is a SQLi
 - [x] `GET /reverse?lat=&lon=` finds the nearest object via the R\*Tree
 - [x] Parameter validation (minimum length of `q`, `limit` at most 10) with clear `400` errors
 - [x] CORS via env, `Cache-Control` response header for identical queries
-- [ ] OpenAPI description under `/docs` (optional)
+- [x] OpenAPI description under `/docs` (Swagger UI) and `/openapi.json`
 - [x] Tests: search for a street, a street with a house number, a place, a typo at the end of a word
 
 **Done when:** against the test index, `/api?q=Königsall` returns the Königsallee among the first results and `/reverse` returns a plausible hit.

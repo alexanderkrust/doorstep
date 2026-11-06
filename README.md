@@ -349,6 +349,7 @@ message at startup listing all affected variables.
 | `REQUIRE_API_KEY`     | `false`                                                       | `/api` and `/reverse` answer `401` without a valid key (needs `API_KEYS`)                       |
 | `API_KEY_IN_QUERY`    | `true`                                                        | Also accept the key as the `api_key` parameter, not only as the `X-API-Key` header              |
 | `RATE_LIMIT_API_KEY`  | `600`                                                         | Requests per minute and API key                                                                 |
+| `DOCS_ENABLED`        | `true`                                                        | Serve Swagger UI under `/docs` and the OpenAPI document under `/openapi.json`                   |
 | `TRUST_PROXY`         | `false`                                                       | Take the client IP from `X-Forwarded-For` (only behind a reverse proxy)                         |
 | `SEARCH_WORKERS`      | `auto`                                                        | Worker threads for `/api` and `/reverse`; `auto` = cores − 1 (max 8), `0` = main thread         |
 | `SEARCH_TIMEOUT_MS`   | `2000`                                                        | `503` for a search in a worker that takes longer, `0` = no limit                                |
@@ -538,6 +539,23 @@ please import again or wait for the next update.
 
 - `GET /health` – status, see [Healthcheck](#healthcheck)
 - `GET /metrics` – Prometheus metrics, see [Metrics](#metrics)
+- `GET /docs` – Swagger UI to read and try out the API, `GET /openapi.json` – the OpenAPI 3.1
+  description, see [API documentation](#api-documentation)
+
+### API documentation
+
+`/docs` shows Swagger UI for the OpenAPI document at `/openapi.json`. Both describe the running
+configuration: with `REQUIRE_API_KEY` the key is marked as required, with
+`API_KEY_IN_QUERY=false` only the `X-API-Key` header is offered, and the default of `lang` is
+`DEFAULT_LANG`. Swagger UI is part of the image (`swagger-ui-dist`) and loads nothing from the
+internet; the page sends a Content Security Policy that only allows its own files.
+
+Both stay open with `REQUIRE_API_KEY`, so client developers can read them; trying out a search
+still needs a key ("Authorize"). They count against the rate limit like other requests. Turn
+them off with `DOCS_ENABLED=false`.
+
+Use the document to generate clients, for example
+`npx @openapitools/openapi-generator-cli generate -i http://localhost:2322/openapi.json -g typescript-fetch -o client`.
 
 ## Docker
 

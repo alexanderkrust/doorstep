@@ -132,6 +132,8 @@ const envSchema = z
     REQUIRE_API_KEY: flag(false),
     /** Accept the key as the `api_key` query parameter, not only as the `X-API-Key` header. */
     API_KEY_IN_QUERY: flag(true),
+    /** `/docs` (Swagger UI) and `/openapi.json`. */
+    DOCS_ENABLED: flag(true),
     /** Take the client IP from X-Forwarded-For (only behind your own reverse proxy). */
     TRUST_PROXY: flag(false),
     /** Entries in the LRU cache for search requests; 0 = off. */
@@ -262,6 +264,8 @@ export interface Config {
   shutdownTimeoutMs: number;
   /** Node locations of `osmium export` in memory or on disk (IMPORT_NODE_INDEX). */
   importNodeIndex: 'memory' | 'file';
+  /** Serve `/docs` and `/openapi.json`. */
+  docsEnabled: boolean;
 }
 
 export class ConfigError extends Error {
@@ -309,5 +313,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     requestTimeoutMs: e.REQUEST_TIMEOUT_MS,
     shutdownTimeoutMs: e.SHUTDOWN_TIMEOUT_MS,
     importNodeIndex: e.IMPORT_NODE_INDEX,
+    docsEnabled: e.DOCS_ENABLED,
   };
 }
