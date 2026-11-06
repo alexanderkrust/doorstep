@@ -5,7 +5,7 @@
 #
 # Debian instead of Alpine: osmium-tool comes straight from the Debian packages. SQLite is
 # built into Node as `node:sqlite` (with FTS5 and R*Tree); nothing is compiled natively.
-ARG NODE_IMAGE=node:24.22.1-trixie-slim
+ARG NODE_IMAGE=node:24.22.2-trixie-slim
 
 # --- Stage 1: build TypeScript ---------------------------------------------------
 FROM ${NODE_IMAGE} AS build
@@ -23,10 +23,18 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 
 # --- Stage 3: runtime image -------------------------------------------------------
+# Debian security updates are installed at build time, so the image does not wait for the
+# next Node release. npm, npx, corepack and yarn are only needed to build; they are removed
+# because the vulnerability scan finds outdated packages bundled in npm, and nothing at
+# runtime uses them (the entry point calls node directly).
 FROM ${NODE_IMAGE}
 RUN apt-get update \
+  && apt-get upgrade -y --no-install-recommends \
   && apt-get install -y --no-install-recommends osmium-tool \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-v* \
+    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn \
+    /usr/local/bin/yarnpkg
 
 WORKDIR /app
 ENV NODE_ENV=production \

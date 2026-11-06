@@ -541,8 +541,13 @@ please import again or wait for the next update.
 ## Docker
 
 The `Dockerfile` builds in several stages: TypeScript build, production dependencies and a slim
-runtime image on `node:24.22.1-trixie-slim` (Debian 13) with `osmium-tool`. SQLite is built into
+runtime image on `node:24.22.2-trixie-slim` (Debian 13) with `osmium-tool`. SQLite is built into
 Node as `node:sqlite` (with FTS5 and R\*Tree); no native modules are compiled.
+
+- The runtime image installs Debian's security updates at build time and contains no npm, npx,
+  corepack or yarn: they are only needed to build, and the npm bundled with Node ships outdated
+  packages that the vulnerability scan reports. Run commands in the container with `doorstep`
+  or `node`, not `npm`.
 
 - Runs as user `node` (uid 1000), not as root.
 - `/data` is a `VOLUME` and contains `extract.osm.pbf`, `index.sqlite` and, during an update,

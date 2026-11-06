@@ -189,6 +189,10 @@ overload or hanging connections. Configuration stays env-only.
       CI, image to GHCR with semver tags (no `latest`), SBOM and provenance, cosign keyless
       signature, GitHub release from the changelog section.
 - [x] Dependabot for npm and GitHub Actions; `CHANGELOG.md`.
+- [x] First Trivy findings (2026-11-06), none in the app's own dependencies: `apt` in the base
+      image (fixed by `node:24.22.2` and `apt-get upgrade` at build time) and `undici` and
+      `brace-expansion` in the npm bundled with Node (npm, npx, corepack and yarn are removed from
+      the runtime image). Node's own undici (used by `fetch`) was already on a fixed version.
 - [ ] First release (`v0.1.0`) and making the GHCR package visible; not done, needs a push.
 - [ ] Multi-arch image (`linux/arm64`): only `linux/amd64` is built so far.
 
