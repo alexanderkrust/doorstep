@@ -31,12 +31,12 @@ The container holds the API, the importer and `osmium-tool`; the index is a SQLi
 
 **Goal:** A working skeleton with tests that Claude Code can cleanly build every later phase on.
 
-- [ ] Create the repository with TypeScript (strict), Fastify, ESLint, Prettier and Vitest
-- [ ] Folder structure: `src/api`, `src/import`, `src/search`, `src/config`, `test/`, `docker/`
-- [ ] Configuration module that validates all env variables (e.g. with zod) and sets defaults
-- [ ] `GET /health` returns `200` with a status
-- [ ] `CLAUDE.md` with architecture rules and commands (template below)
-- [ ] CI script: `npm run lint`, `npm run test`, `npm run build`
+- [x] Create the repository with TypeScript (strict), Fastify, ESLint, Prettier and Vitest
+- [x] Folder structure: `src/api`, `src/import`, `src/search`, `src/config`, `test/`, `docker/`
+- [x] Configuration module that validates all env variables (e.g. with zod) and sets defaults
+- [x] `GET /health` returns `200` with a status
+- [x] `CLAUDE.md` with architecture rules and commands (template below)
+- [x] CI script: `npm run lint`, `npm run test`, `npm run build`
 
 **Done when:** `npm test` and `npm run build` pass and `/health` answers locally.
 
@@ -44,14 +44,14 @@ The container holds the API, the importer and `osmium-tool`; the index is a SQLi
 
 **Goal:** An OSM extract becomes a searchable SQLite file with addresses, streets and places.
 
-- [ ] Download the extract from `REGION_URL` to `/data` (with progress, resume and checksum, if Geofabrik provides an `.md5`)
-- [ ] `osmium tags-filter` on relevant objects: `addr:housenumber`, `addr:street`, `place=*`, `highway` with a name, optionally `amenity`
-- [ ] Export via `osmium export` as a GeoJSON sequence and streaming import, so memory use stays constant
-- [ ] Data model of a row: `id`, `osm_type`, `osm_id`, `type`, `name`, `street`, `housenumber`, `postcode`, `city`, `state`, `country`, `lat`, `lon`, `importance`
-- [ ] Table `places` plus an FTS5 table with a prefix index (`prefix='2 3 4'`) and an R\*Tree table for coordinates
-- [ ] Derive `importance` from the `place` type (city before village before street before house number)
-- [ ] CLI: `npm run import -- --region <url>` and the Docker command `import`
-- [ ] Tests with a small sample extract (e.g. a district) that lives in the repo
+- [x] Download the extract from `REGION_URL` to `/data` (with progress, resume and checksum, if Geofabrik provides an `.md5`)
+- [x] `osmium tags-filter` on relevant objects: `addr:housenumber`, `addr:street`, `place=*`, `highway` with a name, optionally `amenity`
+- [x] Export via `osmium export` as a GeoJSON sequence and streaming import, so memory use stays constant
+- [x] Data model of a row: `id`, `osm_type`, `osm_id`, `type`, `name`, `street`, `housenumber`, `postcode`, `city`, `state`, `country`, `lat`, `lon`, `importance` (extended since: `name_de`, `name_en`, `district`, `category` and more)
+- [x] Table `places` plus an FTS5 table with a prefix index (`prefix='2 3 4'`) and an R\*Tree table for coordinates (implemented with `prefix = '1 2 3 4'`, so that single-digit house numbers are prefixes too)
+- [x] Derive `importance` from the `place` type (city before village before street before house number)
+- [x] CLI: `npm run import -- --region <url>` and the Docker command `import`
+- [x] Tests with a small sample extract (e.g. a district) that lives in the repo
 
 **Done when:** importing a small extract passes in tests and produces a file in which sample addresses can be found via SQL.
 
@@ -59,14 +59,14 @@ The container holds the API, the importer and `osmium-tool`; the index is a SQLi
 
 **Goal:** Autosuggest and reverse geocoding over HTTP, as GeoJSON.
 
-- [ ] `GET /api?q=&lat=&lon=&limit=&lang=` returns a GeoJSON `FeatureCollection`
-- [ ] Every feature has `geometry` (Point) and `properties` with `name`, `street`, `housenumber`, `postcode`, `city`, `state`, `country`, `osm_id`, `osm_type`
-- [ ] The search query is translated into an FTS5 query: last token as a prefix, preceding tokens exact
-- [ ] `GET /reverse?lat=&lon=` finds the nearest object via the R\*Tree
-- [ ] Parameter validation (minimum length of `q`, `limit` at most 10) with clear `400` errors
-- [ ] CORS via env, `Cache-Control` response header for identical queries
+- [x] `GET /api?q=&lat=&lon=&limit=&lang=` returns a GeoJSON `FeatureCollection`
+- [x] Every feature has `geometry` (Point) and `properties` with `name`, `street`, `housenumber`, `postcode`, `city`, `state`, `country`, `osm_id`, `osm_type` (superseded by the response format of schema 8, see "Response quality")
+- [x] The search query is translated into an FTS5 query: last token as a prefix, preceding tokens exact
+- [x] `GET /reverse?lat=&lon=` finds the nearest object via the R\*Tree
+- [x] Parameter validation (minimum length of `q`, `limit` at most 10) with clear `400` errors
+- [x] CORS via env, `Cache-Control` response header for identical queries
 - [ ] OpenAPI description under `/docs` (optional)
-- [ ] Tests: search for a street, a street with a house number, a place, a typo at the end of a word
+- [x] Tests: search for a street, a street with a house number, a place, a typo at the end of a word
 
 **Done when:** against the test index, `/api?q=Königsall` returns the Königsallee among the first results and `/reverse` returns a plausible hit.
 
@@ -74,13 +74,13 @@ The container holds the API, the importer and `osmium-tool`; the index is a SQLi
 
 **Goal:** The suggestions feel like a good autosuggest: the right order, tolerant of spelling, nearby hits first.
 
-- [ ] Normalization during import and search: lowercase, umlauts (ä ↔ ae), `ß` ↔ `ss`, "str." ↔ "straße"
-- [ ] Ranking formula from the FTS score (`bm25`), `importance` and the distance to `lat/lon`, as a pure function with unit tests
-- [ ] Location bias: hits around the given point are boosted
-- [ ] Fallback: house number missing in OSM → return hits at street level
-- [ ] Multiple languages: store `name:de`, `name:en` separately and select by `lang`
-- [ ] Golden queries: a file with 30 to 50 search queries and expected top hits that runs in the test suite
-- [ ] Measure the response time per request, target below 50 ms on a Germany index
+- [x] Normalization during import and search: lowercase, umlauts (ä ↔ ae), `ß` ↔ `ss`, "str." ↔ "straße"
+- [x] Ranking formula from the FTS score (`bm25`), `importance` and the distance to `lat/lon`, as a pure function with unit tests
+- [x] Location bias: hits around the given point are boosted
+- [x] Fallback: house number missing in OSM → return hits at street level
+- [x] Multiple languages: store `name:de`, `name:en` separately and select by `lang`
+- [x] Golden queries: a file with 30 to 50 search queries and expected top hits that runs in the test suite
+- [x] Measure the response time per request, target below 50 ms on a Germany index (2026-10-29, schema 8: p95 19.5 ms)
 
 **Done when:** all golden queries pass and the latency on the full Germany index is within the target range. (Latency reached on 2026-10-28: p95 16.5 ms, see below.)
 
@@ -91,21 +91,21 @@ The container holds the API, the importer and `osmium-tool`; the index is a SQLi
   - **Long prefixes of frequent words are expanded** (`expandPrefix`): FTS5 merges the hit lists of all words of a prefix over 4 characters completely up front. If a prefix has more than 50,000 documents, it is split character by character into OR-joined parts: the frequent word exactly ("strasse"), the rest as longer prefixes ("strassen"\*, …). The parts cover exactly the same words (test: same hits with and without expansion). "breite strasse\*" 169 → 0.5 ms, "graf adolf strasse\*" 180 → 3 ms.
 - [ ] **Nearby search with very frequent words** is now the slowest case (all ten slowest queries have a location): "Am Markt 1" 41 ms, "Friedrichstraße 3" 20–90 ms, "Berliner A" 27 ms. FTS5 has to intersect the whole hit list of the rarest word ("markt", 47,000 documents) with "am" and the grid cells when there are fewer than 200 hits within the radius. Only a spatially partitioned index would improve this (e.g. word + cell as a token, a much larger index); not needed for now at p95 16.5 ms.
 - [ ] **Popularity signal for `importance`:** so far only the type counts. With `wikidata`/`wikipedia` or population, well-known objects could be moved ahead (e.g. "Kö" → Königsallee; the golden query is relaxed to the top 5 for this reason).
-- [ ] **Landmarks are missing from the index:** `tourism`, `man_made` and similar are not in the import filter (phase 2); e.g. "Rheinturm" finds nothing.
+- [ ] **Landmarks are partly missing from the index:** since schema 8 the import includes `tourism` and `historic` (see "Response quality"), but `man_made` and similar are still not in the import filter. Check whether "Rheinturm" is found now; it is not in the test extract.
 - [ ] **Merge street segments during the import:** segments with the same name are only merged during the search so far (2 km radius). During the import, the index would be smaller and the candidate set more meaningful.
 
 ## Phase 5: Docker
 
 **Goal:** A single `Dockerfile` that builds a slim image that starts right away. No docker-compose, neither in the repo nor in the README.
 
-- [ ] Multi-stage build: stage 1 builds TypeScript (`npm ci`, `npm run build`), stage 2 contains only production dependencies, the build output and `osmium-tool`
-- [ ] Base image with Debian or Alpine, depending on what the native SQLite module (`better-sqlite3`) builds without trouble; SQLite must be compiled with FTS5
-- [ ] Run as a non-root user, `/data` as a `VOLUME`
-- [ ] `ENTRYPOINT` with the commands `serve` (default), `import` and `update`; the first `serve` without an index imports automatically
-- [ ] `HEALTHCHECK` against `/health`; `/health` also reports whether an index exists
-- [ ] `.dockerignore`, pinned versions of the base images, `EXPOSE 2322`
-- [ ] Configuration exclusively via env, examples in the README
-- [ ] Smoke test script: build the image, start it with a mini extract, query `/api`
+- [x] Multi-stage build: stage 1 builds TypeScript (`npm ci`, `npm run build`), stage 2 contains only production dependencies, the build output and `osmium-tool`
+- [x] Base image with Debian or Alpine, depending on what the native SQLite module (`better-sqlite3`) builds without trouble; SQLite must be compiled with FTS5 (implemented with Debian and the built-in `node:sqlite` instead of `better-sqlite3`)
+- [x] Run as a non-root user, `/data` as a `VOLUME`
+- [x] `ENTRYPOINT` with the commands `serve` (default), `import` and `update`; the first `serve` without an index imports automatically
+- [x] `HEALTHCHECK` against `/health`; `/health` also reports whether an index exists
+- [x] `.dockerignore`, pinned versions of the base images, `EXPOSE 2322`
+- [x] Configuration exclusively via env, examples in the README
+- [x] Smoke test script: build the image, start it with a mini extract, query `/api`
 
 **Done when:** `docker build -t doorstep-api .` and `docker run -p 2322:2322 -v data:/data doorstep-api` lead to working suggestions on a fresh machine.
 
@@ -113,14 +113,14 @@ The container holds the API, the importer and `osmium-tool`; the index is a SQLi
 
 **Goal:** The API runs permanently, updates its data without downtime and is secured for public operation.
 
-- [ ] Update command: builds `index.next.sqlite` next to the running index and swaps both via an atomic `rename`
-- [ ] The API reopens the index after the swap, without a restart (signal or internal schedule via `UPDATE_CRON`)
-- [ ] Rate limiting per IP, optionally per API key (`@fastify/rate-limit`), switchable via env
-- [ ] In-memory cache (LRU) for frequent short prefix queries
-- [ ] Structured logs and a `/metrics` endpoint in Prometheus format
-- [ ] Attribution: responses and README name "© OpenStreetMap contributors" (ODbL)
-- [ ] README with a quick start, env table, notes on RAM and disk needs (Germany about 4 GB PBF)
-- [ ] Load test (e.g. with `autocannon`) and documented results
+- [x] Update command: builds `index.next.sqlite` next to the running index and swaps both via an atomic `rename`
+- [x] The API reopens the index after the swap, without a restart (signal or internal schedule via `UPDATE_CRON`)
+- [x] Rate limiting per IP, optionally per API key (`@fastify/rate-limit`), switchable via env
+- [x] In-memory cache (LRU) for frequent short prefix queries
+- [x] Structured logs and a `/metrics` endpoint in Prometheus format
+- [x] Attribution: responses and README name "© OpenStreetMap contributors" (ODbL)
+- [x] README with a quick start, env table, notes on RAM and disk needs (Germany about 4 GB PBF)
+- [x] Load test (e.g. with `autocannon`) and documented results
 
 **Done when:** an update runs through in production without any request failing meanwhile, and the README is enough for an installation without further questions.
 
