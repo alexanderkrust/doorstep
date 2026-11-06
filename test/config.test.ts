@@ -22,6 +22,7 @@ describe('loadConfig', () => {
       updateCron: null,
       indexMode: 'build',
       indexPath: '/data/index.sqlite',
+      indexTypes: ['address', 'street', 'poi', 'locality', 'sublocality', 'place'],
     });
   });
 
@@ -61,6 +62,7 @@ describe('loadConfig', () => {
       updateCron: '0 3 * * *',
       indexMode: 'build',
       indexPath: '/tmp/doorstep/index.sqlite',
+      indexTypes: ['address', 'street', 'poi', 'locality', 'sublocality', 'place'],
     });
   });
 
@@ -109,6 +111,8 @@ describe('loadConfig', () => {
     ['UPDATE_CRON', '0 3 * *'],
     ['INDEX_MODE', 'readonly'],
     ['INDEX_PATH', 'index/index.sqlite'],
+    ['INDEX_TYPES', 'streets'],
+    ['INDEX_TYPES', 'street,house'],
   ])('rejects the invalid value %s=%s', (key, value) => {
     expect(() => loadConfig({ [key]: value })).toThrow(ConfigError);
   });
@@ -139,6 +143,25 @@ describe('loadConfig', () => {
     it('does not need a valid REGION_URL', () => {
       expect(loadConfig({ INDEX_MODE: 'mounted', REGION_URL: 'keine-url' }).indexMode).toBe(
         'mounted',
+      );
+    });
+  });
+
+  describe('INDEX_TYPES', () => {
+    it('reads a comma-separated list of result types, case-insensitive', () => {
+      expect(loadConfig({ INDEX_TYPES: ' Street, poi ,street' }).indexTypes).toEqual([
+        'street',
+        'poi',
+      ]);
+    });
+
+    it('takes all types when empty', () => {
+      expect(loadConfig({ INDEX_TYPES: ' , ' }).indexTypes).toHaveLength(6);
+    });
+
+    it('names the allowed values in the error message', () => {
+      expect(() => loadConfig({ INDEX_TYPES: 'streets' })).toThrow(
+        /INDEX_TYPES: .*address, street, poi, locality, sublocality, place/,
       );
     });
   });

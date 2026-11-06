@@ -15,6 +15,7 @@ import {
   withoutHousenumbers,
   withoutSingleLetters,
 } from './query.js';
+import { resultType, type ResultType } from './result-type.js';
 import { dedupeNearby, rank, type Candidate } from './ranking.js';
 import { charLength, MAX_INDEXED_PREFIX, TermStats } from './term-stats.js';
 
@@ -46,6 +47,8 @@ export interface SearchOptions {
   /** Optional location (location bias): nearby hits are boosted. */
   lat?: number;
   lon?: number;
+  /** Only hits of these result types; default all. */
+  types?: readonly ResultType[];
 }
 
 export interface ReverseOptions {
@@ -54,6 +57,8 @@ export interface ReverseOptions {
   limit: number;
   /** Search radius in kilometers. */
   radiusKm: number;
+  /** Only hits of these result types; default all. */
+  types?: readonly ResultType[];
 }
 
 interface CandidateRow extends PlaceRow {
@@ -360,24 +365,25 @@ export class SearchIndex {
   ): RankedRow[] {
     const current = this.current;
     if (!current) return [];
-    const { lat, lon } = options;
+    const { lat, lon, types } = options;
     const hasLocation = lat !== undefined && lon !== undefined;
     const [exact, ...trimmed] = tokenVariants(tokens);
     const variants = typos ? trimmed : exact === undefined ? [] : [exact];
     for (const variant of variants) {
       const { match, idfs } = this.prepareQuery(current.stats, variant);
       if (match === null) continue;
-      const rows = current.search.all(inTextColumns(match)) as unknown as CandidateRow[];
+      const rows = current.search.all(inTextColumns(match, types)) as unknown as CandidateRow[];
       // A query with a house number looks for an address, but on a common street the
       // candidates fill up with more important POIs first: also read from the addresses.
       if (
         rows.length >= CANDIDATES &&
         current.addressStart !== null &&
+        (!types || types.includes('address')) &&
         variant.some((t) => HOUSENUMBER_TOKEN.test(t))
       ) {
         const seen = new Set(rows.map((r) => r.id));
         const addresses = current.searchFrom.all(
-          inTextColumns(match),
+          inTextColumns(match, types),
           current.addressStart,
         ) as unknown as CandidateRow[];
         for (const row of addresses) if (!seen.has(row.id)) rows.push(row);
@@ -386,7 +392,7 @@ export class SearchIndex {
       if (hasLocation && rows.length >= CANDIDATES) {
         // Nearby hits that do not make it into the first candidates globally.
         const seen = new Set(rows.map((r) => r.id));
-        for (const row of this.localCandidates(match, lat, lon, rows)) {
+        for (const row of this.localCandidates(match, lat, lon, rows, types)) {
           if (!seen.has(row.id)) rows.push(row);
         }
       }
@@ -442,6 +448,7 @@ export class SearchIndex {
     lat: number,
     lon: number,
     globalRows: readonly CandidateRow[],
+    types: readonly ResultType[] | undefined,
   ): CandidateRow[] {
     const box = boundingBox(lat, lon, LOCAL_RADIUS_KM);
     const [minLat, maxLat, minLon, maxLon] = box;
@@ -450,14 +457,16 @@ export class SearchIndex {
     ).length;
     const cells = gridCellsInBox(box);
     const useCells = inBox < LOCAL_DENSE_HITS && cells.length <= MAX_LOCAL_CELLS;
-    const query = useCells ? withinCells(match, cells) : inTextColumns(match);
+    const query = useCells ? withinCells(match, cells, types) : inTextColumns(match, types);
     return (this.current?.searchLocal.all(query, ...box) ?? []) as unknown as CandidateRow[];
   }
 
   /** Nearest objects to the point via the R*Tree; `null` if there is no index. */
   reverse(options: ReverseOptions): PlaceRow[] | null {
     if (!this.open()) return null;
-    const { lat, lon, limit, radiusKm } = options;
+    const { lat, lon, limit, radiusKm, types } = options;
+    const wanted = (row: PlaceRow) =>
+      !types || types.includes(resultType(row.type, !!(row.name ?? row.name_de ?? row.name_en)));
     let radius = Math.min(REVERSE_START_RADIUS_KM, radiusKm);
     for (;;) {
       const candidates = (this.current?.box.all(...boundingBox(lat, lon, radius)) ??
@@ -465,7 +474,7 @@ export class SearchIndex {
       // Only hits inside the circle are surely the nearest.
       const inCircle = candidates
         .map((row) => ({ row, d: distanceKm(lat, lon, row.lat, row.lon) }))
-        .filter((c) => c.d <= radius)
+        .filter((c) => c.d <= radius && wanted(c.row))
         .sort((a, b) => a.d - b.d);
       if (inCircle.length >= limit || radius >= radiusKm) {
         return inCircle.slice(0, limit).map((c) => c.row);

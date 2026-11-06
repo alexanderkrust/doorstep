@@ -33,6 +33,18 @@ export function checkIndexAtStart(config: Config): StartupCheck {
   try {
     index.open();
     const meta = index.meta() ?? {};
+    const indexed = (meta['types'] ?? '').split(',').filter(Boolean);
+    const wanted = config.indexTypes;
+    const same = indexed.length === wanted.length && wanted.every((t) => indexed.includes(t));
+    if (!mounted && indexed.length > 0 && !same) {
+      return {
+        level: 'warn',
+        message:
+          `Index ${indexPath} contains the types ${indexed.join(', ')}, but INDEX_TYPES asks ` +
+          `for ${wanted.join(', ')}. Run \`import\` again (or wait for the next update) to apply it.`,
+        exit: false,
+      };
+    }
     return {
       level: 'info',
       message:

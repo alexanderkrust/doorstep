@@ -106,6 +106,11 @@ describe('TermStats', () => {
   it('contains no grid cells', () => {
     expect(stats.prefixDocs('g')).toBe(0);
   });
+
+  it('contains no result type tokens', () => {
+    expect(stats.docs('kindstreet')).toBe(0);
+    expect(stats.prefixDocs('kind')).toBe(0);
+  });
 });
 
 describe('bm25 in JS', () => {
@@ -121,7 +126,7 @@ describe('bm25 in JS', () => {
     const match = inTextColumns(buildFtsQuery(tokens) ?? '');
     const rows = db
       .prepare(
-        `SELECT p.*, bm25(places_fts, 4.0, 2.0, 1.0, 1.0, 1.0, 0.0) AS bm25
+        `SELECT p.*, bm25(places_fts, 4.0, 2.0, 1.0, 1.0, 1.0, 0.0, 0.0) AS bm25
            FROM places_fts JOIN places p ON p.id = places_fts.rowid
           WHERE places_fts MATCH ?`,
       )
