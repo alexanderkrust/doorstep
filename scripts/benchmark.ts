@@ -38,6 +38,19 @@ const LOOKAHEAD = [
   'garten 10 wupp',
   'am mark 1 sol',
 ];
+/** One typo in any word ("gnies 62 düs" for Gneisenaustraße 62). */
+const TYPOS = [
+  'gnies 62 düs',
+  'gneis 62 dsseldorf',
+  'schadwostr 11 düss',
+  'bahnhofstrase 1 duisburg',
+  'königsalee 1 düs',
+  'dorothenstr 1 düs',
+  'berliner alle düs',
+  'hauptsrasse 5 krefeld',
+  'mönchengladbch',
+  'frierichstr 3 essen',
+];
 /** Düsseldorf; location bias enlarges the candidate set. */
 const LOCATION = { lat: 51.2254, lon: 6.7763 };
 
@@ -75,7 +88,9 @@ for (const text of TYPED) {
   }
 }
 
-for (const q of LOOKAHEAD) queries.push({ q, limit: 10 }, { q, limit: 10, ...LOCATION });
+for (const q of [...LOOKAHEAD, ...TYPOS]) {
+  queries.push({ q, limit: 10 }, { q, limit: 10, ...LOCATION });
+}
 
 const index = new SearchIndex(values.index);
 if (!index.open()) {
@@ -111,9 +126,14 @@ console.log(`p50:       ${fmt(pct(50))}`);
 console.log(`p95:       ${fmt(p95)}`);
 console.log(`p99:       ${fmt(pct(99))}`);
 console.log(`max:       ${fmt(times.at(-1)?.ms ?? 0)}`);
-const lookahead = times.filter((t) => LOOKAHEAD.includes(t.q.q)).map((t) => t.ms);
-const lookaheadP95 = lookahead[Math.min(lookahead.length - 1, Math.floor(0.95 * lookahead.length))];
-console.log(`Lookahead: p95 ${fmt(lookaheadP95 ?? 0)} over ${String(lookahead.length)} queries`);
+for (const [label, list] of [
+  ['Lookahead', LOOKAHEAD],
+  ['Typos', TYPOS],
+] as const) {
+  const ms = times.filter((t) => list.includes(t.q.q)).map((t) => t.ms);
+  const p95Of = ms[Math.min(ms.length - 1, Math.floor(0.95 * ms.length))] ?? 0;
+  console.log(`${label.padEnd(10)} p95 ${fmt(p95Of)} over ${String(ms.length)} queries`);
+}
 console.log('Slowest queries:');
 const seen = new Set<string>();
 for (const t of [...times].reverse()) {

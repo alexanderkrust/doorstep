@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildFtsQuery,
   buildWordsQuery,
+  editVariants,
+  isFuzzyCandidate,
   expandPrefix,
   inTextColumns,
   phrasesFor,
@@ -279,5 +281,39 @@ describe('phrasesForWords', () => {
       { token: 'gneis', prefix: true, notInPostcode: false },
       { token: 'duess', prefix: true, notInPostcode: false },
     ]);
+  });
+});
+
+describe('editVariants', () => {
+  const variants = editVariants('gnies');
+
+  it('contains every kind of single edit', () => {
+    expect(variants).toContain('gneis'); // swapped letters
+    expect(variants).toContain('gnes'); // missing letter
+    expect(variants).toContain('gnixes'); // extra letter
+    expect(variants).toContain('gnits'); // wrong letter
+  });
+
+  it('does not contain the word itself or duplicates', () => {
+    expect(variants).not.toContain('gnies');
+    expect(new Set(variants).size).toBe(variants.length);
+  });
+});
+
+describe('isFuzzyCandidate', () => {
+  it('corrects only words of letters with at least 5 characters', () => {
+    expect(isFuzzyCandidate('gnies')).toBe(true);
+    expect(isFuzzyCandidate('gnie')).toBe(false);
+    expect(isFuzzyCandidate('40212')).toBe(false);
+    expect(isFuzzyCandidate('60d')).toBe(false);
+  });
+});
+
+describe('buildWordsQuery with alternatives', () => {
+  it('puts the corrections of a word into an OR group', () => {
+    const words = queryWords(['gnies', '62', 'dues'], true);
+    expect(buildWordsQuery(words, [['"gneis"*', '"gnies"*'], null, null])).toBe(
+      '("gneis"* OR "gnies"*) AND "62" AND "dues"*',
+    );
   });
 });

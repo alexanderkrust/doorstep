@@ -38,6 +38,9 @@ First version. Index schema 11.
 - Lookahead search: if the query finds nothing with the earlier words exact, they are searched
   as prefixes too (`gneis 62 düss` → Gneisenaustraße 62, Düsseldorf). House numbers before the
   end and words under 3 characters stay exact.
+- Typo tolerance in every word: when nothing else finds a hit, words of at least 5 letters
+  that are not in the index are replaced by the words one edit away (`gnies 62 düs` →
+  Gneisenaustraße 62, Düsseldorf). House numbers and postcodes are never corrected.
 - API documentation: Swagger UI under `/docs` and an OpenAPI 3.1 document under
   `/openapi.json` that follows the configuration (API key, default language);
   `DOCS_ENABLED`. Swagger UI comes with the image, without a CDN.
