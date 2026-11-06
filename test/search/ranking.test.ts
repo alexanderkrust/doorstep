@@ -126,6 +126,40 @@ describe('rank', () => {
     });
   });
 
+  describe('street queries (no house number)', () => {
+    // "Hauptstraße" in Solingen: a shop on the street nearby, and the street in the next town.
+    const shop = candidate({
+      bm25: -6,
+      importance: 0.35,
+      names: ['fielmann', 'hauptstrasse 12'],
+      ownNames: ['fielmann'],
+      distanceKm: 0.2,
+    });
+    const house = candidate({
+      bm25: -6,
+      importance: 0.3,
+      names: ['hauptstrasse 12'],
+      plainAddress: true,
+      distanceKm: 0.2,
+    });
+    const street = candidate({
+      bm25: -10,
+      importance: 0.4,
+      names: ['hauptstrasse'],
+      distanceKm: 15,
+    });
+
+    it('puts a street before shops and addresses that only lie on a street of that name', () => {
+      const ranked = rank([shop, house, street], ['hauptstrasse']);
+      expect(ranked[0]).toBe(street);
+    });
+
+    it('keeps a POI first when its own name is searched along with the street', () => {
+      const ranked = rank([street, shop], ['fielmann', 'hauptstrasse']);
+      expect(ranked[0]).toBe(shop);
+    });
+  });
+
   it('sorts city before street before house number at equal relevance', () => {
     const ranked = rank(
       [

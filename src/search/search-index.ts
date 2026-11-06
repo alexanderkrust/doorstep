@@ -68,6 +68,13 @@ interface CandidateRow extends PlaceRow {
 
 type RankedRow = CandidateRow & Candidate;
 
+/** Midpoint of a segment of a merged street (`street_points`). */
+interface StreetPoint {
+  place_id: number;
+  lat: number;
+  lon: number;
+}
+
 export interface SearchIndexOptions {
   /** Prefixes with more documents are expanded (see `expandPrefix`); smaller only for tests. */
   expandPrefixDocs?: number;
@@ -171,6 +178,12 @@ interface OpenIndex {
   /** First id of the addresses; ids are sorted by importance, addresses come last. */
   addressStart: number | null;
   box: StatementSync;
+  /** Segment midpoints of merged streets, by place id (JSON array). */
+  streetPoints: StatementSync;
+  /** Segment midpoints of merged streets within a box. */
+  streetBox: StatementSync;
+  /** Rows by id (JSON array). */
+  byIds: StatementSync;
 }
 
 /** Opens and checks an index file. Throws `IndexUnavailableError` on a wrong schema. */
@@ -226,7 +239,14 @@ function openIndexFile(path: string): OpenIndex {
         WHERE places_fts MATCH ?
           AND p.lat BETWEEN ? AND ? AND p.lon BETWEEN ? AND ?
         LIMIT ${String(CANDIDATES)}`),
-      box: db.prepare(`SELECT ${COLUMNS} FROM places_rtree r JOIN places p ON p.id = r.id
+      streetPoints: db.prepare(`SELECT place_id, lat, lon FROM street_points
+        WHERE place_id IN (SELECT value FROM json_each(?))`),
+      streetBox: db.prepare(`SELECT s.place_id, s.lat, s.lon
+        FROM street_points_rtree r JOIN street_points s ON s.id = r.id
+        WHERE r.max_lat >= ? AND r.min_lat <= ? AND r.max_lon >= ? AND r.min_lon <= ?`),
+      byIds: db.prepare(`SELECT p.id, ${COLUMNS} FROM places p
+        WHERE p.id IN (SELECT value FROM json_each(?))`),
+      box: db.prepare(`SELECT p.id, ${COLUMNS} FROM places_rtree r JOIN places p ON p.id = r.id
         WHERE r.max_lat >= ? AND r.min_lat <= ? AND r.max_lon >= ? AND r.min_lon <= ?`),
     };
   } catch (err) {
@@ -397,6 +417,7 @@ export class SearchIndex {
         }
       }
       if (rows.length === 0) continue;
+      if (hasLocation) this.moveToNearestSegment(rows, lat, lon);
 
       const phrases = phrasesFor(variant);
       const candidates: RankedRow[] = rows.map((row) => ({
@@ -461,6 +482,41 @@ export class SearchIndex {
     return (this.current?.searchLocal.all(query, ...box) ?? []) as unknown as CandidateRow[];
   }
 
+  /**
+   * Merged streets (see `street_points`) take the midpoint of their segment nearest to the
+   * point: the distance then counts from the part of the street near the user, and the hit
+   * points there. `points` if already loaded; otherwise read for the street rows.
+   */
+  private moveToNearestSegment(
+    rows: CandidateRow[],
+    lat: number,
+    lon: number,
+    points?: readonly StreetPoint[],
+  ): void {
+    const streets = rows.filter((r) => r.type === 'street');
+    if (streets.length === 0) return;
+    const all =
+      points ??
+      ((this.current?.streetPoints.all(JSON.stringify(streets.map((r) => r.id))) ??
+        []) as unknown as StreetPoint[]);
+    if (all.length === 0) return;
+    const byPlace = new Map<number, StreetPoint[]>();
+    for (const p of all) {
+      const list = byPlace.get(p.place_id);
+      if (list) list.push(p);
+      else byPlace.set(p.place_id, [p]);
+    }
+    for (const row of streets) {
+      let best = { lat: row.lat, lon: row.lon, d: distanceKm(lat, lon, row.lat, row.lon) };
+      for (const p of byPlace.get(row.id) ?? []) {
+        const d = distanceKm(lat, lon, p.lat, p.lon);
+        if (d < best.d) best = { lat: p.lat, lon: p.lon, d };
+      }
+      row.lat = best.lat;
+      row.lon = best.lon;
+    }
+  }
+
   /** Nearest objects to the point via the R*Tree; `null` if there is no index. */
   reverse(options: ReverseOptions): PlaceRow[] | null {
     if (!this.open()) return null;
@@ -469,8 +525,20 @@ export class SearchIndex {
       !types || types.includes(resultType(row.type, !!(row.name ?? row.name_de ?? row.name_en)));
     let radius = Math.min(REVERSE_START_RADIUS_KM, radiusKm);
     for (;;) {
-      const candidates = (this.current?.box.all(...boundingBox(lat, lon, radius)) ??
-        []) as unknown as PlaceRow[];
+      const box = boundingBox(lat, lon, radius);
+      const candidates = (this.current?.box.all(...box) ?? []) as unknown as CandidateRow[];
+      // Merged streets also by the midpoints of their other segments.
+      const points = (this.current?.streetBox.all(...box) ?? []) as unknown as StreetPoint[];
+      const missing = [...new Set(points.map((p) => p.place_id))].filter(
+        (id) => !candidates.some((c) => c.id === id),
+      );
+      if (missing.length > 0) {
+        candidates.push(
+          ...((this.current?.byIds.all(JSON.stringify(missing)) ??
+            []) as unknown as CandidateRow[]),
+        );
+      }
+      this.moveToNearestSegment(candidates, lat, lon, points);
       // Only hits inside the circle are surely the nearest.
       const inCircle = candidates
         .map((row) => ({ row, d: distanceKm(lat, lon, row.lat, row.lon) }))

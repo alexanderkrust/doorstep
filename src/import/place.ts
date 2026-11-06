@@ -407,6 +407,24 @@ export function representativePoint(geometry: Geometry): LatLon | null {
   }
 }
 
+/**
+ * End points of a line (of every part of a multi-line); empty for points and areas. Street
+ * segments that share an end point and a name are merged during the import.
+ */
+export function lineEnds(geometry: Geometry): Position[] {
+  const lines =
+    geometry.type === 'LineString'
+      ? [geometry.coordinates]
+      : geometry.type === 'MultiLineString'
+        ? geometry.coordinates
+        : [];
+  return lines.flatMap((line) => {
+    const first = line[0];
+    const last = line[line.length - 1];
+    return first && last ? [first, last] : [];
+  });
+}
+
 const RECORD_SEPARATOR = '\u001e';
 
 /** Parses a line of `osmium export -f geojsonseq` (with or without the RS character). */

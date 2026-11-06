@@ -137,8 +137,11 @@ describe('GET /api', () => {
       [51.2195, 6.7805],
     ] as const) {
       const { body } = await search(q('Königsallee', `&lat=${String(lat)}&lon=${String(lon)}`));
-      const streets = body.features.filter((f) => f.properties['type'] === 'street');
-      // Segments of the same street are merged into one hit.
+      // Segments of the same street are merged into one hit ("Steinstraße/Königsallee" is
+      // another object).
+      const streets = body.features.filter(
+        (f) => f.properties['type'] === 'street' && f.properties['name'] === 'Königsallee',
+      );
       expect(streets).toHaveLength(1);
       const [sLon, sLat] = streets[0]?.geometry.coordinates ?? [0, 0];
       expect(distanceMeters(lat, lon, sLat, sLon)).toBeLessThan(250);

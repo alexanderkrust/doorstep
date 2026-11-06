@@ -15,7 +15,7 @@ import {
   filterBoundaries,
   filterExtract,
 } from './osmium.js';
-import { featureToPlace, parseGeoJsonSeqLine } from './place.js';
+import { featureToPlace, lineEnds, parseGeoJsonSeqLine } from './place.js';
 import { formatCount, Progress, Steps, type Logger } from './progress.js';
 
 export const EXTRACT_FILE = 'extract.osm.pbf';
@@ -102,7 +102,7 @@ async function writeIndex(
       features++;
       progress.update(features, OSM_TYPE_NAMES[String(feature.properties?.['@type'])]);
       const place = featureToPlace(feature);
-      if (place) writer.add(place);
+      if (place) writer.add(place, feature.geometry ? lineEnds(feature.geometry) : []);
       else skipped++;
     }
     progress.finish(features);

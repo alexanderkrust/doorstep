@@ -41,6 +41,12 @@ const NOT_AT_START = 0.7;
  * only shares the address (a shop at "Marienplatz 8") goes down.
  */
 const ADDRESS_QUERY_BONUS = 0.05;
+/**
+ * Penalty for addresses and POIs that match a query without a house number only via their
+ * address: a shop on the Hauptstraße nearby would otherwise beat the Hauptstraße of the next
+ * town by its proximity.
+ */
+const STREET_QUERY_PENALTY = 0.1;
 const HOUSENUMBER = /^\d+[a-z]?$/;
 /** Factor when the last word only matches as a prefix ("Königsallee 1" → "… 11"). */
 const PREFIX_ONLY = 0.9;
@@ -106,12 +112,19 @@ export function scoreCandidate(candidate: Candidate, ctx: ScoreContext): number 
   return clamp01(base + addressQueryAdjustment(candidate, ctx.queryTokens));
 }
 
+/**
+ * With a house number, the query looks for an address: the plain address comes before POIs
+ * that only share it. Without one, a street name looks for the street, not for what lies on
+ * it: addresses and POIs that only match via their address come after the streets.
+ */
 function addressQueryAdjustment(candidate: Candidate, queryTokens: readonly string[]): number {
-  if (!queryTokens.some((t) => HOUSENUMBER.test(t))) return 0;
-  if (candidate.plainAddress) return ADDRESS_QUERY_BONUS;
   const own = candidate.ownNames;
-  if (own && own.length > 0 && nameMatch(queryTokens, own) === 0) return -ADDRESS_QUERY_BONUS;
-  return 0;
+  const onlyViaAddress = own && own.length > 0 && nameMatch(queryTokens, own) === 0;
+  if (!queryTokens.some((t) => HOUSENUMBER.test(t))) {
+    return candidate.plainAddress || onlyViaAddress ? -STREET_QUERY_PENALTY : 0;
+  }
+  if (candidate.plainAddress) return ADDRESS_QUERY_BONUS;
+  return onlyViaAddress ? -ADDRESS_QUERY_BONUS : 0;
 }
 
 /** Sorts the candidates by descending score (stable, without changing the input). */

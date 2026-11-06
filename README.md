@@ -401,8 +401,10 @@ relevance (`bm25`), match with the name, `importance` (city before district befo
 house number) and – if given – proximity to the location. Well-known objects get a higher
 `importance`: +0.1 with a `wikidata` or `wikipedia` tag, and places up to +0.05 more by
 population (log scale from 1,000 to 1 million inhabitants); near the top the bonus is squeezed
-so that nothing exceeds 1. Addresses get no bonus. Hits with the same name within 2 km
-(e.g. the segments of a street) are merged into one.
+so that nothing exceeds 1. Addresses get no bonus. The segments of a street are merged during
+the import (see [Import](#import)); with a location, a street points to its segment nearest to
+it. Hits with the same name within 2 km that are still separate (e.g. pieces of a street that
+do not touch) are merged into one.
 
 **Languages:** `name:de` and `name:en` are stored separately during the import, and all variants
 are searched. `lang=de|en` selects the displayed name; otherwise `name` applies.
@@ -451,8 +453,9 @@ curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
 
 Invalid parameters return `400` with a message like `q: must be at least 2 characters long`.
 As long as there is no index at `INDEX_PATH` (default `$DATA_DIR/index.sqlite`), both endpoints answer `503`. This also
-applies to an index with an old schema (currently version 10, since the result type in the
-full-text index for `types` and `INDEX_TYPES`; version 9 brought popularity in `importance` and
+applies to an index with an old schema (currently version 11, since street segments are merged
+during the import; version 10 brought the result type in the full-text index for `types` and
+`INDEX_TYPES`, version 9 brought popularity in `importance` and
 landmarks, version 8 categories, more POI kinds and city/district/postcode from boundaries,
 version 7 split and joined street names, version
 6 the word statistics for bm25, version 5 country and state from administrative boundaries): then
@@ -625,7 +628,11 @@ Without `--region`, `REGION_URL` applies. Steps:
 5. `osmium export` as a GeoJSON sequence that is read line by line (constant memory use). Every
    entry gets country and state, and missing city, district and postcode, from the boundaries on
    insert.
-6. Build `index.next.sqlite` (table `places`, FTS5 table `places_fts` with a prefix index and a
+6. Merge street segments: segments with the same name, postcode, city and district that share
+   an end point become one entry (the segment closest to the middle, with the highest
+   importance). The midpoints of all its segments are kept in `street_points`, so that the
+   location bias and `/reverse` still work along the whole street.
+7. Build `index.next.sqlite` (table `places`, FTS5 table `places_fts` with a prefix index and a
    grid cell (0.25°) per entry, R\*Tree `places_rtree`, table `meta`) and swap it in atomically
    for `index.sqlite`.
 

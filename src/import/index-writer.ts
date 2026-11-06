@@ -4,7 +4,7 @@ import { ATTRIBUTION } from '../api/attribution.js';
 import { boundingBox, distanceKm, gridCell } from '../search/geo.js';
 import { housenumberText, indexText } from '../search/normalize.js';
 import { kindToken, RESULT_TYPES, resultType, type ResultType } from '../search/result-type.js';
-import { withLocation, type Place, type PlaceLocation } from './place.js';
+import { withLocation, type Place, type PlaceLocation, type Position } from './place.js';
 import { Progress, type Logger } from './progress.js';
 
 /**
@@ -18,8 +18,10 @@ import { Progress, type Logger } from './progress.js';
  * 8: `category` (e.g. `shop=supermarket`), more POI kinds, city/district/postcode from boundaries.
  * 9: popularity in `importance` (Wikidata/Wikipedia, population), landmarks (`man_made`, `natural`).
  * 10: FTS column `kind` (result type) for the `types` parameter; INDEX_TYPES, meta `types`.
+ * 11: connected street segments with the same name merged during the import; their
+ *     midpoints in `street_points` for the location and `/reverse`.
  */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 const PLACE_COLUMNS = `osm_type, osm_id, type, name, name_de, name_en, street, housenumber,
   postcode, city, district, state, country, category, lat, lon, importance`;
@@ -45,6 +47,12 @@ CREATE TABLE staging.places (
   lon         REAL    NOT NULL,
   importance  REAL    NOT NULL,
   UNIQUE (osm_type, osm_id)
+);
+-- End points of street segments (seg = rowid in staging.places), in 1e-7 degrees.
+CREATE TABLE staging.segment_ends (
+  seg INTEGER NOT NULL,
+  lat INTEGER NOT NULL,
+  lon INTEGER NOT NULL
 );
 `;
 
@@ -93,6 +101,16 @@ CREATE VIRTUAL TABLE places_rtree USING rtree(id, min_lat, max_lat, min_lon, max
 CREATE TABLE terms (term TEXT PRIMARY KEY, docs INTEGER NOT NULL) WITHOUT ROWID;
 CREATE TABLE prefixes (prefix TEXT PRIMARY KEY, docs INTEGER NOT NULL) WITHOUT ROWID;
 
+-- Midpoints of the segments of merged streets (place_id = places.id). The search uses the
+-- nearest one for the distance to the location, /reverse finds the street at every segment.
+CREATE TABLE street_points (
+  id       INTEGER PRIMARY KEY,
+  place_id INTEGER NOT NULL,
+  lat      REAL    NOT NULL,
+  lon      REAL    NOT NULL
+);
+CREATE VIRTUAL TABLE street_points_rtree USING rtree(id, min_lat, max_lat, min_lon, max_lon);
+
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `;
 
@@ -105,6 +123,17 @@ function resultTypeOf(type: unknown, names: unknown[]): ResultType {
     String(type),
     names.some((n) => typeof n === 'string' && n !== ''),
   );
+}
+
+/** Coordinates of segment end points as integers (1e-7 degrees, as in OSM). */
+const toE7 = (degrees: number) => Math.round(degrees * 1e7);
+
+interface SegmentRow {
+  osm_type: string;
+  osm_id: number;
+  lat: number;
+  lon: number;
+  importance: number;
 }
 
 const BATCH_SIZE = 10_000;
@@ -156,6 +185,7 @@ interface AddressRow {
 export class IndexWriter {
   private readonly db: DatabaseSync;
   private readonly insert: StatementSync;
+  private readonly insertEnd: StatementSync;
   private readonly stagingPath: string;
   private readonly indexBatchSize: number;
   private readonly locate: ((lat: number, lon: number) => PlaceLocation) | undefined;
@@ -185,6 +215,9 @@ export class IndexWriter {
     this.insert = this.db.prepare(`
       INSERT OR IGNORE INTO staging.places (${PLACE_COLUMNS})
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    this.insertEnd = this.db.prepare(
+      'INSERT INTO staging.segment_ends (seg, lat, lon) VALUES (?, ?, ?)',
+    );
     // Normalization in JS, so import and search use the same function.
     this.db.function('index_text', { varargs: true, deterministic: true }, (...values) =>
       indexText(values.map((v) => (typeof v === 'string' ? v : null))),
@@ -201,7 +234,11 @@ export class IndexWriter {
     this.db.exec('BEGIN');
   }
 
-  add(input: Place): void {
+  /**
+   * Adds an entry. `ends`: end points of a street's line (`lineEnds`), so that connected
+   * segments with the same name can be merged in `finish`.
+   */
+  add(input: Place, ends: readonly Position[] = []): void {
     // On insert instead of a separate pass over all rows: the boundaries are in memory,
     // and this avoids an extra UPDATE over 25 million rows.
     const place = this.locate ? withLocation(input, this.locate(input.lat, input.lon)) : input;
@@ -225,6 +262,12 @@ export class IndexWriter {
       place.importance,
     );
     this.count += Number(result.changes);
+    if (result.changes > 0 && place.type === 'street') {
+      for (const [lon, lat] of ends) {
+        if (lat === undefined || lon === undefined) continue;
+        this.insertEnd.run(result.lastInsertRowid, toE7(lat), toE7(lon));
+      }
+    }
     if (++this.pending >= BATCH_SIZE) {
       this.db.exec('COMMIT; BEGIN');
       this.pending = 0;
@@ -234,6 +277,10 @@ export class IndexWriter {
   /** Builds FTS and R*Tree, writes metadata and closes the file. Returns the row count. */
   finish(meta: Record<string, string>): number {
     this.db.exec('COMMIT');
+    // On the staging rows, before merging: the segments of a street keep the postcode of
+    // their own addresses, so a street in two postcode areas stays two entries.
+    this.assignStreetAddresses();
+    this.mergeStreetSegments();
     this.log('Sorting entries');
     this.db.exec(`
       BEGIN;
@@ -243,8 +290,8 @@ export class IndexWriter {
       DETACH DATABASE staging;
     `);
     rmSync(this.stagingPath, { force: true });
-    this.assignStreetAddresses();
     this.keepIndexTypes();
+    this.buildStreetPoints();
     this.buildSearchIndexes();
     this.log('Word statistics and optimization');
     const ftsTokens = this.buildTermStats();
@@ -341,22 +388,22 @@ export class IndexWriter {
   private assignStreetAddressesInTransaction(): void {
     // Only for this step: find a street's addresses within a latitude band.
     this.db.exec(`
-      CREATE INDEX places_street_lat ON places (street, lat)
+      CREATE INDEX staging.places_street_lat ON places (street, lat)
         WHERE street IS NOT NULL AND (city IS NOT NULL OR postcode IS NOT NULL);
       CREATE TEMP TABLE street_address (
         id INTEGER PRIMARY KEY, city TEXT, district TEXT, postcode TEXT);
     `);
     const where = `type = 'street' AND name IS NOT NULL AND (city IS NULL OR postcode IS NULL)`;
     const streets = this.db.prepare(
-      `SELECT id, name, city, district, postcode, lat, lon FROM places WHERE ${where}`,
+      `SELECT rowid AS id, name, city, district, postcode, lat, lon FROM staging.places WHERE ${where}`,
     );
     const { total } = this.db
-      .prepare(`SELECT count(*) AS total FROM places WHERE ${where}`)
+      .prepare(`SELECT count(*) AS total FROM staging.places WHERE ${where}`)
       .get() as { total: number };
     const progress = this.progress('Assigning streets', total);
     let done = 0;
     const addresses = this.db.prepare(`
-      SELECT city, district, postcode, lat, lon FROM places INDEXED BY places_street_lat
+      SELECT city, district, postcode, lat, lon FROM staging.places INDEXED BY places_street_lat
        WHERE street = ? AND (city IS NOT NULL OR postcode IS NOT NULL)
          AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?`);
     const save = this.db.prepare(
@@ -410,14 +457,14 @@ export class IndexWriter {
 
     progress.finish(done);
     this.db.exec(`
-      UPDATE places
-         SET city = coalesce(places.city, a.city),
-             district = coalesce(places.district, a.district),
-             postcode = coalesce(places.postcode, a.postcode)
+      UPDATE staging.places AS p
+         SET city = coalesce(p.city, a.city),
+             district = coalesce(p.district, a.district),
+             postcode = coalesce(p.postcode, a.postcode)
         FROM temp.street_address a
-       WHERE places.id = a.id;
+       WHERE p.rowid = a.id;
       DROP TABLE temp.street_address;
-      DROP INDEX places_street_lat;
+      DROP INDEX staging.places_street_lat;
     `);
   }
 
@@ -426,6 +473,109 @@ export class IndexWriter {
    * postcode from the addresses. The rest is numbered anew without gaps and in the same
    * order: the search relies on ids sorted by importance (`findAddressStart`).
    */
+  /**
+   * Merges street segments that share an end point and have the same names, postcode, city
+   * and district (segments in different postcode areas stay apart). One entry per street
+   * remains: the segment closest to the middle of all segments, with the highest importance.
+   * The midpoints of all segments go to `street_points` (see `buildStreetPoints`).
+   */
+  private mergeStreetSegments(): void {
+    this.db.exec(`
+      CREATE TEMP TABLE merged_points (
+        osm_type TEXT NOT NULL, osm_id INTEGER NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL);
+      CREATE INDEX staging.segment_ends_point ON segment_ends (lat, lon);
+    `);
+    const { maxSeg } = this.db
+      .prepare('SELECT coalesce(max(seg), 0) AS maxSeg FROM staging.segment_ends')
+      .get() as { maxSeg: number };
+    if (maxSeg === 0) return;
+    this.log('Merging street segments');
+
+    // Union-find over the segments; ids are rowids in staging.places.
+    const parent = new Int32Array(maxSeg + 1).map((_, i) => i);
+    const root = (i: number): number => {
+      let r = i;
+      while (parent[r] !== r) r = parent[r] ?? r;
+      while (parent[i] !== r) [parent[i], i] = [r, parent[i] ?? r];
+      return r;
+    };
+    const edges = this.db.prepare(`
+      SELECT a.seg AS a, b.seg AS b
+        FROM staging.segment_ends a
+        JOIN staging.segment_ends b ON b.lat = a.lat AND b.lon = a.lon AND b.seg > a.seg
+        JOIN staging.places pa ON pa.rowid = a.seg
+        JOIN staging.places pb ON pb.rowid = b.seg
+       WHERE pa.name IS pb.name AND pa.name_de IS pb.name_de AND pa.name_en IS pb.name_en
+         AND pa.postcode IS pb.postcode AND pa.city IS pb.city AND pa.district IS pb.district`);
+    for (const edge of edges.iterate()) {
+      const { a, b } = edge as { a: number; b: number };
+      const ra = root(a);
+      const rb = root(b);
+      if (ra !== rb) parent[ra] = rb;
+    }
+
+    const groups = new Map<number, number[]>();
+    const segments = this.db.prepare('SELECT DISTINCT seg FROM staging.segment_ends');
+    for (const row of segments.iterate()) {
+      const seg = (row as { seg: number }).seg;
+      const r = root(seg);
+      const group = groups.get(r);
+      if (group) group.push(seg);
+      else groups.set(r, [seg]);
+    }
+
+    const member = this.db.prepare(
+      'SELECT osm_type, osm_id, lat, lon, importance FROM staging.places WHERE rowid = ?',
+    );
+    const promote = this.db.prepare('UPDATE staging.places SET importance = ? WHERE rowid = ?');
+    const drop = this.db.prepare('DELETE FROM staging.places WHERE rowid = ?');
+    const point = this.db.prepare(
+      'INSERT INTO temp.merged_points (osm_type, osm_id, lat, lon) VALUES (?, ?, ?, ?)',
+    );
+    let segmentCount = 0;
+    let merged = 0;
+    this.db.exec('BEGIN');
+    for (const [, segs] of groups) {
+      segmentCount += segs.length;
+      if (segs.length < 2) continue;
+      const rows = segs.map((seg) => ({ seg, ...(member.get(seg) as unknown as SegmentRow) }));
+      const lat = rows.reduce((sum, r) => sum + r.lat, 0) / rows.length;
+      const lon = rows.reduce((sum, r) => sum + r.lon, 0) / rows.length;
+      let keep = rows[0] as (typeof rows)[number];
+      for (const r of rows) {
+        if (distanceKm(lat, lon, r.lat, r.lon) < distanceKm(lat, lon, keep.lat, keep.lon)) keep = r;
+      }
+      promote.run(Math.max(...rows.map((r) => r.importance)), keep.seg);
+      for (const r of rows) {
+        if (r.seg !== keep.seg) drop.run(r.seg);
+        point.run(keep.osm_type, keep.osm_id, r.lat, r.lon);
+      }
+      merged += rows.length - 1;
+    }
+    this.db.exec('COMMIT');
+    this.count -= merged;
+    this.log(
+      `Merged ${String(segmentCount)} street segments into ${String(segmentCount - merged)} streets`,
+    );
+  }
+
+  /** Fills `street_points` and its R*Tree with the final ids (after `keepIndexTypes`). */
+  private buildStreetPoints(): void {
+    this.db.exec(`
+      BEGIN;
+      INSERT INTO street_points (place_id, lat, lon)
+        SELECT p.id, m.lat, m.lon
+          FROM temp.merged_points m
+          JOIN places p ON p.osm_type = m.osm_type AND p.osm_id = m.osm_id
+         ORDER BY p.id;
+      CREATE INDEX street_points_place ON street_points (place_id);
+      INSERT INTO street_points_rtree (id, min_lat, max_lat, min_lon, max_lon)
+        SELECT id, lat, lat, lon, lon FROM street_points;
+      DROP TABLE temp.merged_points;
+      COMMIT;
+    `);
+  }
+
   private keepIndexTypes(): void {
     if (RESULT_TYPES.every((t) => this.indexTypes.includes(t))) return;
     this.log(`Keeping only ${this.indexTypes.join(', ')}`);
