@@ -31,5 +31,9 @@ First version. Index schema 11.
 - `IMPORT_NODE_INDEX=file` keeps the node locations of `osmium export` on disk instead of in
   memory, for imports on machines with little RAM. Errors of osmium name the signal that ended
   it, with a hint to memory for `SIGKILL`.
+- Disk space during the import: a warning before it starts when less than about 4 times the
+  extract's size is free, `DiskFullError` naming the directory and the free space instead of
+  SQLite's `database or disk is full`, SQLite's sort files next to the index instead of in
+  `/tmp`, and the filtered extract deleted as soon as osmium is done.
 - CI on GitHub Actions (checks, Docker smoke test, vulnerability scan) and a release workflow
   that publishes signed images with SBOM and provenance to the GitHub Container Registry.

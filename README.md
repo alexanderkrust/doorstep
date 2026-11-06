@@ -105,13 +105,13 @@ At startup, `serve` logs a warning for each setting that is risky in public oper
 Guide values for the Germany extract. Only the Düsseldorf administrative region was measured
 (217 MB PBF → 389 MB index); the values for Germany are extrapolated from it.
 
-| Resource          | Germany (estimate)                     | Note                                                                                                                                                                                                        |
-| ----------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Disk (volume)     | **at least 30 GB free**                | Extract about 4.9 GB, index about 10 GB. During an update, the filtered intermediate file, `index.next.sqlite` and its staging file are on the volume as well, and while diffs are applied a second extract |
-| RAM, API          | 1 GB for the process, **better 8 GB+** | The process itself needs little; SQLite reads the index from disk. For response times below 50 ms, the index should fit into the system's page cache                                                        |
-| RAM, import       | **4–8 GB**                             | `osmium export` keeps the node coordinates in memory; the import runs as a separate process next to the API. With less, set `IMPORT_NODE_INDEX=file` (see [Import](#import))                                |
-| CPU               | 2 cores, more for more throughput      | Searches run in worker threads, one per core except the main thread's (`SEARCH_WORKERS`); import and update run as a separate process                                                                       |
-| First import time | about 15–30 min plus download          | Düsseldorf administrative region: 45 s for 1.4 million entries                                                                                                                                              |
+| Resource          | Germany (estimate)                     | Note                                                                                                                                                                                                                                                                                                                                       |
+| ----------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Disk (volume)     | **at least 30 GB free**                | Extract about 4.9 GB, index about 10 GB. During an import, `index.next.sqlite`, its staging file and SQLite's sort files are on the volume as well (during an update next to the old index), and while diffs are applied a second extract. With Docker Desktop, the VM's disk limit counts (see [Disk full](#disk-full-during-the-import)) |
+| RAM, API          | 1 GB for the process, **better 8 GB+** | The process itself needs little; SQLite reads the index from disk. For response times below 50 ms, the index should fit into the system's page cache                                                                                                                                                                                       |
+| RAM, import       | **4–8 GB**                             | `osmium export` keeps the node coordinates in memory; the import runs as a separate process next to the API. With less, set `IMPORT_NODE_INDEX=file` (see [Import](#import))                                                                                                                                                               |
+| CPU               | 2 cores, more for more throughput      | Searches run in worker threads, one per core except the main thread's (`SEARCH_WORKERS`); import and update run as a separate process                                                                                                                                                                                                      |
+| First import time | about 15–30 min plus download          | Düsseldorf administrative region: 45 s for 1.4 million entries                                                                                                                                                                                                                                                                             |
 
 ## Operations
 
@@ -794,6 +794,20 @@ for a `--memory` limit or the Docker Desktop VM size), or set `IMPORT_NODE_INDEX
 then keeps the node locations in `$DATA_DIR/node-locations.idx` (deleted after the import), which
 needs far less memory and some more disk space and time. The file mode was only tested on the
 test extract, not measured on Germany.
+
+### Disk full during the import
+
+The import writes everything next to the index (by default `$DATA_DIR`): the filtered extract
+(Germany about 2.5 GB, deleted once osmium is done), `index.next.sqlite` with its staging file,
+and SQLite's temp files for sorting, which also go there instead of `/tmp`. Before it starts,
+the import logs a warning when less than about 4 times the extract's size is free there. If the
+disk runs full anyway, it fails with `DiskFullError: disk full while building the index in
+/data (… GB free)`, removes its partial files and leaves the old index untouched.
+
+Free up space or give the volume more. With Docker Desktop, all images, volumes and the build
+cache share one VM disk with a fixed limit (Settings → Resources → Disk usage limit);
+`docker system df` shows what is using it, and `docker builder prune` removes the build cache.
+The 4× estimate is not measured on Germany.
 
 ## Data license
 

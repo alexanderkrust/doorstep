@@ -1,4 +1,5 @@
 import { rmSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { ATTRIBUTION } from '../api/attribution.js';
 import { boundingBox, distanceKm, gridCell } from '../search/geo.js';
@@ -179,6 +180,16 @@ interface AddressRow {
 }
 
 /**
+ * Where SQLite puts its temp files (sorting for ORDER BY and CREATE INDEX, several GB for
+ * Germany); `''` restores the default (`/tmp`). Next to the index, so the import only needs
+ * space on that volume, also in containers with a small or read-only `/tmp`. The setting is
+ * global for the process.
+ */
+function setTempDirectory(db: DatabaseSync, dir: string): void {
+  db.exec(`PRAGMA temp_store_directory = '${dir.replaceAll("'", "''")}'`);
+}
+
+/**
  * Writes a new index. Rows first go into a staging file; at the end they are copied
  * over sorted by importance, and FTS and R*Tree are built.
  */
@@ -206,6 +217,7 @@ export class IndexWriter {
     this.db = new DatabaseSync(path);
     // The import writes to fresh files that are discarded on errors.
     this.db.exec('PRAGMA journal_mode = OFF; PRAGMA synchronous = OFF;');
+    setTempDirectory(this.db, dirname(path));
     this.db.exec(SCHEMA);
     this.db.prepare('ATTACH DATABASE ? AS staging').run(this.stagingPath);
     this.db.exec('PRAGMA staging.journal_mode = OFF; PRAGMA staging.synchronous = OFF;');
@@ -308,6 +320,7 @@ export class IndexWriter {
     };
     for (const [key, value] of Object.entries(entries)) setMeta.run(key, value);
     this.db.exec('ANALYZE; PRAGMA journal_mode = DELETE;');
+    setTempDirectory(this.db, '');
     this.db.close();
     return this.count;
   }
@@ -608,7 +621,10 @@ export class IndexWriter {
 
   /** Aborts and deletes the staging file; the caller cleans up the index file. */
   abort(): void {
-    if (this.db.isOpen) this.db.close();
+    if (this.db.isOpen) {
+      setTempDirectory(this.db, '');
+      this.db.close();
+    }
     rmSync(this.stagingPath, { force: true });
   }
 }

@@ -1,9 +1,10 @@
 import { createReadStream, existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdir, rename, rm } from 'node:fs/promises';
+import { mkdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { INDEX_FILE } from '../config/index.js';
 import { RESULT_TYPES, type ResultType } from '../search/result-type.js';
+import { DiskFullError, diskSpaceWarning, freeBytes, isDiskFull } from './disk.js';
 import { downloadExtract, type DownloadProgress } from './download.js';
 import { IndexWriter, SCHEMA_VERSION } from './index-writer.js';
 import { acquireLock } from './lock.js';
@@ -131,7 +132,10 @@ async function writeIndex(
   } catch (err) {
     writer.abort();
     await rm(tmp, { force: true });
-    throw err;
+    if (!isDiskFull(err)) throw err;
+    // Free space after removing the partial index, so the number says what is left over.
+    const dir = dirname(output);
+    throw new DiskFullError(dir, await freeBytes(dir).catch(() => 0), err);
   }
 }
 
@@ -234,6 +238,14 @@ export async function importFromPbf(
   const nodeIndex = options.nodeIndex ?? 'memory';
   const exportOptions = nodeIndexOptions(workDir, nodeIndex);
 
+  await mkdir(dirname(output), { recursive: true });
+  const warning = diskSpaceWarning(
+    dirname(output),
+    await freeBytes(dirname(output)),
+    (await stat(input)).size,
+  );
+  if (warning) log(warning);
+
   try {
     steps.start('Loading boundaries (countries, states, municipalities, districts, postcodes)');
     const boundaries = await loadBoundariesFromPbf(input, workDir, nodeIndex);
@@ -251,8 +263,14 @@ export async function importFromPbf(
       `Reading features (osmium export, node locations ${nodeIndex === 'file' ? 'on disk' : 'in memory'})`,
     );
     const replication = await readReplicationHeader(input).catch(() => null);
+    // Delete the intermediate files as soon as osmium is done (Germany: 2.5 GB filtered
+    // extract), before the index build needs the most space.
+    async function* features(): AsyncGenerator<string> {
+      yield* exportGeoJsonSeq(filtered, exportOptions);
+      await removeExportFiles(filtered, exportOptions);
+    }
     const result = await writeIndex(
-      () => exportGeoJsonSeq(filtered, exportOptions),
+      features,
       output,
       {
         source: options.source ?? input,
@@ -271,9 +289,13 @@ export async function importFromPbf(
     );
     return result;
   } finally {
-    await rm(filtered, { force: true });
-    if (exportOptions.nodeIndexFile) await rm(exportOptions.nodeIndexFile, { force: true });
+    await removeExportFiles(filtered, exportOptions);
   }
+}
+
+async function removeExportFiles(filtered: string, options: ExportOptions): Promise<void> {
+  await rm(filtered, { force: true });
+  if (options.nodeIndexFile) await rm(options.nodeIndexFile, { force: true });
 }
 
 export interface RunImportOptions {
