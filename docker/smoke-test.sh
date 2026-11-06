@@ -131,6 +131,11 @@ wait_for 30 sh -c "[ \"\$(docker inspect -f '{{.State.Health.Status}}' $API)\" =
 echo "==> GET /metrics"
 curl -fsS "$BASE/metrics" | grep -q '^doorstep_index_available 1$' || fail "/metrics without index status"
 
+echo "==> GET /openapi.json and /docs (Swagger UI from the image)"
+curl -fsS "$BASE/openapi.json" | grep -q '"openapi":"3.1.0"' || fail "/openapi.json missing"
+curl -fsS "$BASE/docs" | grep -q 'swagger-ui-bundle.js' || fail "/docs missing"
+curl -fsS -o /dev/null "$BASE/docs/swagger-ui-bundle.js" || fail "Swagger UI files missing in the image"
+
 echo "==> update without new diffs: no rebuild"
 docker exec "$API" doorstep update 2>&1 | grep -q 'nothing to rebuild' ||
   fail "update without new diffs rebuilt the index"

@@ -7,7 +7,9 @@ import { InProcessSearch, SearchPool, type SearchBackend } from '../search/searc
 import { ApiKeys, registerApiKeyCheck } from './auth.js';
 import type { FeatureCollection } from './geojson.js';
 import { Metrics } from './metrics.js';
+import { buildOpenApiDocument } from './openapi.js';
 import { registerRateLimit } from './rate-limit.js';
+import { docsRoutes } from './routes/docs.js';
 import { healthRoutes } from './routes/health.js';
 import { metricsRoutes } from './routes/metrics.js';
 import { reverseRoutes } from './routes/reverse.js';
@@ -164,6 +166,9 @@ export function buildServer(config: Config, options: ServerOptions = {}): Fastif
     indexMode: config.indexMode,
   });
   void app.register(metricsRoutes, { index, metrics, token: config.metricsToken });
+  if (config.docsEnabled) {
+    void app.register(docsRoutes, { document: buildOpenApiDocument(config) });
+  }
   void app.register(searchRoutes, {
     index: search,
     defaultLang: config.defaultLang,

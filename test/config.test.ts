@@ -39,6 +39,7 @@ describe('loadConfig', () => {
       requestTimeoutMs: 10_000,
       shutdownTimeoutMs: 10_000,
       importNodeIndex: 'memory',
+      docsEnabled: true,
     });
   });
 
@@ -91,6 +92,7 @@ describe('loadConfig', () => {
       requestTimeoutMs: 10_000,
       shutdownTimeoutMs: 10_000,
       importNodeIndex: 'memory',
+      docsEnabled: true,
     });
   });
 
@@ -242,6 +244,10 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ IMPORT_NODE_INDEX: 'disk' })).toThrow(
       /IMPORT_NODE_INDEX: must be memory or file/,
     );
+  });
+
+  it('turns the API docs off with DOCS_ENABLED=false', () => {
+    expect(loadConfig({ DOCS_ENABLED: 'false' }).docsEnabled).toBe(false);
   });
 
   describe('timeouts', () => {

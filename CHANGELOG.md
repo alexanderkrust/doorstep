@@ -35,5 +35,8 @@ First version. Index schema 11.
   extract's size is free, `DiskFullError` naming the directory and the free space instead of
   SQLite's `database or disk is full`, SQLite's sort files next to the index instead of in
   `/tmp`, and the filtered extract deleted as soon as osmium is done.
+- API documentation: Swagger UI under `/docs` and an OpenAPI 3.1 document under
+  `/openapi.json` that follows the configuration (API key, default language);
+  `DOCS_ENABLED`. Swagger UI comes with the image, without a CDN.
 - CI on GitHub Actions (checks, Docker smoke test, vulnerability scan) and a release workflow
   that publishes signed images with SBOM and provenance to the GitHub Container Registry.
