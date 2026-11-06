@@ -321,8 +321,8 @@ unless the request sends `Authorization: Bearer <token>`; in Prometheus that is
 running), `importedAt` (build time of the active index), `source` (region or file the index was
 built from), `indexMode` (`build` or `mounted`), `schemaVersion` (schema this image reads),
 `indexSchemaVersion` (schema of the index file, also when it does not match), `types` (result
-types in the index, see [Choosing what is searchable](#choosing-what-is-searchable)) and
-`attribution`. The image uses this for
+types in the index, see [Choosing what is searchable](#choosing-what-is-searchable)), `fuzzy`
+(`symspell` or `edits`, see [`GET /api`](#get-api--autosuggest)) and `attribution`. The image uses this for
 its `HEALTHCHECK`.
 
 ## Configuration (environment variables)
@@ -397,11 +397,19 @@ tried in order:
    returned).
 4. Only then the last word trimmed by up to two characters (typo at the end of a word), with
    lookahead.
-5. **One typo in any word:** a word of letters with at least 5 characters that occurs nowhere
-   in the index is replaced by the words of the index one edit away (a letter missing, an extra
-   or a wrong one, two neighbors swapped; Damerau-Levenshtein distance 1). The other words of the
-   query pick the right one: `gnies 62 düs` and `gneis 62 dsseldorf` find Gneisenaustraße 62 in
-   Düsseldorf. House numbers and postcodes are never corrected.
+5. **Typos in any word:** a word of letters that occurs nowhere in the index is replaced by the
+   words of the index within reach. An edit is a letter missing, an extra or a wrong one, or two
+   neighbors swapped (optimal string alignment distance). Up to 1 edit is allowed for 4–6
+   letters, up to 2 from 7 letters on. The other words of the query pick the right correction:
+   `gnies 62 düs`, `gxexsenau 62 düss` and `gneis 62 dsseldorf` find Gneisenaustraße 62 in
+   Düsseldorf, `zeli 106 frankfurt` finds Zeil 106. House numbers and postcodes are never
+   corrected.
+
+   This uses SymSpell: the import stores, for every word start of 4–7 letters, its forms with 1
+   or 2 letters removed (table `fuzzy_deletes`; Düsseldorf region: 1.5 million entries, 19 MB or 3.5 % of the index, 1.7 s of the import). A
+   query word then only needs to look up the forms of its own start. An index from an older
+   import without this table keeps working with 1 edit from 5 letters (`fuzzy: "edits"` in
+   `/health`); a new import adds the table.
 
 Fully typed words keep the fast exact query; lookahead and typo tolerance only run when the
 stages before find nothing. So when a house

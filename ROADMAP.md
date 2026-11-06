@@ -311,5 +311,16 @@ in Düsseldorf.
       up in the `terms` table; the other words pick the right correction
 - [x] Düsseldorf administrative region: typo queries p95 12.3 ms, normal queries unchanged
 - [ ] Measure on Germany
-- [ ] Two typos in one word, and typos in words under 5 characters (would need an index of
-      deletions, e.g. SymSpell, instead of generating the variants)
+- [x] Two typos in one word, and typos in words under 5 characters: SymSpell, see below
+
+## SymSpell (2026-11-06)
+
+- [x] Table `fuzzy_deletes`: every word start of 4–7 letters by its forms with 1 (4–6 letters) or
+      2 (7 letters) letters removed; the search looks up the forms of the query word's start and
+      checks the candidates with the optimal string alignment distance (`src/search/fuzzy.ts`)
+- [x] Up to 2 edits from 7 letters, 1 from 4; also for partly typed words
+- [x] No new schema version: indexes without the table keep the edit variants (1 edit from 5
+      letters); `/health` reports `fuzzy`
+- [x] Düsseldorf region: 1.5 million entries, +19 MB (3.5 %), 1.7 s import; typo queries p95
+      8.5 ms (12.3 ms with the edit variants), normal queries unchanged
+- [ ] Measure size and import time on Germany

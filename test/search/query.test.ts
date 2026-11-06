@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   buildFtsQuery,
   buildWordsQuery,
+  deletions,
+  maxEdits,
+  osaDistance,
   editVariants,
   isFuzzyCandidate,
   expandPrefix,
@@ -315,5 +318,40 @@ describe('buildWordsQuery with alternatives', () => {
     expect(buildWordsQuery(words, [['"gneis"*', '"gnies"*'], null, null])).toBe(
       '("gneis"* OR "gnies"*) AND "62" AND "dues"*',
     );
+  });
+});
+
+describe('osaDistance', () => {
+  it('counts a swap of neighbors as one edit', () => {
+    expect(osaDistance('gnies', 'gneis', 2)).toBe(1);
+    expect(osaDistance('zeli', 'zeil', 2)).toBe(1);
+  });
+
+  it('counts missing, extra and wrong letters', () => {
+    expect(osaDistance('gneisenaustrase', 'gneisenaustrasse', 2)).toBe(1);
+    expect(osaDistance('gxexsenau', 'gneisenau', 2)).toBe(2);
+    expect(osaDistance('', 'abc', 5)).toBe(3);
+  });
+
+  it('stops at max and returns max + 1', () => {
+    expect(osaDistance('gxexsxnau', 'gneisenau', 2)).toBe(3);
+    expect(osaDistance('abcdefgh', 'zyxwvuts', 1)).toBe(2);
+  });
+});
+
+describe('deletions', () => {
+  it('contains the word and every form with up to d letters removed', () => {
+    expect(deletions('zeil', 1).sort()).toEqual(['eil', 'zeil', 'zel', 'zei', 'zil'].sort());
+    const two = deletions('gneisen', 2);
+    expect(two).toContain('gneisen');
+    expect(two).toContain('neisen');
+    expect(two).toContain('gnisn');
+    expect(new Set(two).size).toBe(two.length);
+  });
+});
+
+describe('maxEdits', () => {
+  it('allows no edit below 4 letters, 1 up to 6 and 2 from 7', () => {
+    expect([3, 4, 6, 7, 12].map(maxEdits)).toEqual([0, 1, 1, 2, 2]);
   });
 });

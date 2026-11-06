@@ -3,6 +3,7 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { SCHEMA_VERSION } from '../import/index-writer.js';
 import { importanceFor } from '../import/place.js';
 import { bm25, ftsColumns, idf, type FtsColumns } from './bm25.js';
+import { fuzzyCorrections, type FuzzySource } from './fuzzy.js';
 import { boundingBox, distanceKm, gridCellsInBox } from './geo.js';
 import { nameForms, normalizeTokens } from './normalize.js';
 import {
@@ -410,10 +411,11 @@ export class SearchIndex {
   }
 
   /**
-   * One typo in any word: a letter missing, an extra one, a wrong one or two swapped
-   * ("gnies 62 düs"). Words of letters with at least 5 characters that occur nowhere in the
-   * index are replaced by the words one edit away that do (see `editVariants`); the other words
-   * of the query pick the right one. Returns the corrected words, or `null` if nothing can be
+   * Typos in any word: letters missing, extra, wrong or two swapped ("gnies 62 düs"). Words
+   * that occur nowhere in the index are replaced by the words of the index within reach: with
+   * SymSpell (see `fuzzyCorrections`) up to 1 edit from 4 letters and 2 from 7; in an index from
+   * before SymSpell, 1 edit from 5 letters (see `editVariants`). The other words of the query
+   * pick the right one. Returns the corrected words, or `null` if nothing can be
    * corrected or no hit is left.
    */
   private correctTypos(
@@ -430,11 +432,14 @@ export class SearchIndex {
         corrections.push(null);
         continue;
       }
+      const found = stats.hasFuzzyDeletes
+        ? fuzzyCorrections(token, prefix, fuzzySource(stats), MAX_CORRECTIONS)
+        : isFuzzyCandidate(token)
+          ? editVariants(token)
+              .filter((variant) => stats.exists(variant, prefix))
+              .slice(0, MAX_CORRECTIONS)
+          : [];
       // A word that is not in the index and cannot be corrected: nothing can match.
-      if (!isFuzzyCandidate(token)) return null;
-      const found = editVariants(token)
-        .filter((variant) => stats.exists(variant, prefix))
-        .slice(0, MAX_CORRECTIONS);
       if (found.length === 0) return null;
       corrections.push(found);
     }
@@ -670,4 +675,14 @@ function containsWord(columns: FtsColumns, token: string, prefix: boolean): bool
   return Object.values(columns).some((words: readonly string[]) =>
     words.some((word) => (prefix ? word.startsWith(token) : word === token)),
   );
+}
+
+/** The word statistics as a source for `fuzzyCorrections`. */
+function fuzzySource(stats: TermStats): FuzzySource {
+  return {
+    prefixes: (keys) => stats.fuzzyPrefixes(keys),
+    completions: (prefix) => stats.completions(prefix),
+    docs: (term) => stats.docs(term),
+    prefixDocs: (prefix) => stats.prefixDocs(prefix),
+  };
 }

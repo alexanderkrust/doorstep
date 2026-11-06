@@ -5,6 +5,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { IndexWriter } from '../../src/import/index-writer.js';
 import { featureToPlace } from '../../src/import/place.js';
@@ -63,6 +64,9 @@ const FEATURES = [
     name: 'Gneisenau-Eck',
     ...addr('Nordstraße', '1', '40477', 'Düsseldorf'),
   }),
+  // Frankfurt: a 4-letter street name
+  street(50.1147, 8.6825, 'Zeil', 'Frankfurt am Main', '60313'),
+  node(50.1148, 8.6826, addr('Zeil', '106', '60313', 'Frankfurt am Main')),
   // Fully typed queries must keep their results
   street(51.2235, 6.7795, 'Königsallee', 'Düsseldorf', '40212'),
   node(51.2236, 6.7796, addr('Königsallee', '1', '40212', 'Düsseldorf')),
@@ -171,7 +175,55 @@ describe('typo tolerance in every word', () => {
     expect(first('gneis 63 düss')).toMatchObject({ type: 'street', city: 'Düsseldorf' });
   });
 
-  it('finds nothing for words with more than one typo', () => {
-    expect(search('gxexsenau 62 düss')).toEqual([]);
+  it('finds two typos in a long word', () => {
+    expect(first('gxexsenau 62 düss')).toMatchObject({ housenumber: '62', city: 'Düsseldorf' });
+  });
+
+  it('finds a swap after the 7th letter', () => {
+    expect(first('gneisenaustrsae 62 düs')).toMatchObject({
+      housenumber: '62',
+      city: 'Düsseldorf',
+    });
+  });
+
+  it('finds a typo in a 4-letter word', () => {
+    expect(first('zeli 106 frankfurt')).toMatchObject({ street: 'Zeil', housenumber: '106' });
+  });
+
+  it('finds nothing for words with more typos than allowed', () => {
+    expect(search('gxexsxnau 62 düss')).toEqual([]);
+  });
+});
+
+describe('typo tolerance without the SymSpell table (index from an older import)', () => {
+  let oldDir: string;
+  let old: SearchIndex;
+
+  beforeAll(async () => {
+    oldDir = await mkdtemp(join(tmpdir(), 'doorstep-no-symspell-'));
+    const path = join(oldDir, 'index.sqlite');
+    const writer = new IndexWriter(path);
+    for (const feature of FEATURES) {
+      const place = featureToPlace(feature);
+      if (place) writer.add(place);
+    }
+    writer.finish({});
+    const db = new DatabaseSync(path);
+    db.exec("DROP TABLE fuzzy_deletes; DELETE FROM meta WHERE key = 'fuzzy';");
+    db.close();
+    old = new SearchIndex(path);
+  });
+
+  afterAll(async () => {
+    old.close();
+    await rm(oldDir, { recursive: true, force: true });
+  });
+
+  it('still corrects one typo in words of 5 letters or more', () => {
+    expect(old.search({ q: 'gnies 62 düs', limit: 1 })?.[0]).toMatchObject({ housenumber: '62' });
+  });
+
+  it('does not correct two typos', () => {
+    expect(old.search({ q: 'gxexsenau 62 düss', limit: 1 })).toEqual([]);
   });
 });
