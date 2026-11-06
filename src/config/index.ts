@@ -115,6 +115,12 @@ const envSchema = z
     TRUST_PROXY: flag(false),
     /** Entries in the LRU cache for search requests; 0 = off. */
     CACHE_SIZE: optional(z.coerce.number().int().min(0).default(10_000)),
+    /** `Cache-Control: max-age` of search answers in seconds; 0 = no caching by clients. */
+    CACHE_MAX_AGE: optional(z.coerce.number().int().min(0).max(31_536_000).default(3600)),
+    /** Bearer token that /metrics requires; without it, /metrics is open. */
+    METRICS_TOKEN: optional(
+      z.string().trim().min(16, 'must be at least 16 characters long').optional(),
+    ),
     /** Schedule for automatic updates in cron format, e.g. "0 3 * * *". */
     UPDATE_CRON: optional(cronExpression.optional()),
     /** Comma-separated list of allowed origins, "*" = all. */
@@ -160,6 +166,9 @@ export interface Config {
   indexPath: string;
   /** Result types the import puts into the index (in `build` mode). */
   indexTypes: ResultType[];
+  /** `max-age` for `/api` and `/reverse` in seconds; 0 = `no-store`. */
+  cacheMaxAge: number;
+  metricsToken: string | null;
 }
 
 export class ConfigError extends Error {
@@ -195,5 +204,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     indexMode: e.INDEX_MODE,
     indexPath: e.INDEX_PATH ?? join(e.DATA_DIR, INDEX_FILE),
     indexTypes: e.INDEX_TYPES,
+    cacheMaxAge: e.CACHE_MAX_AGE,
+    metricsToken: e.METRICS_TOKEN ?? null,
   };
 }

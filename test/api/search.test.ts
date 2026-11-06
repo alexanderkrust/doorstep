@@ -137,12 +137,15 @@ describe('GET /api', () => {
       [51.2195, 6.7805],
     ] as const) {
       const { body } = await search(q('Königsallee', `&lat=${String(lat)}&lon=${String(lon)}`));
-      // Segments of the same street are merged into one hit ("Steinstraße/Königsallee" is
-      // another object).
+      // Segments of the same street are merged into one hit per postcode area (the Kö has
+      // 40212 and, at its southern end, 40215; "Steinstraße/Königsallee" is another object).
       const streets = body.features.filter(
         (f) => f.properties['type'] === 'street' && f.properties['name'] === 'Königsallee',
       );
-      expect(streets).toHaveLength(1);
+      const postcodes = streets.map(
+        (f) => (f.properties['address'] as { postcode?: string }).postcode,
+      );
+      expect(new Set(postcodes).size).toBe(streets.length);
       const [sLon, sLat] = streets[0]?.geometry.coordinates ?? [0, 0];
       expect(distanceMeters(lat, lon, sLat, sLon)).toBeLessThan(250);
     }

@@ -80,6 +80,36 @@ const FEATURES: Feature[] = [
     'addr:housenumber': '99',
     'addr:postcode': '40227',
   }),
+  // Search merge: pieces in two postcode areas stay two hits, pieces that do not touch in the
+  // same area become one.
+  way(
+    [
+      [6.9, 51.4],
+      [6.905, 51.4],
+    ],
+    { name: 'Kölner Straße', postal_code: '40211' },
+  ),
+  way(
+    [
+      [6.905, 51.4],
+      [6.91, 51.4],
+    ],
+    { name: 'Kölner Straße', postal_code: '40227' },
+  ),
+  way(
+    [
+      [6.95, 51.4],
+      [6.952, 51.4],
+    ],
+    { name: 'Ulmenweg', postal_code: '40210' },
+  ),
+  way(
+    [
+      [6.955, 51.4],
+      [6.957, 51.4],
+    ],
+    { name: 'Ulmenweg', postal_code: '40210' },
+  ),
 ];
 
 interface Row {
@@ -163,6 +193,13 @@ describe('merging street segments during the import', () => {
   it('keeps a street apart where its addresses have other postcodes', () => {
     const birkenweg = rows.filter((r) => r.name === 'Birkenweg');
     expect(birkenweg.map((r) => r.postcode).sort()).toEqual(['40210', '40227']);
+  });
+
+  it('shows a street once per postcode area in the search', () => {
+    const koelner = index.search({ q: 'Kölner Straße', limit: 5, lat: 51.4, lon: 6.905 }) ?? [];
+    expect(koelner.map((r) => r.postcode).sort()).toEqual(['40211', '40227']);
+    const ulmen = index.search({ q: 'Ulmenweg', limit: 5 }) ?? [];
+    expect(ulmen).toHaveLength(1);
   });
 
   it('numbers the rows without gaps', () => {

@@ -117,7 +117,8 @@ const SETTLEMENT_DEDUPE_RADIUS_KM = 10;
 
 /**
  * Equal hits have the same kind, name and address. Only the main name counts: two OSM objects
- * for the same station may differ in `name:en`.
+ * for the same station may differ in `name:en`. Streets also need the same postcode: for
+ * delivery checks, a street in two postcode areas is shown once per area.
  */
 const dedupeKey = (row: PlaceRow) =>
   [
@@ -125,6 +126,7 @@ const dedupeKey = (row: PlaceRow) =>
     row.name ?? row.name_de ?? row.name_en,
     row.street,
     row.housenumber,
+    row.type === 'street' ? row.postcode : null,
   ]
     .map((v) => v?.toLowerCase() ?? '')
     .join('|');

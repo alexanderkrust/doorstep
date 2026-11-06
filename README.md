@@ -254,8 +254,10 @@ lines.
 | `doorstep_updates_total`                                                                | counter   | Scheduled updates by `result` (success/failure/skipped) |
 | `process_resident_memory_bytes`, `nodejs_heap_used_bytes`, `process_start_time_seconds` | gauge     | Process                                                 |
 
-`/metrics` is not protected. If it should not be publicly reachable, block it in the reverse
-proxy.
+`/metrics` is open by default. With `METRICS_TOKEN` (at least 16 characters) it answers `401`
+unless the request sends `Authorization: Bearer <token>`; in Prometheus that is
+`authorization: { credentials: <token> }` in the scrape config. `/health` stays open for the
+`HEALTHCHECK`.
 
 ### Healthcheck
 
@@ -273,27 +275,29 @@ its `HEALTHCHECK`.
 Configuration happens exclusively via environment variables. Invalid values lead to an error
 message at startup listing all affected variables.
 
-| Variable             | Default                                                       | Description                                                             |
-| -------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `REGION_URL`         | `https://download.geofabrik.de/europe/germany-latest.osm.pbf` | Geofabrik extract for import and update (not needed when `mounted`)     |
-| `HOST`               | `0.0.0.0`                                                     | Bind address of the API                                                 |
-| `PORT`               | `2322`                                                        | Port of the API                                                         |
-| `DATA_DIR`           | `/data`                                                       | Directory for extract and index (absolute path)                         |
-| `INDEX_MODE`         | `build`                                                       | `build`: the container builds the index; `mounted`: prebuilt, see above |
-| `INDEX_TYPES`        | all                                                           | Result types the import puts into the index, e.g. `street`; see below   |
-| `INDEX_PATH`         | `$DATA_DIR/index.sqlite`                                      | Path of the index file (absolute path)                                  |
-| `DEFAULT_LANG`       | `de`                                                          | Default language (two-letter code)                                      |
-| `AUTO_IMPORT`        | `false` (`true` in the Docker image)                          | `serve` imports in the background if no index exists                    |
-| `UPDATE_CRON`        | – (no updates)                                                | Schedule for automatic updates in cron format, e.g. `0 3 * * *`         |
-| `RATE_LIMIT_ENABLED` | `true`                                                        | Rate limiting on or off                                                 |
-| `RATE_LIMIT`         | `60`                                                          | Requests per minute and IP, `0` = off                                   |
-| `API_KEYS`           | –                                                             | Comma-separated API keys                                                |
-| `RATE_LIMIT_API_KEY` | `600`                                                         | Requests per minute and API key                                         |
-| `TRUST_PROXY`        | `false`                                                       | Take the client IP from `X-Forwarded-For` (only behind a reverse proxy) |
-| `CACHE_SIZE`         | `10000`                                                       | Entries in the cache for search requests, `0` = off                     |
-| `CORS_ORIGINS`       | `*`                                                           | Comma-separated list of allowed origins                                 |
-| `LOG_LEVEL`          | `info`                                                        | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`            |
-| `TZ`                 | `UTC` (container)                                             | Time zone for `UPDATE_CRON`                                             |
+| Variable             | Default                                                       | Description                                                              |
+| -------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `REGION_URL`         | `https://download.geofabrik.de/europe/germany-latest.osm.pbf` | Geofabrik extract for import and update (not needed when `mounted`)      |
+| `HOST`               | `0.0.0.0`                                                     | Bind address of the API                                                  |
+| `PORT`               | `2322`                                                        | Port of the API                                                          |
+| `DATA_DIR`           | `/data`                                                       | Directory for extract and index (absolute path)                          |
+| `INDEX_MODE`         | `build`                                                       | `build`: the container builds the index; `mounted`: prebuilt, see above  |
+| `INDEX_TYPES`        | all                                                           | Result types the import puts into the index, e.g. `street`; see below    |
+| `INDEX_PATH`         | `$DATA_DIR/index.sqlite`                                      | Path of the index file (absolute path)                                   |
+| `DEFAULT_LANG`       | `de`                                                          | Default language (two-letter code)                                       |
+| `AUTO_IMPORT`        | `false` (`true` in the Docker image)                          | `serve` imports in the background if no index exists                     |
+| `UPDATE_CRON`        | – (no updates)                                                | Schedule for automatic updates in cron format, e.g. `0 3 * * *`          |
+| `RATE_LIMIT_ENABLED` | `true`                                                        | Rate limiting on or off                                                  |
+| `RATE_LIMIT`         | `60`                                                          | Requests per minute and IP, `0` = off                                    |
+| `API_KEYS`           | –                                                             | Comma-separated API keys                                                 |
+| `RATE_LIMIT_API_KEY` | `600`                                                         | Requests per minute and API key                                          |
+| `TRUST_PROXY`        | `false`                                                       | Take the client IP from `X-Forwarded-For` (only behind a reverse proxy)  |
+| `CACHE_SIZE`         | `10000`                                                       | Entries in the cache for search requests, `0` = off                      |
+| `CORS_ORIGINS`       | `*`                                                           | Comma-separated list of allowed origins                                  |
+| `CACHE_MAX_AGE`      | `3600`                                                        | `Cache-Control: max-age` of `/api` and `/reverse` in seconds, `0` = none |
+| `METRICS_TOKEN`      | – (open)                                                      | Bearer token that `/metrics` requires, at least 16 characters            |
+| `LOG_LEVEL`          | `info`                                                        | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`             |
+| `TZ`                 | `UTC` (container)                                             | Time zone for `UPDATE_CRON`                                              |
 
 Flags (`AUTO_IMPORT`, `RATE_LIMIT_ENABLED`, `TRUST_PROXY`) accept `true`/`false`, `1`/`0` and
 `yes`/`no`.
@@ -302,7 +306,8 @@ Flags (`AUTO_IMPORT`, `RATE_LIMIT_ENABLED`, `TRUST_PROXY`) accept `true`/`false`
 
 All responses are GeoJSON `FeatureCollection`s and contain the `attribution` field
 ("© OpenStreetMap contributors"). Successful responses carry
-`Cache-Control: public, max-age=3600`, errors `no-store`.
+`Cache-Control: public, max-age=3600` (`CACHE_MAX_AGE`; with `0` they carry `no-store`), errors
+`no-store`. After an update, browsers and CDNs may show old suggestions for up to that long.
 
 ### `GET /api` – autosuggest
 
@@ -404,7 +409,8 @@ population (log scale from 1,000 to 1 million inhabitants); near the top the bon
 so that nothing exceeds 1. Addresses get no bonus. The segments of a street are merged during
 the import (see [Import](#import)); with a location, a street points to its segment nearest to
 it. Hits with the same name within 2 km that are still separate (e.g. pieces of a street that
-do not touch) are merged into one.
+do not touch) are merged into one; streets only with the same postcode, so a street in two
+postcode areas is shown once per area (the Königsallee as 40212 and 40215).
 
 **Languages:** `name:de` and `name:en` are stored separately during the import, and all variants
 are searched. `lang=de|en` selects the displayed name; otherwise `name` applies.

@@ -23,6 +23,8 @@ describe('loadConfig', () => {
       indexMode: 'build',
       indexPath: '/data/index.sqlite',
       indexTypes: ['address', 'street', 'poi', 'locality', 'sublocality', 'place'],
+      cacheMaxAge: 3600,
+      metricsToken: null,
     });
   });
 
@@ -63,6 +65,8 @@ describe('loadConfig', () => {
       indexMode: 'build',
       indexPath: '/tmp/doorstep/index.sqlite',
       indexTypes: ['address', 'street', 'poi', 'locality', 'sublocality', 'place'],
+      cacheMaxAge: 3600,
+      metricsToken: null,
     });
   });
 
@@ -112,6 +116,10 @@ describe('loadConfig', () => {
     ['INDEX_MODE', 'readonly'],
     ['INDEX_PATH', 'index/index.sqlite'],
     ['INDEX_TYPES', 'streets'],
+    ['CACHE_MAX_AGE', '-1'],
+    ['CACHE_MAX_AGE', '1.5'],
+    ['CACHE_MAX_AGE', 'eine Stunde'],
+    ['METRICS_TOKEN', 'kurz'],
     ['INDEX_TYPES', 'street,house'],
   ])('rejects the invalid value %s=%s', (key, value) => {
     expect(() => loadConfig({ [key]: value })).toThrow(ConfigError);
@@ -164,5 +172,16 @@ describe('loadConfig', () => {
         /INDEX_TYPES: .*address, street, poi, locality, sublocality, place/,
       );
     });
+  });
+
+  it('reads CACHE_MAX_AGE in seconds, 0 included', () => {
+    expect(loadConfig({ CACHE_MAX_AGE: '300' }).cacheMaxAge).toBe(300);
+    expect(loadConfig({ CACHE_MAX_AGE: '0' }).cacheMaxAge).toBe(0);
+  });
+
+  it('reads METRICS_TOKEN', () => {
+    expect(loadConfig({ METRICS_TOKEN: ' s3cr3t-metrics-token ' }).metricsToken).toBe(
+      's3cr3t-metrics-token',
+    );
   });
 });

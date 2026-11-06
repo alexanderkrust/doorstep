@@ -7,12 +7,14 @@ import { queryIndex, sendBadRequest, sendCached } from '../replies.js';
 export interface ReverseRoutesOptions {
   index: SearchIndex;
   defaultLang: string;
+  /** CACHE_MAX_AGE in seconds. */
+  cacheMaxAge: number;
 }
 
 /** `GET /reverse?lat=&lon=&limit=&radius=&lang=` – nearest objects to a point. */
 export const reverseRoutes: FastifyPluginAsync<ReverseRoutesOptions> = async (
   app,
-  { index, defaultLang },
+  { index, defaultLang, cacheMaxAge },
 ) => {
   app.get('/reverse', (request, reply) => {
     const parsed = reverseParams.safeParse(request.query);
@@ -30,7 +32,7 @@ export const reverseRoutes: FastifyPluginAsync<ReverseRoutesOptions> = async (
       index.reverse({ lat, lon, limit, radiusKm: radius, ...(types ? { types } : {}) }),
     );
     if (rows === null) return reply;
-    return sendCached(reply, toFeatureCollection(rows, lang, { lat, lon }));
+    return sendCached(reply, toFeatureCollection(rows, lang, { lat, lon }), cacheMaxAge);
   });
   await Promise.resolve();
 };

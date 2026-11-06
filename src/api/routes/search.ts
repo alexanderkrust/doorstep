@@ -12,12 +12,14 @@ export interface SearchRoutesOptions {
   defaultLang: string;
   cache: LruCache<string, FeatureCollection>;
   metrics: Metrics;
+  /** CACHE_MAX_AGE in seconds. */
+  cacheMaxAge: number;
 }
 
 /** `GET /api?q=&lat=&lon=&limit=&lang=` – Autosuggest. */
 export const searchRoutes: FastifyPluginAsync<SearchRoutesOptions> = async (
   app,
-  { index, defaultLang, cache, metrics },
+  { index, defaultLang, cache, metrics, cacheMaxAge },
 ) => {
   app.get('/api', (request, reply) => {
     const parsed = searchParams.safeParse(request.query);
@@ -45,6 +47,7 @@ export const searchRoutes: FastifyPluginAsync<SearchRoutesOptions> = async (
             .header('x-cache', 'HIT')
             .header('server-timing', `search;dur=${(performance.now() - started).toFixed(2)}`),
           hit,
+          cacheMaxAge,
         );
       }
       metrics.cacheMisses++;
@@ -66,7 +69,7 @@ export const searchRoutes: FastifyPluginAsync<SearchRoutesOptions> = async (
       lat !== undefined && lon !== undefined ? { lat, lon } : undefined,
     );
     if (cacheKey !== undefined) cache.set(cacheKey, body);
-    return sendCached(reply, body);
+    return sendCached(reply, body, cacheMaxAge);
   });
   await Promise.resolve();
 };

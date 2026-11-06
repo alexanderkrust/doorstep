@@ -3,12 +3,20 @@ import type { z } from 'zod';
 import { IndexUnavailableError } from '../search/search-index.js';
 import { formatIssues } from './params.js';
 
-/** The index only changes on updates; identical requests may be cached. */
-export const CACHE_MAX_AGE_SECONDS = 3600;
-
-export function sendCached(reply: FastifyReply, body: unknown): FastifyReply {
+/**
+ * The index only changes on updates; identical requests may be cached by clients and CDNs
+ * for `maxAgeSeconds` (CACHE_MAX_AGE). 0 forbids it.
+ */
+export function sendCached(
+  reply: FastifyReply,
+  body: unknown,
+  maxAgeSeconds: number,
+): FastifyReply {
   return reply
-    .header('cache-control', `public, max-age=${String(CACHE_MAX_AGE_SECONDS)}`)
+    .header(
+      'cache-control',
+      maxAgeSeconds > 0 ? `public, max-age=${String(maxAgeSeconds)}` : 'no-store',
+    )
     .send(body);
 }
 

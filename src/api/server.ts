@@ -115,9 +115,19 @@ export function buildServer(config: Config, options: ServerOptions = {}): Fastif
     importing: options.importing ?? (() => false),
     indexMode: config.indexMode,
   });
-  void app.register(metricsRoutes, { index, metrics });
-  void app.register(searchRoutes, { index, defaultLang: config.defaultLang, cache, metrics });
-  void app.register(reverseRoutes, { index, defaultLang: config.defaultLang });
+  void app.register(metricsRoutes, { index, metrics, token: config.metricsToken });
+  void app.register(searchRoutes, {
+    index,
+    defaultLang: config.defaultLang,
+    cache,
+    metrics,
+    cacheMaxAge: config.cacheMaxAge,
+  });
+  void app.register(reverseRoutes, {
+    index,
+    defaultLang: config.defaultLang,
+    cacheMaxAge: config.cacheMaxAge,
+  });
 
   return app;
 }
