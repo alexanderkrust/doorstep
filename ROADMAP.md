@@ -145,7 +145,7 @@ Fixed: districts (`addr:suburb`/`addr:hamlet` → `district`, 4.8 million addres
 - [x] **Browser and CDN cache after updates** (2026-11-06): `max-age` of `/api` and `/reverse` is configurable via `CACHE_MAX_AGE` (seconds, default 3600; `0` sends `no-store`, also for answers from the server's LRU cache).
 - [x] **Update without new data** (2026-11-06, with the diff updates): `update` skips the rebuild when the replication has nothing new and the index was built from the same state of the extract, with the current schema and `INDEX_TYPES`.
 - [x] **`/metrics` is public** (2026-11-06): with `METRICS_TOKEN` (at least 16 characters), `/metrics` requires `Authorization: Bearer <token>` and answers `401` with `WWW-Authenticate: Bearer` otherwise; compared in constant time. Without the variable it stays open. `/health` stays open for the `HEALTHCHECK`.
-- [ ] **Docker smoke test not in `npm run ci`:** it needs Docker and therefore runs separately (`npm run smoke`).
+- [x] **Docker smoke test not in `npm run ci`:** it needs Docker and therefore runs separately (`npm run smoke`); since 2026-11-06 it runs in the GitHub Actions CI on every push and pull request.
 
 ### Response quality (2026-10-29)
 
@@ -180,6 +180,17 @@ overload or hanging connections. Configuration stays env-only.
 - [ ] A worker stuck in one query is not replaced: its queue fills up and it answers `503`
       until the query ends. Terminating it would also fail the other searches queued on it.
 - [ ] Rate limits and the queue limit are per process; several instances do not share them.
+
+## CI and releases (2026-11-06)
+
+- [x] GitHub Actions CI: `npm run ci` with osmium, `npm audit` of the production dependencies,
+      image build, smoke test, Trivy scan (fixable HIGH/CRITICAL fail). Actions pinned to SHAs.
+- [x] Release on a tag `v*.*.*`: checks tag, `package.json` and `CHANGELOG.md`, same checks as
+      CI, image to GHCR with semver tags (no `latest`), SBOM and provenance, cosign keyless
+      signature, GitHub release from the changelog section.
+- [x] Dependabot for npm and GitHub Actions; `CHANGELOG.md`.
+- [ ] First release (`v0.1.0`) and making the GHCR package visible; not done, needs a push.
+- [ ] Multi-arch image (`linux/arm64`): only `linux/amd64` is built so far.
 
 ## Prebuilt index (mount instead of import)
 

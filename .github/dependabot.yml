@@ -1,0 +1,17 @@
+# Weekly updates for npm packages and the pinned GitHub Actions. The base image is set via
+# `ARG NODE_IMAGE` in the Dockerfile, which Dependabot does not follow; the Trivy scan in CI
+# fails when it has fixable HIGH/CRITICAL vulnerabilities.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      dev-dependencies:
+        dependency-type: development
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

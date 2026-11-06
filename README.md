@@ -30,6 +30,7 @@ Every API response contains this notice in the `attribution` field.
 - [Docker](#docker)
   - [Commands](#commands)
   - [Smoke test](#smoke-test)
+- [CI and releases](#ci-and-releases)
 - [Load test](#load-test)
 - [Search quality and latency](#search-quality-and-latency)
 - [Development](#development)
@@ -584,6 +585,43 @@ constant requests and checks that none fails and that the API loads the new inde
 restart. Finally, a second container serves the built index with `INDEX_MODE=mounted`,
 read-only (`--read-only`, volume mounted `:ro`) and without network, and must neither download
 nor import. Needs only Docker and `curl`, no internet access except for the image build.
+
+## CI and releases
+
+**CI** (`.github/workflows/ci.yml`, on every push to `main` and every pull request):
+
+- `npm run ci` (lint, type check, tests, build) with `osmium-tool` installed, so the import tests
+  on the PBF fixture run too, and `npm audit` of the production dependencies (fails from `high`).
+- Builds the image, runs the [smoke test](#smoke-test) against it and scans it with Trivy; fixable
+  `HIGH` or `CRITICAL` vulnerabilities fail the run.
+
+**Releases** (`.github/workflows/release.yml`, on a tag `v<major>.<minor>.<patch>`):
+
+1. In `CHANGELOG.md`, rename `## [Unreleased]` to `## [1.2.3] - <date>`; set `"version": "1.2.3"`
+   in `package.json` (`npm version 1.2.3 --no-git-tag-version`). Commit both.
+2. `git tag v1.2.3 && git push origin v1.2.3`.
+3. The workflow checks that tag, `package.json` and `CHANGELOG.md` agree, runs the same checks as
+   CI, then pushes the image to `ghcr.io/alexanderkrust/doorstep` with the tags `1.2.3`, `1.2`
+   and `1` (no `1` for `0.x`, never `latest`), with an SBOM and provenance attestation, signs it
+   with cosign (keyless, GitHub OIDC) and creates a GitHub release with the changelog section and
+   the image digest. `0.x` versions and versions like `1.2.3-rc.1` are marked as pre-releases.
+
+Verifying the signature before a deployment:
+
+```bash
+cosign verify ghcr.io/alexanderkrust/doorstep:1.2.3 \
+  --certificate-identity-regexp '^https://github.com/alexanderkrust/doorstep/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+Showing the SBOM: `docker buildx imagetools inspect ghcr.io/alexanderkrust/doorstep:1.2.3 --format '{{ json .SBOM }}'`.
+
+Dependabot (`.github/dependabot.yml`) proposes weekly updates for npm packages and the pinned
+GitHub Actions. The base image (`ARG NODE_IMAGE` in the Dockerfile) is updated by hand; the Trivy
+scan flags it when it has fixable vulnerabilities.
+
+The package is private on GHCR after the first release; make it public or grant access under the
+repository's package settings.
 
 ## Load test
 
