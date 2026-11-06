@@ -106,9 +106,9 @@
       "q": "Kö",
       "lat": 51.222,
       "lon": 6.78,
-      "top": 5,
+      "top": 2,
       "expect": { "name": "Königsallee", "type": "street" },
-      "note": "Kö12, Kö-Galerie and Kö-Center contain 'Kö' as a whole word and rank slightly ahead; without a popularity signal (wikidata) this is acceptable."
+      "note": "Since schema 9 the Königsallee ranks ahead of Kö-Galerie and Kö-Center (Wikidata bonus); the shop 'Kö 21' contains 'Kö' as a whole word and still ranks first. The street's reg_name=Kö is not indexed."
     },
 
     { "q": "Königsallee 1", "expect": { "street": "Königsallee", "housenumber": "1" } },
@@ -134,7 +134,11 @@
       "expect": { "name": "Kasernenstraße", "type": "street", "city": "Düsseldorf" }
     },
 
-    { "q": "Hauptbahnhof", "expect": { "name": "Hauptbahnhof Düsseldorf" } },
+    {
+      "q": "Hauptbahnhof",
+      "expect": { "name": "Düsseldorf Hauptbahnhof", "category": "railway=station" }
+    },
+    { "q": "Rheinturm", "expect": { "name": "Rheinturm", "type": "poi" } },
     { "q": "Ständehaus", "top": 3, "expect": { "name": "Ständehaus" } },
     { "q": "Carlsplatz", "top": 3, "expect": { "name": "Carlsplatz" } }
   ]

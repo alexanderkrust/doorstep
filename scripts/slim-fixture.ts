@@ -6,9 +6,16 @@
  */
 import { createReadStream, createWriteStream } from 'node:fs';
 import { readLines } from '../src/import/lines.js';
-import { featureToPlace, parseGeoJsonSeqLine, representativePoint } from '../src/import/place.js';
+import {
+  featureToPlace,
+  IMPORTED_TAGS,
+  parseGeoJsonSeqLine,
+  representativePoint,
+} from '../src/import/place.js';
 
-const KEEP = /^(@type|@id|name|name:de|name:en|place|highway|amenity|postal_code|addr:.*)$/;
+/** OSM type and id, `addr:*` and every other tag the import reads. */
+const keep = (key: string) =>
+  key === '@type' || key === '@id' || key.startsWith('addr:') || IMPORTED_TAGS.has(key);
 
 const [input, output] = process.argv.slice(2);
 if (!input || !output) {
@@ -24,7 +31,7 @@ for await (const line of readLines(createReadStream(input))) {
   const point = representativePoint(feature.geometry);
   if (!point) continue;
   const properties = Object.fromEntries(
-    Object.entries(feature.properties).filter(([key]) => KEEP.test(key)),
+    Object.entries(feature.properties).filter(([key]) => keep(key)),
   );
   const round = (n: number) => Math.round(n * 1e7) / 1e7;
   const slim = {

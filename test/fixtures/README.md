@@ -8,11 +8,12 @@ tag filter (`src/import/osmium.ts`, `TAG_FILTERS`).
 run without `osmium`.
 
 `duesseldorf.geojsonseq` is larger and serves the golden queries (`test/golden/`) for the
-ranking: Düsseldorf city center (6.765,51.210 – 6.800,51.235), Neuss city center
+ranking: Düsseldorf city center including the Rheinturm (6.755,51.210 – 6.800,51.235), Neuss city center
 (6.680,51.190 – 6.705,51.205) and all place nodes (`place=city,town,village,suburb,borough,quarter`)
 of the Düsseldorf administrative region. To keep it small, every feature contains only the tags
-the import reads and the representative point as geometry (`scripts/slim-fixture.ts`).
-As of: Geofabrik extract from 2026-10-27.
+the import reads (`IMPORTED_TAGS` in `src/import/place.ts` and `addr:*`) and the representative
+point as geometry (`scripts/slim-fixture.ts`).
+As of: Geofabrik extract from 2026-11-05.
 
 `boundaries.geojsonseq` and `boundaries.opl` are administrative boundaries (`admin_level=2` and
 `4`) from the Geofabrik Germany extract from 2026-10-27, clipped to four test regions:
@@ -39,12 +40,13 @@ osmium export test/fixtures/koenigsallee.osm.pbf -f geojsonseq -a type,id \
 ```bash
 curl -O https://download.geofabrik.de/europe/germany/nordrhein-westfalen/duesseldorf-regbez-latest.osm.pbf
 SRC=duesseldorf-regbez-latest.osm.pbf
-osmium extract -b 6.765,51.210,6.800,51.235 -s smart $SRC -o dus.pbf
+osmium extract -b 6.755,51.210,6.800,51.235 -s smart $SRC -o dus.pbf
 osmium extract -b 6.680,51.190,6.705,51.205 -s smart $SRC -o neuss.pbf
 osmium tags-filter $SRC n/place=city,town,village,suburb,borough,quarter -o places.pbf
 osmium merge dus.pbf neuss.pbf places.pbf -o merged.pbf
-osmium tags-filter merged.pbf nwr/addr:housenumber nwr/addr:street nwr/place w/highway nwr/amenity \
-  -o filtered.pbf
+# The import's tag filters (bash/sh: $FILTERS is split into words; in zsh use ${=FILTERS})
+FILTERS=$(npx tsx -e "import('./src/import/osmium.ts').then((m) => console.log(m.TAG_FILTERS.join(' ')))")
+osmium tags-filter merged.pbf $FILTERS -o filtered.pbf
 osmium export filtered.pbf -f geojsonseq --attributes=type,id -x print_record_separator=false \
   -o full.geojsonseq
 npx tsx scripts/slim-fixture.ts full.geojsonseq test/fixtures/duesseldorf.geojsonseq

@@ -7,6 +7,7 @@ import {
   withLocation,
   type Place,
 } from '../../src/import/place.js';
+import { TAG_FILTERS } from '../../src/import/osmium.js';
 
 const point = (lon: number, lat: number) => ({ type: 'Point' as const, coordinates: [lon, lat] });
 
@@ -171,6 +172,71 @@ describe('featureToPlace', () => {
     it('takes streets only from ways, not from single nodes such as bus stops', () => {
       expect(poi({ highway: 'bus_stop', name: 'Hauptstraße' })).toBeNull();
       expect(poi({ highway: 'motorway_junction', name: 'Köln-Ehrenfeld' })).toBeNull();
+    });
+
+    it('keeps a street a street when it only carries a generic POI tag such as tourism=yes', () => {
+      const street = featureToPlace({
+        type: 'Feature',
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [6.78, 51.22],
+            [6.78, 51.23],
+          ],
+        },
+        properties: {
+          '@type': 'way',
+          '@id': 1092566016,
+          highway: 'residential',
+          name: 'Königsallee',
+          tourism: 'yes',
+        },
+      });
+      expect(street).toMatchObject({ type: 'street', category: 'highway=residential' });
+    });
+
+    it('leaves out subway, light rail and tram stops like bus stops', () => {
+      expect(poi({ railway: 'station', station: 'subway', name: 'Schadowstraße' })).toBeNull();
+      expect(
+        poi({ railway: 'halt', station: 'light_rail', name: 'Heinrich-Heine-Allee' }),
+      ).toBeNull();
+      expect(
+        poi({ public_transport: 'station', station: 'tram', name: 'Graf-Adolf-Platz' }),
+      ).toBeNull();
+      // Train and S-Bahn stations stay
+      expect(poi({ railway: 'station', name: 'Düsseldorf Hauptbahnhof' })).toMatchObject({
+        category: 'railway=station',
+      });
+      expect(poi({ railway: 'halt', station: 'train', name: 'Düsseldorf-Bilk' })).toMatchObject({
+        category: 'railway=halt',
+      });
+      // Another POI tag still counts
+      expect(
+        poi({ railway: 'station', station: 'subway', amenity: 'cafe', name: 'Café U' }),
+      ).toMatchObject({ category: 'amenity=cafe' });
+    });
+
+    it('takes named landmarks such as towers, lighthouses and peaks', () => {
+      expect(poi({ man_made: 'tower', name: 'Fernmeldeturm' })).toMatchObject({
+        type: 'poi',
+        category: 'man_made=tower',
+      });
+      expect(poi({ man_made: 'lighthouse', name: 'Roter Sand' })).toMatchObject({
+        category: 'man_made=lighthouse',
+      });
+      expect(poi({ natural: 'peak', name: 'Zugspitze' })).toMatchObject({
+        category: 'natural=peak',
+      });
+    });
+
+    it('leaves out other named man_made and natural objects', () => {
+      expect(poi({ man_made: 'pipeline', name: 'Leitung Nord' })).toBeNull();
+      expect(poi({ man_made: 'wastewater_plant', name: 'Klärwerk' })).toBeNull();
+      expect(poi({ natural: 'tree', name: 'Dicke Eiche' })).toBeNull();
+      // With an address they stay addresses
+      expect(
+        poi({ man_made: 'works', name: 'Werk', 'addr:street': 'Weg', 'addr:housenumber': '1' }),
+      ).toMatchObject({ type: 'house' });
     });
 
     it('stores the category of places and streets too', () => {
@@ -415,5 +481,92 @@ describe('withLocation', () => {
     expect(withLocation(village, { ...located, city: 'Großgemeinde' })).toMatchObject({
       city: 'Großgemeinde',
     });
+  });
+});
+
+describe('popularity', () => {
+  const feature = (tags: Record<string, string>, type = 'node') => ({
+    type: 'Feature' as const,
+    geometry:
+      type === 'way'
+        ? {
+            type: 'LineString' as const,
+            coordinates: [
+              [6.78, 51.22],
+              [6.78, 51.23],
+            ],
+          }
+        : point(6.78, 51.22),
+    properties: { '@type': type, '@id': 7, ...tags },
+  });
+  const importance = (tags: Record<string, string>, type = 'node') =>
+    featureToPlace(feature(tags, type))?.importance ?? Number.NaN;
+
+  it('ranks a street with a Wikidata or Wikipedia entry above an ordinary one', () => {
+    const plain = importance({ highway: 'residential', name: 'Königsallee' }, 'way');
+    const known = { highway: 'residential', name: 'Königsallee', wikidata: 'Q694675' };
+    expect(importance(known, 'way')).toBeGreaterThan(plain);
+    const viaWikipedia = { highway: 'residential', name: 'Kö', wikipedia: 'de:Königsallee' };
+    expect(importance(viaWikipedia, 'way')).toBe(importance(known, 'way'));
+  });
+
+  it('does not add up Wikidata and Wikipedia', () => {
+    const one = importance({ tourism: 'viewpoint', name: 'Rheinturm', wikidata: 'Q679491' });
+    const both = importance({
+      tourism: 'viewpoint',
+      name: 'Rheinturm',
+      wikidata: 'Q679491',
+      wikipedia: 'en:Rheinturm',
+    });
+    expect(both).toBe(one);
+    expect(one).toBeGreaterThan(importance({ tourism: 'viewpoint', name: 'Aussicht' }));
+  });
+
+  it('ignores tags that only describe the name, such as name:etymology:wikidata', () => {
+    const tags = { highway: 'residential', name: 'Weg' };
+    expect(importance({ ...tags, 'name:etymology:wikidata': 'Q57180' }, 'way')).toBe(
+      importance(tags, 'way'),
+    );
+  });
+
+  it('gives addresses no bonus, so that they stay behind everything else', () => {
+    const house = { 'addr:street': 'Königsallee', 'addr:housenumber': '1', wikidata: 'Q1' };
+    expect(importance(house)).toBe(importanceFor('house'));
+  });
+
+  it('ranks a larger city above a smaller one, but never above 1', () => {
+    const city = (population: string) =>
+      importance({ place: 'city', name: 'Stadt', population, wikidata: 'Q1' });
+    expect(city('653253')).toBeGreaterThan(city('110000'));
+    expect(city('110000')).toBeGreaterThan(importance({ place: 'city', name: 'Stadt' }));
+    expect(city('3700000')).toBeLessThanOrEqual(1);
+  });
+
+  it('reads populations with thousands separators', () => {
+    const town = (population: string) => importance({ place: 'town', name: 'Ort', population });
+    expect(town('619 294')).toBe(town('619294'));
+    expect(town('1.234')).toBe(town('1234'));
+    expect(town('12,500')).toBe(town('12500'));
+  });
+
+  it('ignores invalid and very small populations', () => {
+    const base = importance({ place: 'village', name: 'Dorf' });
+    for (const population of ['ca. 300', 'https://example.org/x.csv', '-5', '', '800']) {
+      expect(importance({ place: 'village', name: 'Dorf', population })).toBe(base);
+    }
+  });
+
+  it('uses the population only for places', () => {
+    const tags = { amenity: 'university', name: 'Uni' };
+    expect(importance({ ...tags, population: '40000' })).toBe(importance(tags));
+  });
+});
+
+describe('TAG_FILTERS', () => {
+  it('also passes landmarks to the import', () => {
+    expect(TAG_FILTERS).toContain(
+      'nwr/man_made=tower,lighthouse,windmill,watermill,water_tower,observatory,obelisk,bridge,pier,gasometer',
+    );
+    expect(TAG_FILTERS).toContain('nwr/natural=peak,cave_entrance');
   });
 });

@@ -346,10 +346,14 @@ settlements get their municipality as `city`. `country` and `state` always come 
 boundaries, see below.
 
 POIs are named objects with `amenity`, `shop`, `tourism`, `healthcare`, `office`, `leisure`,
-`historic` or `craft`, plus railway stations and airports. Left out are things nobody searches
-for: signposts and information boards (tourist offices stay), Stolpersteine, benches, waste
-bins, vending machines, parking spaces and hunting stands. Streets come only from OSM ways, not
-from named nodes such as bus stops. Stations and airports rank above other POIs. The same place
+`historic` or `craft`, plus railway stations, airports and landmarks (`man_made`: towers,
+lighthouses, windmills, watermills, water towers, observatories, obelisks, bridges, piers,
+gasometers; `natural`: peaks and cave entrances). Left out are things nobody searches for:
+signposts and information boards (tourist offices stay), Stolpersteine, benches, waste bins,
+vending machines, parking spaces and hunting stands, and subway, light rail and tram stops (like
+bus stops, they are mostly named after a street and would crowd it out). Streets come only from
+OSM ways, not from named nodes such as bus stops; a street with a generic POI tag such as
+`tourism=yes` stays a street. Stations and airports rank above other POIs. The same place
 found twice (e.g. a city as a boundary and as a place node) is shown once. For queries with a house number, the plain address comes before shops and businesses
 that are only located there.
 
@@ -364,7 +368,10 @@ and `Weg` are also indexed split and joined: `Friedrich Straße` finds Friedrich
 **Ranking** (`src/search/ranking.ts`): from up to 200 candidates (with `lat/lon` also up to 200
 within 25 km, found via one grid cell per entry in the FTS index), a score is computed from FTS
 relevance (`bm25`), match with the name, `importance` (city before district before street before
-house number) and – if given – proximity to the location. Hits with the same name within 2 km
+house number) and – if given – proximity to the location. Well-known objects get a higher
+`importance`: +0.1 with a `wikidata` or `wikipedia` tag, and places up to +0.05 more by
+population (log scale from 1,000 to 1 million inhabitants); near the top the bonus is squeezed
+so that nothing exceeds 1. Addresses get no bonus. Hits with the same name within 2 km
 (e.g. the segments of a street) are merged into one.
 
 **Languages:** `name:de` and `name:en` are stored separately during the import, and all variants
@@ -413,8 +420,9 @@ curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
 
 Invalid parameters return `400` with a message like `q: must be at least 2 characters long`.
 As long as there is no index at `INDEX_PATH` (default `$DATA_DIR/index.sqlite`), both endpoints answer `503`. This also
-applies to an index with an old schema (currently version 8, since categories, more POI kinds and
-city/district/postcode from boundaries; version 7 brought split and joined street names, version
+applies to an index with an old schema (currently version 9, since popularity in `importance`
+and landmarks; version 8 brought categories, more POI kinds and city/district/postcode from
+boundaries, version 7 brought split and joined street names, version
 6 the word statistics for bm25, version 5 country and state from administrative boundaries): then
 please import again or wait for the next update.
 
@@ -581,7 +589,7 @@ Without `--region`, `REGION_URL` applies. Steps:
    outlines of the small areas are simplified to about 10 m.
 4. `osmium tags-filter` on addresses, places (`place=*`), streets (`highway` with a name) and
    POIs (`amenity`, `shop`, `tourism`, `healthcare`, `office`, `leisure`, `historic`, `craft`,
-   stations, airports).
+   stations, airports, landmarks; `TAG_FILTERS` in `src/import/osmium.ts`).
 5. `osmium export` as a GeoJSON sequence that is read line by line (constant memory use). Every
    entry gets country and state, and missing city, district and postcode, from the boundaries on
    insert.

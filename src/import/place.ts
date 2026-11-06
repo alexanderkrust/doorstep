@@ -68,6 +68,22 @@ const CITY_TYPES = new Set(['city', 'town', 'village', 'hamlet']);
 
 const OSM_TYPES: Record<string, OsmType> = { node: 'N', way: 'W', relation: 'R' };
 
+/** Named `man_made` objects people look for; pipelines, plants and the like stay out. */
+export const LANDMARK_MAN_MADE: ReadonlySet<string> = new Set([
+  'tower',
+  'lighthouse',
+  'windmill',
+  'watermill',
+  'water_tower',
+  'observatory',
+  'obelisk',
+  'bridge',
+  'pier',
+  'gasometer',
+]);
+/** Named natural features people look for; not every named tree or rock. */
+export const LANDMARK_NATURAL: ReadonlySet<string> = new Set(['peak', 'cave_entrance']);
+
 /**
  * Tags that make a named object a POI, in order of priority for its category. `null` = any
  * value; otherwise only the listed values (e.g. stations, not every railway track).
@@ -84,7 +100,29 @@ const POI_TAGS: readonly (readonly [string, ReadonlySet<string> | null])[] = [
   ['leisure', null],
   ['historic', null],
   ['craft', null],
+  ['man_made', LANDMARK_MAN_MADE],
+  ['natural', LANDMARK_NATURAL],
 ];
+
+/**
+ * Every tag `featureToPlace` reads, besides `addr:*` (for `scripts/slim-fixture.ts`, which
+ * keeps only these in test fixtures).
+ */
+export const IMPORTED_TAGS: ReadonlySet<string> = new Set([
+  'name',
+  'name:de',
+  'name:en',
+  'place',
+  'highway',
+  'postal_code',
+  'information',
+  'memorial',
+  'station',
+  'wikidata',
+  'wikipedia',
+  'population',
+  ...POI_TAGS.map(([key]) => key),
+]);
 
 /** POIs that people look for by name more often than others. */
 const POI_IMPORTANCE: Record<string, number> = {
@@ -101,6 +139,59 @@ export function importanceFor(type: string, category: string | null = null): num
   return (
     (category ? POI_IMPORTANCE[category] : undefined) ?? IMPORTANCE[type] ?? DEFAULT_IMPORTANCE
   );
+}
+
+/** Bonus for objects with a Wikipedia article or a Wikidata entry: they are well known. */
+const WIKI_BONUS = 0.1;
+/** Population bonus for places: 0 at 1,000 inhabitants, rising on a log scale ... */
+const POPULATION_MIN = 1_000;
+/** ... up to this bonus at 1 million inhabitants and more. */
+const POPULATION_MAX_BONUS = 0.05;
+const POPULATION_MAX_DECADES = 3;
+/** Largest possible bonus (Wikidata plus 1 million inhabitants). */
+const MAX_BONUS = WIKI_BONUS + POPULATION_MAX_BONUS;
+/** Types whose `population` tag counts. */
+const POPULATED_TYPES = new Set([
+  'country',
+  'state',
+  'city',
+  'town',
+  'borough',
+  'suburb',
+  'village',
+  'quarter',
+  'neighbourhood',
+  'hamlet',
+]);
+
+/**
+ * Adds the bonus without going above 1: near the top (cities at 0.9) it is squeezed into
+ * the room that is left, so that a city of 600,000 still ranks above one of 100,000.
+ */
+function withPopularity(base: number, bonus: number): number {
+  return base + (bonus / MAX_BONUS) * Math.max(0, Math.min(MAX_BONUS, 1 - base));
+}
+
+/** `population` as a number: "653253", "619 294", "1.234", "12,500"; otherwise `null`. */
+export function parsePopulation(value: string | null): number | null {
+  if (!value || !/^\d{1,3}([ .,]?\d{3})*$/.test(value)) return null;
+  return Number(value.replace(/[ .,]/g, ''));
+}
+
+/**
+ * How well known an object is: Wikidata or Wikipedia (+0.1, once) and, for places, the
+ * population (up to +0.05). Addresses get nothing: the search expects them at the end of
+ * the id order (`findAddressStart`).
+ */
+export function popularityBonus(type: string, props: Record<string, unknown>): number {
+  if (type === 'house') return 0;
+  let bonus = tag(props, 'wikidata') || tag(props, 'wikipedia') ? WIKI_BONUS : 0;
+  const population = POPULATED_TYPES.has(type) ? parsePopulation(tag(props, 'population')) : null;
+  if (population !== null && population > POPULATION_MIN) {
+    const decades = Math.min(POPULATION_MAX_DECADES, Math.log10(population / POPULATION_MIN));
+    bonus += (POPULATION_MAX_BONUS * decades) / POPULATION_MAX_DECADES;
+  }
+  return bonus;
 }
 
 /**
@@ -126,10 +217,26 @@ const NOISE_AMENITIES = new Set([
   'grit_bin',
 ]);
 
+/** Subway, light rail and tram stops: mostly named after the street above them. */
+const LOCAL_TRANSIT = new Set(['subway', 'light_rail', 'tram']);
+/** Keys that make a station a POI; local transit stops do not count for them. */
+const STATION_KEYS = new Set(['railway', 'public_transport']);
+
+/**
+ * Local transit stops are left out like bus stops: the subway stop "Schadowstraße" has
+ * a shorter entry than Schadowstraße the street and would rank above it.
+ */
+function isLocalTransit(props: Record<string, unknown>): boolean {
+  const station = tag(props, 'station');
+  return station !== null && LOCAL_TRANSIT.has(station);
+}
+
 /** The POI tag of an object as `key=value`, or `null`. */
 function poiCategory(props: Record<string, unknown>): string | null {
   if (isNoise(props)) return null;
+  const localTransit = isLocalTransit(props);
   for (const [key, values] of POI_TAGS) {
+    if (localTransit && STATION_KEYS.has(key)) continue;
     const value = tag(props, key);
     if (value && (!values || values.has(value))) return `${key}=${value}`;
   }
@@ -151,13 +258,15 @@ function classify(
 ): { type: string; category: string | null } | null {
   const place = tag(props, 'place');
   if (place && name) return { type: place, category: `place=${place}` };
-  const poi = name ? poiCategory(props) : null;
-  if (poi) return { type: 'poi', category: poi };
-  if (tag(props, 'addr:housenumber')) return { type: 'house', category: null };
   const highway = tag(props, 'highway');
+  const isStreet = Boolean(highway && name && osmType !== 'N');
+  const poi = name ? poiCategory(props) : null;
+  // A street with a generic POI tag (`tourism=yes` on the Königsallee) stays a street.
+  if (poi && !(isStreet && poi.endsWith('=yes'))) return { type: 'poi', category: poi };
+  if (tag(props, 'addr:housenumber')) return { type: 'house', category: null };
   // Only ways: osmium also passes along the nodes of a road, and named nodes are bus stops,
   // junctions and the like, not streets.
-  if (highway && name && osmType !== 'N') {
+  if (isStreet && highway) {
     return { type: 'street', category: `highway=${highway}` };
   }
   return null;
@@ -199,7 +308,7 @@ export function featureToPlace(feature: Feature): Place | null {
     category,
     lat: point.lat,
     lon: point.lon,
-    importance: importanceFor(type, category),
+    importance: withPopularity(importanceFor(type, category), popularityBonus(type, props)),
   };
 }
 

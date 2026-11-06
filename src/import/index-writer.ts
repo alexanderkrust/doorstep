@@ -15,8 +15,9 @@ import { Progress, type Logger } from './progress.js';
  *    expansion of long prefixes (src/search/bm25.ts, `expandPrefix`).
  * 7: street names also split and joined ("Friedrich Straße", "Adenauerstraße").
  * 8: `category` (e.g. `shop=supermarket`), more POI kinds, city/district/postcode from boundaries.
+ * 9: popularity in `importance` (Wikidata/Wikipedia, population), landmarks (`man_made`, `natural`).
  */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 const PLACE_COLUMNS = `osm_type, osm_id, type, name, name_de, name_en, street, housenumber,
   postcode, city, district, state, country, category, lat, lon, importance`;

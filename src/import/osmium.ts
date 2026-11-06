@@ -22,6 +22,9 @@ export const TAG_FILTERS = [
   'nwr/leisure',
   'nwr/historic',
   'nwr/craft',
+  // Landmarks (`LANDMARK_MAN_MADE`, `LANDMARK_NATURAL` in place.ts)
+  'nwr/man_made=tower,lighthouse,windmill,watermill,water_tower,observatory,obelisk,bridge,pier,gasometer',
+  'nwr/natural=peak,cave_entrance',
 ];
 
 /**
