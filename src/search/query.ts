@@ -50,6 +50,56 @@ function kindFilter(types: readonly ResultType[] | undefined): string {
   return ` AND kind : (${types.map((t) => quote(kindToken(t))).join(' OR ')})`;
 }
 
+/** Earlier words shorter than this stay exact: `"a"*` would read millions of documents. */
+const MIN_LOOKAHEAD_LENGTH = 3;
+
+/** A search word and how it is matched. */
+export interface QueryWord {
+  token: string;
+  /** Also matches words that start with it. */
+  prefix: boolean;
+  /** A partial house number: not in the postcode (see `isHousenumberPrefix`). */
+  notInPostcode: boolean;
+}
+
+/**
+ * How the words are matched. The last word is always a prefix (the user is typing it). With
+ * `lookahead`, so is every earlier word with letters and at least 3 characters ("gneis 62
+ * düss"); numbers before the end stay exact: "62" followed by another word is complete, and
+ * "62"* would also hit 620 and postcodes.
+ */
+export function queryWords(tokens: readonly string[], lookahead: boolean): QueryWord[] {
+  return tokens.map((token, i) => {
+    if (i === tokens.length - 1) {
+      return { token, prefix: true, notInPostcode: isHousenumberPrefix(token) };
+    }
+    const prefix =
+      lookahead && !/^\d/.test(token) && Array.from(token).length >= MIN_LOOKAHEAD_LENGTH;
+    return { token, prefix, notInPostcode: false };
+  });
+}
+
+/**
+ * FTS5 query in which all words must occur. `parts[i]` replaces a prefix word with its
+ * expansion (see `expandPrefix`).
+ */
+export function buildWordsQuery(
+  words: readonly QueryWord[],
+  parts: readonly (readonly string[] | null | undefined)[] = [],
+): string | null {
+  if (words.length === 0) return null;
+  const terms = words.map((word, i) => {
+    const filter = word.notInPostcode ? '- {postcode} : ' : '';
+    const expanded = word.prefix ? parts[i] : null;
+    if (expanded && expanded.length > 0)
+      return { text: `${filter}(${expanded.join(' OR ')})`, group: true };
+    return { text: `${filter}${quote(word.token)}${word.prefix ? '*' : ''}`, group: false };
+  });
+  // FTS5 requires an explicit AND next to a parenthesis.
+  const separator = terms.some((t) => t.group) ? ' AND ' : ' ';
+  return terms.map((t) => t.text).join(separator);
+}
+
 /**
  * Last token as a prefix, all others exact; all must occur.
  * `lastParts` replaces the prefix with its expansion (see `expandPrefix`).
@@ -58,24 +108,18 @@ export function buildFtsQuery(
   tokens: readonly string[],
   lastParts?: readonly string[] | null,
 ): string | null {
-  if (tokens.length === 0) return null;
-  const head = tokens.slice(0, -1).map(quote);
-  const last = tokens[tokens.length - 1] ?? '';
-  const filter = isHousenumberPrefix(last) ? '- {postcode} : ' : '';
-  if (lastParts && lastParts.length > 0) {
-    // FTS5 requires an explicit AND before a parenthesis.
-    const group = `${filter}(${lastParts.join(' OR ')})`;
-    return head.length > 0 ? `${head.join(' ')} AND ${group}` : group;
-  }
-  return [...head, `${filter}${quote(last)}*`].join(' ');
+  const parts = tokens.map((_, i) => (i === tokens.length - 1 ? lastParts : null));
+  return buildWordsQuery(queryWords(tokens, false), parts);
+}
+
+/** Search words for bm25, with the prefix flags of the words. */
+export function phrasesForWords(words: readonly QueryWord[]): Phrase[] {
+  return words.map(({ token, prefix, notInPostcode }) => ({ token, prefix, notInPostcode }));
 }
 
 /** Search words for bm25: the last one as a prefix, a partial house number not in the postcode. */
 export function phrasesFor(tokens: readonly string[]): Phrase[] {
-  return tokens.map((token, i) => {
-    const isLast = i === tokens.length - 1;
-    return { token, prefix: isLast, notInPostcode: isLast && isHousenumberPrefix(token) };
-  });
+  return phrasesForWords(queryWords(tokens, false));
 }
 
 const sumDocs = (terms: readonly TermDocs[]) => terms.reduce((sum, t) => sum + t.docs, 0);

@@ -206,7 +206,8 @@ export function buildOpenApiDocument(config: Config): Json {
         get: {
           summary: 'Autosuggest',
           description:
-            'Suggestions for a search text as you type. The last word is searched as a prefix.',
+            'Suggestions for a search text as you type. The last word is searched as a prefix; ' +
+            'if that finds nothing, the earlier words too (`gneis 62 düss`).',
           operationId: 'search',
           tags: ['Search'],
           security,
