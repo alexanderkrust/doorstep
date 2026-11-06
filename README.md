@@ -17,6 +17,7 @@ Every API response contains this notice in the `attribution` field.
   - [Using a prebuilt index](#using-a-prebuilt-index)
   - [Choosing what is searchable](#choosing-what-is-searchable)
   - [Rate limiting and API keys](#rate-limiting-and-api-keys)
+  - [Timeouts and overload](#timeouts-and-overload)
   - [Cache](#cache)
   - [Logs](#logs)
   - [Metrics](#metrics)
@@ -91,8 +92,12 @@ docker run -d --name doorstep --restart unless-stopped \
   -e API_KEYS=a-long-random-key \
   -e RATE_LIMIT_API_KEY=1200 \
   -e CORS_ORIGINS=https://www.example.com \
+  -e METRICS_TOKEN=a-long-random-metrics-token \
   doorstep-api
 ```
+
+At startup, `serve` logs a warning for each setting that is risky in public operation: an open
+`/metrics` (no `METRICS_TOKEN`), rate limiting turned off, and `CORS_ORIGINS=*`.
 
 ## System requirements
 
@@ -229,6 +234,15 @@ What can be found is set on two levels, both with the result types of the respon
 - With a valid API key (header `X-API-Key: <key>` or parameter `api_key=<key>`): at most
   `RATE_LIMIT_API_KEY` requests per minute and key, regardless of the IP. Unknown keys count like
   requests without a key.
+- **Requiring a key:** with `REQUIRE_API_KEY=true`, `/api` and `/reverse` answer `401` (with
+  `WWW-Authenticate: ApiKey`) unless the request carries a key from `API_KEYS`. `/health`,
+  `/metrics` and CORS preflights stay open. Requests without a valid key still count against the
+  rate limit of their IP, so guessing keys is slowed down. Answers then carry
+  `Cache-Control: private`, so that a CDN or proxy does not hand them to clients without a key.
+  This protects server-to-server use; a key in a browser frontend is visible to every visitor.
+- **Keys in the URL:** URLs end up in the logs of proxies, CDNs and browsers. With
+  `API_KEY_IN_QUERY=false`, only the `X-API-Key` header is accepted.
+- The server keeps only SHA-256 hashes of the keys in memory and compares those.
 - Above that, the API answers `429` with `Retry-After`. Every response carries
   `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset`.
 - `/health` and `/metrics` do not count.
@@ -238,6 +252,27 @@ What can be found is set on two levels, both with the result types of the respon
   client can claim any IP via `X-Forwarded-For`.
 
 The counters live in the process's memory and start over after a restart.
+
+### Timeouts and overload
+
+- **Searches** (only with worker threads, `SEARCH_WORKERS` ≥ 1): a search that has not been
+  answered after `SEARCH_TIMEOUT_MS` (default 2000, waiting in the queue included) gets `503`.
+  If every worker already has `SEARCH_QUEUE_LIMIT` searches pending (default 100), new ones get
+  `503` right away instead of waiting ever longer. Both answers carry `Retry-After: 1` and count
+  in `doorstep_search_rejected_total{reason="timeout|overloaded"}`. SQLite cannot cancel a running
+  query: the worker finishes it and drops the answer. In the main thread (`SEARCH_WORKERS=0`) there
+  is neither a timeout nor a queue limit.
+- **Clients** have `REQUEST_TIMEOUT_MS` (default 10,000) to send their request; slow clients
+  cannot hold connections open.
+- **Shutdown:** after `SIGTERM`, open requests get `SHUTDOWN_TIMEOUT_MS` (default 10,000); then
+  the process ends with exit code 1. Keep it below the orchestrator's grace period (Docker: 10 s
+  with `docker stop`, Kubernetes: 30 s).
+- **Downloads** of the extract, its `.md5`, the replication state and the diffs are aborted when
+  the server sends no response or no data for `DOWNLOAD_TIMEOUT_MS` (default 60,000). There is no
+  limit on the whole download, which takes a while for Germany. An aborted extract download stays
+  as `extract.osm.pbf.part` and is resumed by the next run; an aborted diff leads to the full
+  download as usual. If the `.md5` does not answer in time, the extract is downloaded without
+  verifying it.
 
 ### Cache
 
@@ -259,18 +294,19 @@ lines.
 
 `GET /metrics` returns metrics in Prometheus format:
 
-| Metric                                                                                  | Type      | Content                                                 |
-| --------------------------------------------------------------------------------------- | --------- | ------------------------------------------------------- |
-| `doorstep_http_requests_total`                                                          | counter   | Requests by `method`, `route`, `status`                 |
-| `doorstep_http_request_duration_seconds`                                                | histogram | Response time by `route`                                |
-| `doorstep_search_cache_hits_total`, `…misses_total`                                     | counter   | Cache hits and misses                                   |
-| `doorstep_rate_limited_total`                                                           | counter   | Requests rejected with `429`                            |
-| `doorstep_index_available`                                                              | gauge     | 1 if a usable index is loaded                           |
-| `doorstep_index_places`                                                                 | gauge     | Entries in the active index                             |
-| `doorstep_index_imported_timestamp_seconds`                                             | gauge     | Build time of the active index (alert if too old)       |
-| `doorstep_index_reloads_total`, `…reload_errors_total`                                  | counter   | Index switches without a restart, and failed ones       |
-| `doorstep_updates_total`                                                                | counter   | Scheduled updates by `result` (success/failure/skipped) |
-| `process_resident_memory_bytes`, `nodejs_heap_used_bytes`, `process_start_time_seconds` | gauge     | Process                                                 |
+| Metric                                                                                  | Type      | Content                                                  |
+| --------------------------------------------------------------------------------------- | --------- | -------------------------------------------------------- |
+| `doorstep_http_requests_total`                                                          | counter   | Requests by `method`, `route`, `status`                  |
+| `doorstep_http_request_duration_seconds`                                                | histogram | Response time by `route`                                 |
+| `doorstep_search_cache_hits_total`, `…misses_total`                                     | counter   | Cache hits and misses                                    |
+| `doorstep_rate_limited_total`                                                           | counter   | Requests rejected with `429`                             |
+| `doorstep_search_rejected_total`                                                        | counter   | Searches answered `503` by `reason` (timeout/overloaded) |
+| `doorstep_index_available`                                                              | gauge     | 1 if a usable index is loaded                            |
+| `doorstep_index_places`                                                                 | gauge     | Entries in the active index                              |
+| `doorstep_index_imported_timestamp_seconds`                                             | gauge     | Build time of the active index (alert if too old)        |
+| `doorstep_index_reloads_total`, `…reload_errors_total`                                  | counter   | Index switches without a restart, and failed ones        |
+| `doorstep_updates_total`                                                                | counter   | Scheduled updates by `result` (success/failure/skipped)  |
+| `process_resident_memory_bytes`, `nodejs_heap_used_bytes`, `process_start_time_seconds` | gauge     | Process                                                  |
 
 `/metrics` is open by default. With `METRICS_TOKEN` (at least 16 characters) it answers `401`
 unless the request sends `Authorization: Bearer <token>`; in Prometheus that is
@@ -293,31 +329,38 @@ its `HEALTHCHECK`.
 Configuration happens exclusively via environment variables. Invalid values lead to an error
 message at startup listing all affected variables.
 
-| Variable             | Default                                                       | Description                                                                             |
-| -------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `REGION_URL`         | `https://download.geofabrik.de/europe/germany-latest.osm.pbf` | Geofabrik extract for import and update (not needed when `mounted`)                     |
-| `HOST`               | `0.0.0.0`                                                     | Bind address of the API                                                                 |
-| `PORT`               | `2322`                                                        | Port of the API                                                                         |
-| `DATA_DIR`           | `/data`                                                       | Directory for extract and index (absolute path)                                         |
-| `INDEX_MODE`         | `build`                                                       | `build`: the container builds the index; `mounted`: prebuilt, see above                 |
-| `INDEX_TYPES`        | all                                                           | Result types the import puts into the index, e.g. `street`; see below                   |
-| `INDEX_PATH`         | `$DATA_DIR/index.sqlite`                                      | Path of the index file (absolute path)                                                  |
-| `DEFAULT_LANG`       | `de`                                                          | Default language (two-letter code)                                                      |
-| `DIFF_UPDATES`       | `true`                                                        | `update` applies the daily diffs instead of downloading the whole extract               |
-| `AUTO_IMPORT`        | `false` (`true` in the Docker image)                          | `serve` imports in the background if no index exists                                    |
-| `UPDATE_CRON`        | – (no updates)                                                | Schedule for automatic updates in cron format, e.g. `0 3 * * *`                         |
-| `RATE_LIMIT_ENABLED` | `true`                                                        | Rate limiting on or off                                                                 |
-| `RATE_LIMIT`         | `60`                                                          | Requests per minute and IP, `0` = off                                                   |
-| `API_KEYS`           | –                                                             | Comma-separated API keys                                                                |
-| `RATE_LIMIT_API_KEY` | `600`                                                         | Requests per minute and API key                                                         |
-| `TRUST_PROXY`        | `false`                                                       | Take the client IP from `X-Forwarded-For` (only behind a reverse proxy)                 |
-| `SEARCH_WORKERS`     | `auto`                                                        | Worker threads for `/api` and `/reverse`; `auto` = cores − 1 (max 8), `0` = main thread |
-| `CACHE_SIZE`         | `10000`                                                       | Entries in the cache for search requests, `0` = off                                     |
-| `CORS_ORIGINS`       | `*`                                                           | Comma-separated list of allowed origins                                                 |
-| `CACHE_MAX_AGE`      | `3600`                                                        | `Cache-Control: max-age` of `/api` and `/reverse` in seconds, `0` = none                |
-| `METRICS_TOKEN`      | – (open)                                                      | Bearer token that `/metrics` requires, at least 16 characters                           |
-| `LOG_LEVEL`          | `info`                                                        | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                            |
-| `TZ`                 | `UTC` (container)                                             | Time zone for `UPDATE_CRON`                                                             |
+| Variable              | Default                                                       | Description                                                                             |
+| --------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `REGION_URL`          | `https://download.geofabrik.de/europe/germany-latest.osm.pbf` | Geofabrik extract for import and update (not needed when `mounted`)                     |
+| `HOST`                | `0.0.0.0`                                                     | Bind address of the API                                                                 |
+| `PORT`                | `2322`                                                        | Port of the API                                                                         |
+| `DATA_DIR`            | `/data`                                                       | Directory for extract and index (absolute path)                                         |
+| `INDEX_MODE`          | `build`                                                       | `build`: the container builds the index; `mounted`: prebuilt, see above                 |
+| `INDEX_TYPES`         | all                                                           | Result types the import puts into the index, e.g. `street`; see below                   |
+| `INDEX_PATH`          | `$DATA_DIR/index.sqlite`                                      | Path of the index file (absolute path)                                                  |
+| `DEFAULT_LANG`        | `de`                                                          | Default language (two-letter code)                                                      |
+| `DIFF_UPDATES`        | `true`                                                        | `update` applies the daily diffs instead of downloading the whole extract               |
+| `AUTO_IMPORT`         | `false` (`true` in the Docker image)                          | `serve` imports in the background if no index exists                                    |
+| `UPDATE_CRON`         | – (no updates)                                                | Schedule for automatic updates in cron format, e.g. `0 3 * * *`                         |
+| `RATE_LIMIT_ENABLED`  | `true`                                                        | Rate limiting on or off                                                                 |
+| `RATE_LIMIT`          | `60`                                                          | Requests per minute and IP, `0` = off                                                   |
+| `API_KEYS`            | –                                                             | Comma-separated API keys                                                                |
+| `REQUIRE_API_KEY`     | `false`                                                       | `/api` and `/reverse` answer `401` without a valid key (needs `API_KEYS`)               |
+| `API_KEY_IN_QUERY`    | `true`                                                        | Also accept the key as the `api_key` parameter, not only as the `X-API-Key` header      |
+| `RATE_LIMIT_API_KEY`  | `600`                                                         | Requests per minute and API key                                                         |
+| `TRUST_PROXY`         | `false`                                                       | Take the client IP from `X-Forwarded-For` (only behind a reverse proxy)                 |
+| `SEARCH_WORKERS`      | `auto`                                                        | Worker threads for `/api` and `/reverse`; `auto` = cores − 1 (max 8), `0` = main thread |
+| `SEARCH_TIMEOUT_MS`   | `2000`                                                        | `503` for a search in a worker that takes longer, `0` = no limit                        |
+| `SEARCH_QUEUE_LIMIT`  | `100`                                                         | Pending searches per worker; above that `503` right away, `0` = no limit                |
+| `REQUEST_TIMEOUT_MS`  | `10000`                                                       | Time a client may take to send its request                                              |
+| `SHUTDOWN_TIMEOUT_MS` | `10000`                                                       | Time open requests get after `SIGTERM`                                                  |
+| `DOWNLOAD_TIMEOUT_MS` | `60000`                                                       | Abort a download after this long without a response or data (at least 1000)             |
+| `CACHE_SIZE`          | `10000`                                                       | Entries in the cache for search requests, `0` = off                                     |
+| `CORS_ORIGINS`        | `*`                                                           | Comma-separated list of allowed origins                                                 |
+| `CACHE_MAX_AGE`       | `3600`                                                        | `Cache-Control: max-age` of `/api` and `/reverse` in seconds, `0` = none                |
+| `METRICS_TOKEN`       | – (open)                                                      | Bearer token that `/metrics` requires, at least 16 characters                           |
+| `LOG_LEVEL`           | `info`                                                        | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                            |
+| `TZ`                  | `UTC` (container)                                             | Time zone for `UPDATE_CRON`                                                             |
 
 Flags (`AUTO_IMPORT`, `RATE_LIMIT_ENABLED`, `TRUST_PROXY`) accept `true`/`false`, `1`/`0` and
 `yes`/`no`.
@@ -333,7 +376,7 @@ All responses are GeoJSON `FeatureCollection`s and contain the `attribution` fie
 
 | Parameter    | Required | Description                                             |
 | ------------ | -------- | ------------------------------------------------------- |
-| `q`          | yes      | Search text, at least 2 characters                      |
+| `q`          | yes      | Search text, 2–200 characters                           |
 | `limit`      | no       | 1–10, default 5                                         |
 | `lat`, `lon` | no       | Only together; nearby hits are boosted (location bias)  |
 | `lang`       | no       | Two-letter language code, default `DEFAULT_LANG`        |
@@ -478,6 +521,8 @@ curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
 | `types`      | no       | As for `/api`                             |
 
 Invalid parameters return `400` with a message like `q: must be at least 2 characters long`.
+With `REQUIRE_API_KEY`, a missing or unknown key returns `401`. Overloaded or too slow search
+workers return `503` with `Retry-After: 1` (see [Timeouts and overload](#timeouts-and-overload)).
 As long as there is no index at `INDEX_PATH` (default `$DATA_DIR/index.sqlite`), both endpoints answer `503`. This also
 applies to an index with an old schema (currently version 11, since street segments are merged
 during the import; version 10 brought the result type in the full-text index for `types` and

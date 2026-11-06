@@ -22,7 +22,7 @@ export const metricsRoutes: FastifyPluginAsync<MetricsRoutesOptions> = async (
   app,
   { index, metrics, token },
 ) => {
-  app.get('/metrics', { config: { rateLimit: false } }, (request, reply) => {
+  app.get('/metrics', { config: { rateLimit: false, public: true } }, (request, reply) => {
     if (token !== null) {
       const header = request.headers.authorization ?? '';
       const given = header.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';

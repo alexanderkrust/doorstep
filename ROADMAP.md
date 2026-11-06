@@ -158,6 +158,29 @@ The response format moved away from the old flat property list towards what auto
 - [ ] **Bus stops and transit stops** are not searchable (named `highway=bus_stop` nodes, 53,000 in Germany; since schema 9 also subway, light rail and tram stops with `station=subway|light_rail|tram`). Would need their own type and ranking so they do not crowd out streets with the same name.
 - [ ] **Opening hours, phone, website** are not part of the response; a details endpoint (`/place/<id>`) could return them.
 
+## Hardening: security and timeouts (2026-11-06)
+
+**Goal:** Close the gaps an enterprise review found in access control and in behavior under
+overload or hanging connections. Configuration stays env-only.
+
+- [x] `REQUIRE_API_KEY`: `/api` and `/reverse` answer `401` without a key from `API_KEYS` (config
+      error without keys); `/health`, `/metrics` and CORS preflights stay open. Checked after the
+      rate limit, so guessing keys counts against the IP. Answers become `Cache-Control: private`.
+- [x] `API_KEY_IN_QUERY=false` accepts the key only as the `X-API-Key` header (URLs end up in logs).
+      Keys are kept and compared as SHA-256 hashes (`src/api/auth.ts`).
+- [x] `q` at most 200 characters (`400` above).
+- [x] Startup warnings for an open `/metrics`, rate limiting turned off and `CORS_ORIGINS=*`.
+- [x] Downloads (extract, `.md5`, `state.txt`, diffs) abort after `DOWNLOAD_TIMEOUT_MS` without a
+      response or data (`src/import/http.ts`); before, a hanging connection kept the import lock forever.
+- [x] Worker pool: `SEARCH_TIMEOUT_MS` and `SEARCH_QUEUE_LIMIT` answer `503` with `Retry-After`
+      instead of ever longer latencies; metric `doorstep_search_rejected_total{reason}`. A timed-out
+      search stays counted until its worker is done with it.
+- [x] `REQUEST_TIMEOUT_MS` (Node's `requestTimeout`), `SHUTDOWN_TIMEOUT_MS` (forced exit after
+      `SIGTERM`).
+- [ ] A worker stuck in one query is not replaced: its queue fills up and it answers `503`
+      until the query ends. Terminating it would also fail the other searches queued on it.
+- [ ] Rate limits and the queue limit are per process; several instances do not share them.
+
 ## Prebuilt index (mount instead of import)
 
 **Goal:** An index built elsewhere (another machine, a CI job, a previous container) can be mounted into the container. The container then only serves it: no download and no import, neither at the start nor on a schedule.

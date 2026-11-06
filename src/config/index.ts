@@ -62,6 +62,18 @@ const MAX_SEARCH_WORKERS = 64;
 /** One worker per core except the main thread's, at most 8; 0 on a single core. */
 const autoSearchWorkers = () => Math.max(0, Math.min(8, availableParallelism() - 1));
 
+/** A duration in milliseconds from `min` on; 0 is allowed when `zeroMeansOff`. */
+const millis = (fallback: number, min: number, zeroMeansOff = false) =>
+  optional(
+    z.coerce
+      .number()
+      .int()
+      .refine((n) => (zeroMeansOff && n === 0) || n >= min, {
+        message: `must be ${zeroMeansOff ? '0 (off) or ' : ''}at least ${String(min)} ms`,
+      })
+      .default(fallback),
+  );
+
 const DEFAULT_REGION_URL = 'https://download.geofabrik.de/europe/germany-latest.osm.pbf';
 const regionUrl = z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' });
 const absolutePath = z.string().refine(isAbsolute, 'must be an absolute path');
@@ -116,6 +128,10 @@ const envSchema = z
     API_KEYS: optional(list.default([])),
     /** Requests per minute and API key. */
     RATE_LIMIT_API_KEY: optional(z.coerce.number().int().min(1).default(600)),
+    /** `/api` and `/reverse` answer 401 without a valid key from API_KEYS. */
+    REQUIRE_API_KEY: flag(false),
+    /** Accept the key as the `api_key` query parameter, not only as the `X-API-Key` header. */
+    API_KEY_IN_QUERY: flag(true),
     /** Take the client IP from X-Forwarded-For (only behind your own reverse proxy). */
     TRUST_PROXY: flag(false),
     /** Entries in the LRU cache for search requests; 0 = off. */
@@ -149,6 +165,16 @@ const envSchema = z
         })
         .default(autoSearchWorkers()),
     ),
+    /** Pending searches per worker thread; above that, /api and /reverse answer 503. 0 = no limit. */
+    SEARCH_QUEUE_LIMIT: optional(z.coerce.number().int().min(0).default(100)),
+    /** A search in a worker thread that takes longer is answered with 503. 0 = no limit. */
+    SEARCH_TIMEOUT_MS: millis(2000, 10, true),
+    /** Time a client may take to send its request (Node's `requestTimeout`). */
+    REQUEST_TIMEOUT_MS: millis(10_000, 100),
+    /** After SIGTERM, open requests get this long before the process ends anyway. */
+    SHUTDOWN_TIMEOUT_MS: millis(10_000, 100),
+    /** A download that gets no response or no data for this long is aborted. */
+    DOWNLOAD_TIMEOUT_MS: millis(60_000, 1000),
     /** Schedule for automatic updates in cron format, e.g. "0 3 * * *". */
     UPDATE_CRON: optional(cronExpression.optional()),
     /** Comma-separated list of allowed origins, "*" = all. */
@@ -164,6 +190,13 @@ const envSchema = z
   .superRefine((env, ctx) => {
     if (env.INDEX_MODE === 'build' && !regionUrl.safeParse(env.REGION_URL).success) {
       ctx.addIssue({ code: 'custom', path: ['REGION_URL'], message: 'must be an http(s) URL' });
+    }
+    if (env.REQUIRE_API_KEY && env.API_KEYS.length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['REQUIRE_API_KEY'],
+        message: 'needs at least one key in API_KEYS',
+      });
     }
     if (env.INDEX_MODE === 'mounted' && env.UPDATE_CRON) {
       ctx.addIssue({
@@ -203,6 +236,18 @@ export interface Config {
   searchWorkers: number;
   /** `update` with the daily diffs (DIFF_UPDATES). */
   diffUpdates: boolean;
+  /** `/api` and `/reverse` only with a valid API key. */
+  requireApiKey: boolean;
+  /** API key also accepted as the `api_key` query parameter. */
+  apiKeyInQuery: boolean;
+  /** Abort a download after this long without a response or data. */
+  downloadTimeoutMs: number;
+  /** Longest a search may wait and run in a worker thread; 0 = no limit. */
+  searchTimeoutMs: number;
+  /** Pending searches per worker thread; 0 = no limit. */
+  searchQueueLimit: number;
+  requestTimeoutMs: number;
+  shutdownTimeoutMs: number;
 }
 
 export class ConfigError extends Error {
@@ -242,5 +287,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     metricsToken: e.METRICS_TOKEN ?? null,
     searchWorkers: e.SEARCH_WORKERS,
     diffUpdates: e.DIFF_UPDATES,
+    requireApiKey: e.REQUIRE_API_KEY,
+    apiKeyInQuery: e.API_KEY_IN_QUERY,
+    downloadTimeoutMs: e.DOWNLOAD_TIMEOUT_MS,
+    searchTimeoutMs: e.SEARCH_TIMEOUT_MS,
+    searchQueueLimit: e.SEARCH_QUEUE_LIMIT,
+    requestTimeoutMs: e.REQUEST_TIMEOUT_MS,
+    shutdownTimeoutMs: e.SHUTDOWN_TIMEOUT_MS,
   };
 }

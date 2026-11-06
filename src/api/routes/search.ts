@@ -55,7 +55,7 @@ export const searchRoutes: FastifyPluginAsync<SearchRoutesOptions> = async (
       void reply.header('x-cache', 'MISS');
     }
 
-    const rows = await queryIndex(reply, () =>
+    const rows = await queryIndex(reply, metrics, () =>
       index.search({
         q,
         limit,

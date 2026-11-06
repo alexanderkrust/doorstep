@@ -39,6 +39,8 @@ export class Metrics {
   rateLimited = 0;
   indexReloads = 0;
   indexReloadErrors = 0;
+  /** Searches answered with 503 because the workers were too slow or too busy. */
+  readonly searchRejected = { timeout: 0, overloaded: 0 };
 
   /** One answered request; `route` is the route pattern, never the concrete URL. */
   observeRequest(method: string, route: string, status: number, seconds: number): void {
@@ -113,6 +115,16 @@ export class Metrics {
     metric('doorstep_rate_limited_total', 'counter', 'Requests rejected by the rate limit (429).', [
       ['', this.rateLimited],
     ]);
+
+    metric(
+      'doorstep_search_rejected_total',
+      'counter',
+      'Searches answered with 503 by reason (timeout: SEARCH_TIMEOUT_MS, overloaded: SEARCH_QUEUE_LIMIT).',
+      (['timeout', 'overloaded'] as const).map((reason) => [
+        labels({ reason }),
+        this.searchRejected[reason],
+      ]),
+    );
 
     metric('doorstep_index_available', 'gauge', '1 if a usable index is loaded.', [
       ['', index.available ? 1 : 0],

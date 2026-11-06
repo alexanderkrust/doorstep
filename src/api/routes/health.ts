@@ -35,7 +35,7 @@ export const healthRoutes: FastifyPluginAsync<HealthRoutesOptions> = async (
   app.get(
     '/health',
     {
-      config: { rateLimit: false },
+      config: { rateLimit: false, public: true },
       schema: {
         response: {
           200: {

@@ -33,6 +33,22 @@ export type WorkerReply =
       error: { name: string; message: string; foundSchemaVersion?: number };
     };
 
+/** A search took longer than SEARCH_TIMEOUT_MS (waiting in the queue included). */
+export class SearchTimeoutError extends Error {
+  override name = 'SearchTimeoutError';
+  constructor(timeoutMs: number) {
+    super(`The search took longer than ${String(timeoutMs)} ms`);
+  }
+}
+
+/** Every worker already has SEARCH_QUEUE_LIMIT pending searches. */
+export class SearchOverloadedError extends Error {
+  override name = 'SearchOverloadedError';
+  constructor() {
+    super('Too many searches at the same time, please retry');
+  }
+}
+
 /** What the routes need: searches that may run elsewhere. */
 export interface SearchBackend {
   search(options: SearchOptions): Promise<PlaceRow[] | null>;
@@ -75,6 +91,31 @@ function run<T>(fn: () => T): Promise<T> {
 interface Pending {
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
+  timer?: NodeJS.Timeout;
+  /**
+   * The caller already got a timeout. The entry stays until the worker answers, because the
+   * worker is still busy with it (`node:sqlite` cannot cancel a query).
+   */
+  timedOut: boolean;
+}
+
+/** Settles a pending request once; after a timeout, the late answer is dropped. */
+function settle(pending: Pending, outcome: { value: unknown } | { error: Error }): void {
+  clearTimeout(pending.timer);
+  if (pending.timedOut) return;
+  if ('error' in outcome) pending.reject(outcome.error);
+  else pending.resolve(outcome.value);
+}
+
+export interface SearchPoolOptions {
+  /** Options for the `SearchIndex` of each worker. */
+  index?: SearchIndexOptions;
+  /** Searches that take longer (queue included) are rejected; 0 = no limit (SEARCH_TIMEOUT_MS). */
+  timeoutMs?: number;
+  /** Pending searches per worker; above that, new ones are rejected. 0 = no limit. */
+  queueLimit?: number;
+  /** Worker script; only tests replace it. */
+  workerUrl?: URL;
 }
 
 interface Slot {
@@ -98,7 +139,7 @@ export class SearchPool implements SearchBackend {
   constructor(
     private readonly path: string,
     size: number,
-    private readonly options: SearchIndexOptions = {},
+    private readonly options: SearchPoolOptions = {},
   ) {
     if (size < 1) throw new Error('SearchPool needs at least one worker');
     for (let i = 0; i < size; i++) this.slots.push(this.spawn());
@@ -109,11 +150,21 @@ export class SearchPool implements SearchBackend {
   }
 
   search(options: SearchOptions): Promise<PlaceRow[] | null> {
-    return this.send(this.leastBusy(), { op: 'search', options }) as Promise<PlaceRow[] | null>;
+    return this.query({ op: 'search', options }) as Promise<PlaceRow[] | null>;
   }
 
   reverse(options: ReverseOptions): Promise<PlaceRow[] | null> {
-    return this.send(this.leastBusy(), { op: 'reverse', options }) as Promise<PlaceRow[] | null>;
+    return this.query({ op: 'reverse', options }) as Promise<PlaceRow[] | null>;
+  }
+
+  /** A search on the least busy worker, within the queue limit and the timeout. */
+  private query(request: WorkerCall): Promise<unknown> {
+    const slot = this.leastBusy();
+    const limit = this.options.queueLimit ?? 0;
+    if (!this.closed && limit > 0 && slot.pending.size >= limit) {
+      return Promise.reject(new SearchOverloadedError());
+    }
+    return this.send(slot, request, this.options.timeoutMs ?? 0);
   }
 
   /**
@@ -132,25 +183,29 @@ export class SearchPool implements SearchBackend {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    const error = new Error('SearchPool is closed');
+    for (const slot of this.slots) {
+      for (const pending of slot.pending.values()) settle(pending, { error });
+      slot.pending.clear();
+    }
     await Promise.all(this.slots.map((slot) => slot.worker.terminate()));
   }
 
   private spawn(): Slot {
-    const worker = new Worker(WORKER_URL, {
+    const worker = new Worker(this.options.workerUrl ?? WORKER_URL, {
       execArgv: WORKER_EXEC_ARGV,
-      workerData: { path: this.path, options: this.options },
+      workerData: { path: this.path, options: this.options.index ?? {} },
     });
     const slot: Slot = { worker, pending: new Map() };
     worker.on('message', (reply: WorkerReply) => {
       const pending = slot.pending.get(reply.id);
       if (!pending) return;
       slot.pending.delete(reply.id);
-      if (reply.ok) pending.resolve(reply.result);
-      else pending.reject(toError(reply.error));
+      settle(pending, reply.ok ? { value: reply.result } : { error: toError(reply.error) });
     });
     // A crashed worker: fail its open requests and start a new one in its place.
     const replace = (err: Error) => {
-      for (const pending of slot.pending.values()) pending.reject(err);
+      for (const pending of slot.pending.values()) settle(pending, { error: err });
       slot.pending.clear();
       const i = this.slots.indexOf(slot);
       if (!this.closed && i >= 0) this.slots[i] = this.spawn();
@@ -168,11 +223,18 @@ export class SearchPool implements SearchBackend {
     return best;
   }
 
-  private send(slot: Slot, request: WorkerCall): Promise<unknown> {
+  private send(slot: Slot, request: WorkerCall, timeoutMs = 0): Promise<unknown> {
     if (this.closed) return Promise.reject(new Error('SearchPool is closed'));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      slot.pending.set(id, { resolve, reject });
+      const pending: Pending = { resolve, reject, timedOut: false };
+      if (timeoutMs > 0) {
+        pending.timer = setTimeout(() => {
+          pending.timedOut = true;
+          reject(new SearchTimeoutError(timeoutMs));
+        }, timeoutMs);
+      }
+      slot.pending.set(id, pending);
       slot.worker.postMessage({ ...request, id });
     });
   }

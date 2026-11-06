@@ -31,6 +31,13 @@ describe('loadConfig', () => {
       metricsToken: null,
       searchWorkers: AUTO_WORKERS,
       diffUpdates: true,
+      requireApiKey: false,
+      apiKeyInQuery: true,
+      downloadTimeoutMs: 60_000,
+      searchTimeoutMs: 2000,
+      searchQueueLimit: 100,
+      requestTimeoutMs: 10_000,
+      shutdownTimeoutMs: 10_000,
     });
   });
 
@@ -75,6 +82,13 @@ describe('loadConfig', () => {
       metricsToken: null,
       searchWorkers: AUTO_WORKERS,
       diffUpdates: true,
+      requireApiKey: false,
+      apiKeyInQuery: true,
+      downloadTimeoutMs: 60_000,
+      searchTimeoutMs: 2000,
+      searchQueueLimit: 100,
+      requestTimeoutMs: 10_000,
+      shutdownTimeoutMs: 10_000,
     });
   });
 
@@ -201,5 +215,52 @@ describe('loadConfig', () => {
     expect(loadConfig({ SEARCH_WORKERS: '0' }).searchWorkers).toBe(0);
     expect(loadConfig({ SEARCH_WORKERS: '3' }).searchWorkers).toBe(3);
     expect(loadConfig({ SEARCH_WORKERS: ' AUTO ' }).searchWorkers).toBe(AUTO_WORKERS);
+  });
+
+  describe('API keys', () => {
+    it('reads REQUIRE_API_KEY and API_KEY_IN_QUERY', () => {
+      const config = loadConfig({
+        API_KEYS: 'key-one',
+        REQUIRE_API_KEY: 'true',
+        API_KEY_IN_QUERY: 'false',
+      });
+      expect(config.requireApiKey).toBe(true);
+      expect(config.apiKeyInQuery).toBe(false);
+    });
+
+    it('rejects REQUIRE_API_KEY without API_KEYS', () => {
+      expect(() => loadConfig({ REQUIRE_API_KEY: 'true' })).toThrow(
+        /REQUIRE_API_KEY: needs at least one key in API_KEYS/,
+      );
+    });
+  });
+
+  describe('timeouts', () => {
+    it('reads the timeouts in milliseconds and the queue limit', () => {
+      const config = loadConfig({
+        DOWNLOAD_TIMEOUT_MS: '30000',
+        SEARCH_TIMEOUT_MS: '500',
+        SEARCH_QUEUE_LIMIT: '20',
+        REQUEST_TIMEOUT_MS: '5000',
+        SHUTDOWN_TIMEOUT_MS: '3000',
+      });
+      expect(config).toMatchObject({
+        downloadTimeoutMs: 30_000,
+        searchTimeoutMs: 500,
+        searchQueueLimit: 20,
+        requestTimeoutMs: 5000,
+        shutdownTimeoutMs: 3000,
+      });
+    });
+
+    it('takes 0 as off for the search timeout and the queue limit', () => {
+      const config = loadConfig({ SEARCH_TIMEOUT_MS: '0', SEARCH_QUEUE_LIMIT: '0' });
+      expect(config.searchTimeoutMs).toBe(0);
+      expect(config.searchQueueLimit).toBe(0);
+    });
+
+    it('rejects a download timeout below one second', () => {
+      expect(() => loadConfig({ DOWNLOAD_TIMEOUT_MS: '500' })).toThrow(/DOWNLOAD_TIMEOUT_MS/);
+    });
   });
 });

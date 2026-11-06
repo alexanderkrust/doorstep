@@ -3,6 +3,8 @@ import { normalizeTokens } from '../search/normalize.js';
 import { parseResultTypes, RESULT_TYPE_LIST } from '../search/result-type.js';
 
 export const MIN_QUERY_LENGTH = 2;
+/** Longer queries are rejected: no address needs more, and each word costs search time. */
+export const MAX_QUERY_LENGTH = 200;
 export const MAX_LIMIT = 10;
 export const DEFAULT_SEARCH_LIMIT = 5;
 export const DEFAULT_REVERSE_RADIUS_KM = 1;
@@ -64,6 +66,7 @@ const types = single.transform((value, ctx) => {
 const query = single
   .trim()
   .min(MIN_QUERY_LENGTH, `must be at least ${String(MIN_QUERY_LENGTH)} characters long`)
+  .max(MAX_QUERY_LENGTH, `must be at most ${String(MAX_QUERY_LENGTH)} characters long`)
   .refine((q) => normalizeTokens(q).length > 0, 'contains no searchable words');
 
 export const searchParams = z

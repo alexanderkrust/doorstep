@@ -4,6 +4,7 @@ import type { Config } from '../config/index.js';
 import { LruCache } from '../search/cache.js';
 import { IndexUnavailableError, SearchIndex } from '../search/search-index.js';
 import { InProcessSearch, SearchPool, type SearchBackend } from '../search/search-pool.js';
+import { ApiKeys, registerApiKeyCheck } from './auth.js';
 import type { FeatureCollection } from './geojson.js';
 import { Metrics } from './metrics.js';
 import { registerRateLimit } from './rate-limit.js';
@@ -26,6 +27,8 @@ export interface ServerOptions {
   reloadIntervalMs?: number;
   /** Metrics; `serve` passes its own to count updates as well. */
   metrics?: Metrics;
+  /** Search backend instead of the one SEARCH_WORKERS picks; only for tests. */
+  search?: SearchBackend;
 }
 
 declare module 'fastify' {
@@ -46,16 +49,25 @@ export function buildServer(config: Config, options: ServerOptions = {}): Fastif
     // search texts are often addresses and do not belong in the log.
     logController: new LogController({ disableRequestLogging: true }),
     trustProxy: config.trustProxy,
+    // Time a client may take to send its request; protects against slow clients holding
+    // connections open.
+    requestTimeout: config.requestTimeoutMs,
   });
 
   const metrics = options.metrics ?? new Metrics();
   // The server's own connection: /health, /metrics and noticing index swaps. Searches use it
   // too, unless they run in worker threads with their own connections (SEARCH_WORKERS).
   const index = new SearchIndex(config.indexPath);
+  // Timeout and queue limit only apply in worker threads: a search in the main thread
+  // blocks it until it is done.
   const search: SearchBackend =
-    config.searchWorkers > 0
-      ? new SearchPool(config.indexPath, config.searchWorkers)
-      : new InProcessSearch(index);
+    options.search ??
+    (config.searchWorkers > 0
+      ? new SearchPool(config.indexPath, config.searchWorkers, {
+          timeoutMs: config.searchTimeoutMs,
+          queueLimit: config.searchQueueLimit,
+        })
+      : new InProcessSearch(index));
   const cache = new LruCache<string, FeatureCollection>(config.cacheSize);
   if (config.searchWorkers > 0) {
     // Open now, before the workers: otherwise a swap before the first reload check would go
@@ -113,6 +125,12 @@ export function buildServer(config: Config, options: ServerOptions = {}): Fastif
     if (reply.statusCode >= 400 && !reply.hasHeader('cache-control')) {
       void reply.header('cache-control', 'no-store');
     }
+    // With a required API key, a shared cache (CDN, proxy) must not hand an answer to
+    // clients without one.
+    const cacheControl = reply.getHeader('cache-control');
+    if (config.requireApiKey && typeof cacheControl === 'string') {
+      void reply.header('cache-control', cacheControl.replace(/^public\b/, 'private'));
+    }
     done(null, payload);
   });
 
@@ -137,7 +155,9 @@ export function buildServer(config: Config, options: ServerOptions = {}): Fastif
     origin: config.corsOrigins.includes('*') ? '*' : config.corsOrigins,
     methods: ['GET', 'HEAD', 'OPTIONS'],
   });
-  registerRateLimit(app, config);
+  const keys = new ApiKeys(config.apiKeys, config.apiKeyInQuery);
+  registerRateLimit(app, config, keys);
+  registerApiKeyCheck(app, config, keys);
   void app.register(healthRoutes, {
     index,
     importing: options.importing ?? (() => false),
@@ -154,6 +174,7 @@ export function buildServer(config: Config, options: ServerOptions = {}): Fastif
   void app.register(reverseRoutes, {
     index: search,
     defaultLang: config.defaultLang,
+    metrics,
     cacheMaxAge: config.cacheMaxAge,
   });
 

@@ -1,6 +1,8 @@
 import type { FastifyReply } from 'fastify';
 import type { z } from 'zod';
 import { IndexUnavailableError } from '../search/search-index.js';
+import { SearchOverloadedError, SearchTimeoutError } from '../search/search-pool.js';
+import type { Metrics } from './metrics.js';
 import { formatIssues } from './params.js';
 
 /**
@@ -44,10 +46,12 @@ export function sendNoIndex(
 
 /**
  * Runs an index query (in the main thread or in a search worker). If the index is missing or
- * unusable, sends 503 and returns `null`. The duration goes into the `Server-Timing` header.
+ * unusable, or the search workers are overloaded or too slow, sends 503 and returns `null`.
+ * The duration goes into the `Server-Timing` header.
  */
 export async function queryIndex<T>(
   reply: FastifyReply,
+  metrics: Metrics,
   run: () => Promise<T | null>,
 ): Promise<T | null> {
   const started = performance.now();
@@ -57,6 +61,14 @@ export async function queryIndex<T>(
   } catch (err) {
     if (err instanceof IndexUnavailableError) {
       reply.log.error(err.message);
+      void sendNoIndex(reply, err.message);
+      return null;
+    }
+    if (err instanceof SearchTimeoutError || err instanceof SearchOverloadedError) {
+      const reason = err instanceof SearchTimeoutError ? 'timeout' : 'overloaded';
+      metrics.searchRejected[reason]++;
+      reply.log.warn({ reason }, err.message);
+      void reply.header('retry-after', '1');
       void sendNoIndex(reply, err.message);
       return null;
     }

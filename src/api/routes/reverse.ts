@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { SearchBackend } from '../../search/search-pool.js';
 import { toFeatureCollection } from '../geojson.js';
+import type { Metrics } from '../metrics.js';
 import { DEFAULT_REVERSE_RADIUS_KM, reverseParams } from '../params.js';
 import { queryIndex, sendBadRequest, sendCached } from '../replies.js';
 
@@ -8,6 +9,7 @@ export interface ReverseRoutesOptions {
   /** Searches in the main thread or in worker threads (SEARCH_WORKERS). */
   index: SearchBackend;
   defaultLang: string;
+  metrics: Metrics;
   /** CACHE_MAX_AGE in seconds. */
   cacheMaxAge: number;
 }
@@ -15,7 +17,7 @@ export interface ReverseRoutesOptions {
 /** `GET /reverse?lat=&lon=&limit=&radius=&lang=` – nearest objects to a point. */
 export const reverseRoutes: FastifyPluginAsync<ReverseRoutesOptions> = async (
   app,
-  { index, defaultLang, cacheMaxAge },
+  { index, defaultLang, metrics, cacheMaxAge },
 ) => {
   app.get('/reverse', async (request, reply) => {
     const parsed = reverseParams.safeParse(request.query);
@@ -29,7 +31,7 @@ export const reverseRoutes: FastifyPluginAsync<ReverseRoutesOptions> = async (
       types,
     } = parsed.data;
 
-    const rows = await queryIndex(reply, () =>
+    const rows = await queryIndex(reply, metrics, () =>
       index.reverse({ lat, lon, limit, radiusKm: radius, ...(types ? { types } : {}) }),
     );
     if (rows === null) return reply;

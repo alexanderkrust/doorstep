@@ -1,6 +1,6 @@
 import { Metrics } from './api/metrics.js';
 import { buildServer, DEFAULT_RELOAD_INTERVAL_MS } from './api/server.js';
-import { checkIndexAtStart } from './api/startup.js';
+import { checkIndexAtStart, securityWarnings } from './api/startup.js';
 import { ConfigError, loadConfig } from './config/index.js';
 import { assertImportAllowed, ImportArgsError, parseImportArgs } from './import/args.js';
 import {
@@ -38,6 +38,15 @@ async function serve(): Promise<void> {
 
   const shutdown = (signal: string) => {
     app.log.info({ signal }, 'Shutting down');
+    // Open requests get SHUTDOWN_TIMEOUT_MS; a hanging one must not keep the process (and an
+    // orchestrator's rollout) waiting until it is killed.
+    setTimeout(() => {
+      app.log.error(
+        { timeoutMs: config.shutdownTimeoutMs },
+        'Shutdown took too long, ending the process',
+      );
+      process.exit(1);
+    }, config.shutdownTimeoutMs).unref();
     stopping.abort();
     cron?.stop();
     job?.stop();
@@ -55,6 +64,8 @@ async function serve(): Promise<void> {
   process.on('SIGHUP', () => {
     if (!app.reloadIndex()) app.log.info('SIGHUP: index unchanged');
   });
+
+  for (const warning of securityWarnings(config)) app.log.warn(warning);
 
   const check = checkIndexAtStart(config);
   app.log[check.level]({ indexMode: config.indexMode, indexPath: config.indexPath }, check.message);
@@ -132,6 +143,7 @@ async function importCommand(command: 'import' | 'update', argv: string[]): Prom
     ...(args.input ? { input: args.input } : {}),
     mode: command,
     diffUpdates: config.diffUpdates,
+    downloadTimeoutMs: config.downloadTimeoutMs,
     log: (message) => {
       log.info(message);
     },

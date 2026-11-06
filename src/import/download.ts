@@ -4,6 +4,13 @@ import { mkdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import {
+  DEFAULT_DOWNLOAD_TIMEOUT_MS,
+  fetchText,
+  fetchWithTimeout,
+  HttpTimeoutError,
+  idleTimeout,
+} from './http.js';
 
 export class DownloadError extends Error {
   override name = 'DownloadError';
@@ -17,6 +24,8 @@ export interface DownloadProgress {
 
 export interface DownloadOptions {
   onProgress?: (progress: DownloadProgress) => void;
+  /** Abort after this long without a response or data (DOWNLOAD_TIMEOUT_MS). */
+  timeoutMs?: number;
 }
 
 export interface DownloadResult {
@@ -42,11 +51,11 @@ async function md5OfFile(path: string): Promise<string> {
 }
 
 /** Geofabrik puts `<file>.md5` next to each extract, in the format `<hash>  <name>`. */
-async function fetchExpectedMd5(url: string): Promise<string | null> {
+async function fetchExpectedMd5(url: string, timeoutMs: number): Promise<string | null> {
   try {
-    const res = await fetch(`${url}.md5`);
+    const res = await fetchText(`${url}.md5`, timeoutMs);
     if (!res.ok) return null;
-    const match = /^([0-9a-f]{32})\b/i.exec((await res.text()).trim());
+    const match = /^([0-9a-f]{32})\b/i.exec(res.text.trim());
     return match?.[1]?.toLowerCase() ?? null;
   } catch {
     return null;
@@ -64,7 +73,8 @@ export async function downloadExtract(
   options: DownloadOptions = {},
 ): Promise<DownloadResult> {
   await mkdir(dirname(dest), { recursive: true });
-  const expectedMd5 = await fetchExpectedMd5(url);
+  const timeoutMs = options.timeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS;
+  const expectedMd5 = await fetchExpectedMd5(url, timeoutMs);
 
   const existing = await fileSize(dest);
   if (existing !== null && expectedMd5 && (await md5OfFile(dest)) === expectedMd5) {
@@ -75,7 +85,7 @@ export async function downloadExtract(
   const offset = (await fileSize(part)) ?? 0;
   const headers: Record<string, string> = offset > 0 ? { range: `bytes=${String(offset)}-` } : {};
 
-  const res = await fetch(url, { headers });
+  const res = await withDownloadError(() => fetchWithTimeout(url, timeoutMs, { headers }));
   if (!res.ok || !res.body) {
     throw new DownloadError(`Download of ${url} failed: HTTP ${String(res.status)}`);
   }
@@ -94,10 +104,15 @@ export async function downloadExtract(
     },
   });
 
-  await pipeline(
-    Readable.fromWeb(res.body),
-    progress,
-    createWriteStream(part, { flags: resumed ? 'a' : 'w' }),
+  const body = res.body;
+  // An aborted download stays as `.part`; the next run resumes it.
+  await withDownloadError(() =>
+    pipeline(
+      Readable.fromWeb(body),
+      idleTimeout(timeoutMs, url),
+      progress,
+      createWriteStream(part, { flags: resumed ? 'a' : 'w' }),
+    ),
   );
 
   if (total !== null && received !== total) {
@@ -119,4 +134,14 @@ export async function downloadExtract(
 
   await rename(part, dest);
   return { path: dest, bytes: received, md5Verified: expectedMd5 !== null, skipped: false };
+}
+
+/** Timeouts become a `DownloadError` with the same message. */
+async function withDownloadError<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof HttpTimeoutError) throw new DownloadError(err.message);
+    throw err;
+  }
 }

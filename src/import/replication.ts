@@ -10,6 +10,13 @@ import { dirname } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
+import {
+  DEFAULT_DOWNLOAD_TIMEOUT_MS,
+  fetchText,
+  fetchWithTimeout,
+  HttpTimeoutError,
+  idleTimeout,
+} from './http.js';
 import { OsmiumError } from './osmium.js';
 
 /** State of a replication: sequence number and its timestamp. */
@@ -111,11 +118,30 @@ export class ReplicationError extends Error {
   override name = 'ReplicationError';
 }
 
+export interface ReplicationFetchOptions {
+  /** Abort after this long without a response or data (DOWNLOAD_TIMEOUT_MS). */
+  timeoutMs?: number;
+}
+
+/** Timeouts become a `ReplicationError` with the same message. */
+async function withReplicationError<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof HttpTimeoutError) throw new ReplicationError(err.message);
+    throw err;
+  }
+}
+
 /** The current state of the replication (`<base>/state.txt`). */
-export async function fetchState(baseUrl: string): Promise<ReplicationState> {
-  const res = await fetch(`${baseUrl}/state.txt`);
+export async function fetchState(
+  baseUrl: string,
+  options: ReplicationFetchOptions = {},
+): Promise<ReplicationState> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS;
+  const res = await withReplicationError(() => fetchText(`${baseUrl}/state.txt`, timeoutMs));
   if (!res.ok) throw new ReplicationError(`${baseUrl}/state.txt: HTTP ${String(res.status)}`);
-  const state = parseState(await res.text());
+  const state = parseState(res.text);
   if (!state) throw new ReplicationError(`${baseUrl}/state.txt has no sequence number`);
   return state;
 }
@@ -128,12 +154,17 @@ export async function downloadDiff(
   baseUrl: string,
   sequence: number,
   dest: string,
+  options: ReplicationFetchOptions = {},
 ): Promise<number> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS;
   const url = `${baseUrl}/${sequencePath(sequence)}.osc.gz`;
-  const res = await fetch(url);
+  const res = await withReplicationError(() => fetchWithTimeout(url, timeoutMs));
   if (!res.ok || !res.body) throw new ReplicationError(`${url}: HTTP ${String(res.status)}`);
   await mkdir(dirname(dest), { recursive: true });
-  await pipeline(Readable.fromWeb(res.body), createWriteStream(dest));
+  const body = res.body;
+  await withReplicationError(() =>
+    pipeline(Readable.fromWeb(body), idleTimeout(timeoutMs, url), createWriteStream(dest)),
+  );
   // Decompress once completely, without keeping anything.
   const discard = new Writable({
     write(_chunk: Buffer, _encoding, callback) {

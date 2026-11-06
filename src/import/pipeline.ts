@@ -272,6 +272,8 @@ export interface RunImportOptions {
   mode?: 'import' | 'update';
   /** Apply the daily diffs instead of downloading the whole extract (DIFF_UPDATES). Default on. */
   diffUpdates?: boolean;
+  /** Abort a download after this long without a response or data (DOWNLOAD_TIMEOUT_MS). */
+  downloadTimeoutMs?: number;
 }
 
 /** How the extract was brought up to date. */
@@ -370,7 +372,7 @@ async function refreshExtract(
   let reason = plan.kind === 'full' ? plan.reason : '';
   if (plan.kind === 'diff' && header) {
     try {
-      return await applyNewDiffs(header, extract, options.dataDir, log);
+      return await applyNewDiffs(header, extract, options, log);
     } catch (err) {
       reason = `diff update failed: ${err instanceof Error ? err.message : String(err)}`;
     }
@@ -379,6 +381,7 @@ async function refreshExtract(
 
   let lastLog = 0;
   const download = await downloadExtract(options.regionUrl, extract, {
+    ...(options.downloadTimeoutMs !== undefined ? { timeoutMs: options.downloadTimeoutMs } : {}),
     onProgress: (p) => {
       const now = Date.now();
       if (now - lastLog >= 5000) {
@@ -404,10 +407,13 @@ async function refreshExtract(
 async function applyNewDiffs(
   header: ReplicationHeader,
   extract: string,
-  dataDir: string,
+  options: RunImportOptions,
   log: Logger,
 ): Promise<ExtractRefresh> {
-  const state = await fetchState(header.baseUrl);
+  const { dataDir } = options;
+  const fetchOptions =
+    options.downloadTimeoutMs !== undefined ? { timeoutMs: options.downloadTimeoutMs } : {};
+  const state = await fetchState(header.baseUrl, fetchOptions);
   if (state.sequence === header.sequence) {
     log(`Extract is up to date (replication sequence ${String(state.sequence)})`);
     return { kind: 'unchanged', sequence: state.sequence };
@@ -430,7 +436,7 @@ async function applyNewDiffs(
     let bytes = 0;
     for (let sequence = header.sequence + 1; sequence <= state.sequence; sequence++) {
       const file = join(dir, `${String(sequence)}.osc.gz`);
-      bytes += await downloadDiff(header.baseUrl, sequence, file);
+      bytes += await downloadDiff(header.baseUrl, sequence, file, fetchOptions);
       files.push(file);
     }
     log(
