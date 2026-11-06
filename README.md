@@ -102,16 +102,17 @@ At startup, `serve` logs a warning for each setting that is risky in public oper
 
 ## System requirements
 
-Guide values for the Germany extract. Only the Düsseldorf administrative region was measured
-(217 MB PBF → 389 MB index); the values for Germany are extrapolated from it.
+Guide values for the Germany extract, measured on 2026-11-06 on a MacBook (Geofabrik extract
+from 2026-11-04, 4.9 GB PBF → 23.9 million entries, 10.3 GB index, import 36 min, at most 3.5 GB
+RAM).
 
-| Resource          | Germany (estimate)                     | Note                                                                                                                                                                                                                                                                                                                                       |
-| ----------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Disk (volume)     | **at least 30 GB free**                | Extract about 4.9 GB, index about 10 GB. During an import, `index.next.sqlite`, its staging file and SQLite's sort files are on the volume as well (during an update next to the old index), and while diffs are applied a second extract. With Docker Desktop, the VM's disk limit counts (see [Disk full](#disk-full-during-the-import)) |
-| RAM, API          | 1 GB for the process, **better 8 GB+** | The process itself needs little; SQLite reads the index from disk. For response times below 50 ms, the index should fit into the system's page cache                                                                                                                                                                                       |
-| RAM, import       | **4–8 GB**                             | `osmium export` keeps the node coordinates in memory; the import runs as a separate process next to the API. With less, set `IMPORT_NODE_INDEX=file` (see [Import](#import))                                                                                                                                                               |
-| CPU               | 2 cores, more for more throughput      | Searches run in worker threads, one per core except the main thread's (`SEARCH_WORKERS`); import and update run as a separate process                                                                                                                                                                                                      |
-| First import time | about 15–30 min plus download          | Düsseldorf administrative region: 45 s for 1.4 million entries                                                                                                                                                                                                                                                                             |
+| Resource          | Germany                                | Note                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Disk (volume)     | **at least 30 GB free**                | Extract 4.9 GB, index 10.3 GB (of which 243 MB the typo index). During an import, `index.next.sqlite`, its staging file and SQLite's sort files are on the volume as well (during an update next to the old index), and while diffs are applied a second extract. With Docker Desktop, the VM's disk limit counts (see [Disk full](#disk-full-during-the-import)) |
+| RAM, API          | 1 GB for the process, **better 8 GB+** | The process itself needs little; SQLite reads the index from disk. For response times below 50 ms, the index should fit into the system's page cache                                                                                                                                                                                                              |
+| RAM, import       | **4–8 GB**                             | Measured at most 3.5 GB. `osmium export` keeps the node coordinates in memory; the import runs as a separate process next to the API. With less, set `IMPORT_NODE_INDEX=file` (see [Import](#import))                                                                                                                                                             |
+| CPU               | 2 cores, more for more throughput      | Searches run in worker threads, one per core except the main thread's (`SEARCH_WORKERS`); import and update run as a separate process                                                                                                                                                                                                                             |
+| First import time | about 35–40 min plus download          | Measured 36 min on a MacBook; Düsseldorf administrative region: 1 min for 1.3 million entries                                                                                                                                                                                                                                                                     |
 
 ## Operations
 
@@ -170,7 +171,7 @@ are and which sequence number the extract has comes from its PBF header
 
 The index can be built somewhere else (another machine, a CI job) and mounted into the container.
 With `INDEX_MODE=mounted`, the container only serves it: no download, no import, no scheduled
-update. That saves the import on every machine (Germany: about 34 min, 3.3 GB RAM) and works
+update. That saves the import on every machine (Germany: about 36 min, 3.5 GB RAM) and works
 without internet access.
 
 ```bash
@@ -405,11 +406,18 @@ tried in order:
    Düsseldorf, `zeli 106 frankfurt` finds Zeil 106. House numbers and postcodes are never
    corrected.
 
+   First only the words that occur nowhere in the index are corrected. If that finds nothing,
+   every word gets alternatives, also one that occurs itself: in a large index a typo is often a
+   word of its own too (`gnies`* in "Gniesweg", a misspelled "Hauptsrasse" somewhere). Among
+   the alternatives that some hit contains, the word itself wins, then the one with the fewest
+   edits, so a correct `krefeld` is not turned into `seefeld`.
+
    This uses SymSpell: the import stores, for every word start of 4–7 letters, its forms with 1
-   or 2 letters removed (table `fuzzy_deletes`; Düsseldorf region: 1.5 million entries, 19 MB or 3.5 % of the index, 1.7 s of the import). A
-   query word then only needs to look up the forms of its own start. An index from an older
-   import without this table keeps working with 1 edit from 5 letters (`fuzzy: "edits"` in
-   `/health`); a new import adds the table.
+   or 2 letters removed (table `fuzzy_deletes`). Germany: 12.2 million entries for 1.07 million
+   words, 243 MB (2.4 % of the index), 17 s of the import. A query word then only needs to look
+   up the forms of its own start. An index from an older import without this table keeps
+   working with 1 edit from 5 letters (`fuzzy: "edits"` in `/health`); a new import adds the
+   table.
 
 Fully typed words keep the fast exact query; lookahead and typo tolerance only run when the
 stages before find nothing. So when a house
@@ -754,21 +762,26 @@ triple the throughput without cache.
 npm run bench -- --index $PWD/data/index.sqlite
 ```
 
-Measured on a MacBook, Node 24, 5 rounds. **Germany, current schema 8** (Geofabrik extract from
-2026-10-27, 4.9 GB PBF → 26.0 million entries including 2.0 million POIs, 10.1 GB index, import
-34 min, max 3.3 GB RAM): **p50 2.9 ms, p95 19.5 ms, p99 33 ms**, max 69 ms with a warm cache.
-Earlier: p50 2.8 ms, p95 16.5 ms, p99 29 ms, max 41–91 ms, measured with
-schema 5 without boundaries; before that (up to schema 4) p95 was 194 ms. Schema 7 with boundaries
-and spelling variants: p50 2.5 ms, p95 16.9 ms, max 56 ms with a warm cache. Import sizes: schema
-5 without boundaries 8.5 GB index, 30 min, max 5.4 GB RAM; with boundaries 8.8 GB, 39 min, max
-4.2 GB RAM; schema 7 9.3 GB, 28 min, max 4.2 GB RAM. The slowest case is a search with a location
-for very frequent words (`Am Markt 1` 41 ms, `Friedrichstraße 3` 20–90 ms). Düsseldorf
-administrative region (217 MB PBF, Geofabrik 2026-11-05 → 1.32 million entries, 547 MB index,
-import 58 s), schema 11 (2026-11-06): p50 1.6 ms, p95 3.3 ms, p99 3.9 ms, max 5.3 ms; with
-schema 4: p50 2.0 ms, p95 10.1 ms, p99 16.6 ms. With lookahead (2026-11-06) unchanged (p50
-1.6 ms, p95 3.2 ms); the 20 partly typed lookahead queries of the benchmark (`gneis 62 düss`) have
-p95 2.3 ms, the 20 queries with one typo (`gnies 62 düs`) p95 12.3 ms. Germany is not
-measured with lookahead and typo tolerance yet. The benchmark measures the search itself, in one
+Measured on a MacBook, Node 24, 5 rounds, warm page cache. **Germany, schema 11 with lookahead,
+typo tolerance and SymSpell** (2026-11-06, Geofabrik extract from 2026-11-04, 4.9 GB PBF → 23.9
+million entries, 10.3 GB index, import 36 min, at most 3.5 GB RAM), 324 queries:
+
+| Queries                                         | Count | p95     |
+| ----------------------------------------------- | ----- | ------- |
+| All                                             | 1,620 | 24.6 ms |
+| Typed (golden queries and typing prefixes)      | 1,420 | 20.5 ms |
+| Lookahead, every word in part (`gneis 62 düss`) | 100   | 29.1 ms |
+| One or two typos (`gnies 62 düs`, `dsseldrof`)  | 100   | 39.7 ms |
+
+All: p50 4.1 ms, p99 49 ms. Single runs of very frequent words with a location take far longer
+(`Hauptstraße 12` up to 0.8 s, `Kirchwe` 0.4 s, `Friedrichstraße 3` 0.2 s) and 12–55 ms when
+repeated; the code before lookahead takes the same time for them on the same index.
+
+Earlier on Germany: schema 8 (extract from 2026-10-27, 26.0 million entries, 10.1 GB, import
+34 min, 3.3 GB RAM) p50 2.9 ms, p95 19.5 ms, p99 33 ms, max 69 ms; schema 7 p50 2.5 ms, p95
+16.9 ms; schema 5 p95 16.5 ms; up to schema 4 p95 194 ms. Düsseldorf administrative region (217 MB
+PBF → 1.32 million entries, 566 MB index with SymSpell, import 1 min): typed p95 3.7 ms,
+lookahead p95 2.3 ms, typos p95 8.5 ms. The benchmark measures the search itself, in one
 thread; search workers do not change it, they run several such searches at the same time.
 
 What keeps the search fast: the hit list in FTS5 is sorted by importance, and only the first 200

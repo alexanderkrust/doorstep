@@ -74,6 +74,22 @@ export function fuzzyCorrections(
   source: FuzzySource,
   limit = 12,
 ): string[] {
+  return fuzzyCandidates(token, prefix, source, limit).map((c) => c.token);
+}
+
+/** A correction and its number of edits. */
+export interface FuzzyCandidate {
+  token: string;
+  distance: number;
+}
+
+/** Like `fuzzyCorrections`, with the number of edits of each correction. */
+export function fuzzyCandidates(
+  token: string,
+  prefix: boolean,
+  source: FuzzySource,
+  limit = 12,
+): FuzzyCandidate[] {
   const chars = Array.from(token);
   const length = chars.length;
   const d = maxEdits(length);
@@ -120,5 +136,5 @@ export function fuzzyCorrections(
   return [...found.values()]
     .sort((a, b) => a.distance - b.distance || b.docs - a.docs)
     .slice(0, limit)
-    .map((c) => c.token);
+    .map(({ token: correction, distance }) => ({ token: correction, distance }));
 }

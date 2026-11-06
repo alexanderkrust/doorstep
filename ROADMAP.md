@@ -302,7 +302,7 @@ in Düsseldorf.
 - [x] Ranking: a prefix of the first name word counts as "starts with" for lookahead words
 - [x] Düsseldorf administrative region: normal queries unchanged (p95 3.2 ms), lookahead
       queries p95 2.3 ms
-- [ ] Measure on Germany (frequent prefixes like `haupt` or `bahnh` in the middle of a query)
+- [x] Germany (2026-11-06): lookahead queries p95 29 ms, typed queries p95 20.5 ms (schema 8: 19.5 ms)
 
 ## Typo tolerance in every word (2026-11-06)
 
@@ -310,7 +310,8 @@ in Düsseldorf.
       are replaced by the words one edit away (Damerau-Levenshtein 1, `editVariants`), looked
       up in the `terms` table; the other words pick the right correction
 - [x] Düsseldorf administrative region: typo queries p95 12.3 ms, normal queries unchanged
-- [ ] Measure on Germany
+- [x] Germany (2026-11-06): typo queries p95 40 ms; fixed: a typo that is a word of its own in
+      the large index (`gnies`*, `hauptsrasse`) is corrected too, the correct word wins
 - [x] Two typos in one word, and typos in words under 5 characters: SymSpell, see below
 
 ## SymSpell (2026-11-06)
@@ -323,4 +324,4 @@ in Düsseldorf.
       letters); `/health` reports `fuzzy`
 - [x] Düsseldorf region: 1.5 million entries, +19 MB (3.5 %), 1.7 s import; typo queries p95
       8.5 ms (12.3 ms with the edit variants), normal queries unchanged
-- [ ] Measure size and import time on Germany
+- [x] Germany: 12.2 million entries for 1.07 million words, 243 MB (2.4 %), 17 s import

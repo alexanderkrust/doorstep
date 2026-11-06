@@ -64,6 +64,29 @@ const FEATURES = [
     name: 'Gneisenau-Eck',
     ...addr('Nordstraße', '1', '40477', 'Düsseldorf'),
   }),
+  // Words that look like the typos: in a large index, "gnies" is the start of some word and
+  // "hauptsrasse" is a real (misspelled) street somewhere
+  street(53.55, 9.99, 'Gniesweg', 'Hamburg', '20095'),
+  street(48.13, 11.57, 'Hauptsrasse', 'München', '80331'),
+  street(51.3311, 6.5623, 'Hauptstraße', 'Krefeld', '47809'),
+  node(51.3312, 6.5624, addr('Hauptstraße', '5', '47809', 'Krefeld')),
+  // "seefeld" is two edits from "krefeld": a correct word must not be corrected into it
+  street(54.04, 9.56, 'Hauptstraße', 'Seefeld', '25557'),
+  node(54.0401, 9.5601, {
+    ...addr('Hauptstraße', '5', '25557', 'Seefeld'),
+    amenity: 'townhall',
+    name: 'Amt Seefeld',
+  }),
+  node(54.0402, 9.5602, {
+    ...addr('Hauptstraße', '5', '25557', 'Seefeld'),
+    shop: 'bakery',
+    name: 'Bäckerei Holm',
+  }),
+  node(54.0403, 9.5603, {
+    ...addr('Hauptstraße', '5', '25557', 'Seefeld'),
+    amenity: 'doctors',
+    name: 'Praxis Lüders',
+  }),
   // Frankfurt: a 4-letter street name
   street(50.1147, 8.6825, 'Zeil', 'Frankfurt am Main', '60313'),
   node(50.1148, 8.6826, addr('Zeil', '106', '60313', 'Frankfurt am Main')),
@@ -152,6 +175,17 @@ describe('typo tolerance in every word', () => {
       street: 'Gneisenaustraße',
       housenumber: '62',
       city: 'Düsseldorf',
+    });
+  });
+
+  it('also corrects a word that exists in the index when the other words do not fit it', () => {
+    // "gnies"* matches Gniesweg in Hamburg, "hauptsrasse" is a street in München
+    expect(first('gnies 62 düs')).toMatchObject({ street: 'Gneisenaustraße', city: 'Düsseldorf' });
+    expect(first('hauptstrsae 5 krefeld')).toMatchObject({ city: 'Krefeld' });
+    expect(first('hauptsrasse 5 krefeld')).toMatchObject({
+      street: 'Hauptstraße',
+      housenumber: '5',
+      city: 'Krefeld',
     });
   });
 
