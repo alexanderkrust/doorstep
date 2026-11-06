@@ -3,6 +3,7 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { ATTRIBUTION } from '../api/attribution.js';
 import { boundingBox, distanceKm, gridCell } from '../search/geo.js';
 import { housenumberText, indexText } from '../search/normalize.js';
+import { kindToken, RESULT_TYPES, resultType, type ResultType } from '../search/result-type.js';
 import { withLocation, type Place, type PlaceLocation } from './place.js';
 import { Progress, type Logger } from './progress.js';
 
@@ -15,8 +16,9 @@ import { Progress, type Logger } from './progress.js';
  *    expansion of long prefixes (src/search/bm25.ts, `expandPrefix`).
  * 7: street names also split and joined ("Friedrich Straße", "Adenauerstraße").
  * 8: `category` (e.g. `shop=supermarket`), more POI kinds, city/district/postcode from boundaries.
+ * 9: FTS column `kind` (result type) for the `types` parameter; INDEX_TYPES, meta `types`.
  */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 const PLACE_COLUMNS = `osm_type, osm_id, type, name, name_de, name_en, street, housenumber,
   postcode, city, district, state, country, category, lat, lon, importance`;
@@ -74,8 +76,9 @@ CREATE TABLE places (
 -- Column name holds name, name:de and name:en; column city also holds the district. Hits come
 -- in rowid order, i.e. by importance. Prefix 1 for single-digit house numbers ("Hauptstraße 1").
 -- Column cell: grid cell of the point (src/search/geo.ts) for the nearby search.
+-- Column kind: result type as a token (src/search/result-type.ts) for the "types" parameter.
 CREATE VIRTUAL TABLE places_fts USING fts5(
-  name, street, housenumber, postcode, city, cell,
+  name, street, housenumber, postcode, city, cell, kind,
   content = '',
   prefix = '1 2 3 4',
   tokenize = 'unicode61 remove_diacritics 2'
@@ -84,13 +87,24 @@ CREATE VIRTUAL TABLE places_fts USING fts5(
 -- Points as degenerate rectangles; id = places.id.
 CREATE VIRTUAL TABLE places_rtree USING rtree(id, min_lat, max_lat, min_lon, max_lon);
 
--- Word statistics of the full-text index without grid cells: documents per word and per
+-- Word statistics of the full-text index without grid cells and result types: documents per word and per
 -- prefix up to 4 characters (summed over the words). Replaces the counting in bm25().
 CREATE TABLE terms (term TEXT PRIMARY KEY, docs INTEGER NOT NULL) WITHOUT ROWID;
 CREATE TABLE prefixes (prefix TEXT PRIMARY KEY, docs INTEGER NOT NULL) WITHOUT ROWID;
 
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `;
+
+/** Result type tokens of the column `kind`, as an SQL list; not part of the word statistics. */
+const KIND_TOKENS = RESULT_TYPES.map((t) => `'${kindToken(t)}'`).join(', ');
+
+/** Result type of a row from SQL values: `type` and its names. */
+function resultTypeOf(type: unknown, names: unknown[]): ResultType {
+  return resultType(
+    String(type),
+    names.some((n) => typeof n === 'string' && n !== ''),
+  );
+}
 
 const BATCH_SIZE = 10_000;
 /**
@@ -112,6 +126,11 @@ export interface IndexWriterOptions {
   log?: Logger;
   /** Interval of the progress messages; 0 reports every step of progress (tests). */
   progressIntervalMs?: number;
+  /**
+   * Result types that end up in the index (INDEX_TYPES); default all. The others are only
+   * used while building it, e.g. addresses for the city and postcode of streets.
+   */
+  indexTypes?: readonly ResultType[];
 }
 
 /**
@@ -141,6 +160,7 @@ export class IndexWriter {
   private readonly locate: ((lat: number, lon: number) => PlaceLocation) | undefined;
   private readonly log: Logger;
   private readonly progressIntervalMs: number | undefined;
+  private readonly indexTypes: readonly ResultType[];
   private pending = 0;
   private count = 0;
 
@@ -149,6 +169,7 @@ export class IndexWriter {
     this.locate = options.locate;
     this.log = options.log ?? (() => undefined);
     this.progressIntervalMs = options.progressIntervalMs;
+    this.indexTypes = options.indexTypes ?? RESULT_TYPES;
     this.stagingPath = `${path}.staging`;
     rmSync(this.stagingPath, { force: true });
     this.db = new DatabaseSync(path);
@@ -172,6 +193,9 @@ export class IndexWriter {
     );
     this.db.function('grid_cell', { deterministic: true }, (lat, lon) =>
       gridCell(Number(lat), Number(lon)),
+    );
+    this.db.function('kind_token', { varargs: true, deterministic: true }, (type, ...names) =>
+      kindToken(resultTypeOf(type, names)),
     );
     this.db.exec('BEGIN');
   }
@@ -219,6 +243,7 @@ export class IndexWriter {
     `);
     rmSync(this.stagingPath, { force: true });
     this.assignStreetAddresses();
+    this.keepIndexTypes();
     this.buildSearchIndexes();
     this.log('Word statistics and optimization');
     const ftsTokens = this.buildTermStats();
@@ -230,6 +255,7 @@ export class IndexWriter {
       imported_at: new Date().toISOString(),
       places: String(this.count),
       fts_tokens: String(ftsTokens),
+      types: this.indexTypes.join(','),
       ...meta,
     };
     for (const [key, value] of Object.entries(entries)) setMeta.run(key, value);
@@ -241,10 +267,10 @@ export class IndexWriter {
   /** Fills FTS and R*Tree in blocks by id (see `DEFAULT_INDEX_BATCH_SIZE`). */
   private buildSearchIndexes(): void {
     const fts = this.db.prepare(`
-      INSERT INTO places_fts (rowid, name, street, housenumber, postcode, city, cell)
+      INSERT INTO places_fts (rowid, name, street, housenumber, postcode, city, cell, kind)
         SELECT id, index_text(name, name_de, name_en), index_text(street),
                housenumber_text(housenumber), postcode, index_text(city, district),
-               grid_cell(lat, lon)
+               grid_cell(lat, lon), kind_token(type, name, name_de, name_en)
           FROM places WHERE id > ? AND id <= ?`);
     const rtree = this.db.prepare(`
       INSERT INTO places_rtree (id, min_lat, max_lat, min_lon, max_lon)
@@ -265,7 +291,8 @@ export class IndexWriter {
 
   /**
    * Fills `terms` and `prefixes` from the finished full-text index. Returns the number of
-   * all words in the index (including grid cells), for the average document length in bm25.
+   * all words in the index (including grid cells and result types), for the average
+   * document length in bm25.
    */
   private buildTermStats(): number {
     this.db.exec(`
@@ -274,7 +301,8 @@ export class IndexWriter {
       DROP TABLE temp.fts_vocab;
       BEGIN;
       INSERT INTO terms (term, docs)
-        SELECT term, doc FROM temp.vocab WHERE term NOT GLOB 'g[0-9]*x[0-9]*';
+        SELECT term, doc FROM temp.vocab
+         WHERE term NOT GLOB 'g[0-9]*x[0-9]*' AND term NOT IN (${KIND_TOKENS});
       INSERT INTO prefixes (prefix, docs)
         SELECT prefix, sum(docs) FROM (
           SELECT substr(term, 1, n.len) AS prefix, docs
@@ -390,6 +418,34 @@ export class IndexWriter {
       DROP TABLE temp.street_address;
       DROP INDEX places_street_lat;
     `);
+  }
+
+  /**
+   * Drops the rows whose result type is not in INDEX_TYPES, after the streets took city and
+   * postcode from the addresses. The rest is numbered anew without gaps and in the same
+   * order: the search relies on ids sorted by importance (`findAddressStart`).
+   */
+  private keepIndexTypes(): void {
+    if (RESULT_TYPES.every((t) => this.indexTypes.includes(t))) return;
+    this.log(`Keeping only ${this.indexTypes.join(', ')}`);
+    this.db.function('result_type', { varargs: true, deterministic: true }, (type, ...names) =>
+      resultTypeOf(type, names),
+    );
+    const types = this.indexTypes.map((t) => `'${t}'`).join(', ');
+    this.db.exec(`
+      BEGIN;
+      CREATE TEMP TABLE kept AS
+        SELECT ${PLACE_COLUMNS} FROM places
+         WHERE result_type(type, name, name_de, name_en) IN (${types}) ORDER BY id;
+      DELETE FROM places;
+      INSERT INTO places (${PLACE_COLUMNS}) SELECT ${PLACE_COLUMNS} FROM temp.kept ORDER BY rowid;
+      DROP TABLE temp.kept;
+      COMMIT;
+    `);
+    const { kept } = this.db.prepare('SELECT count(*) AS kept FROM places').get() as {
+      kept: number;
+    };
+    this.count = kept;
   }
 
   private progress(label: string, total: number): Progress {

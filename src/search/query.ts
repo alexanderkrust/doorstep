@@ -1,6 +1,7 @@
 /** Translation of normalized words (see `normalizeTokens`) into FTS5 queries. Pure functions. */
 
 import type { Phrase } from './bm25.js';
+import { kindToken, RESULT_TYPES, type ResultType } from './result-type.js';
 import type { TermDocs } from './term-stats.js';
 
 /** The typo tolerance never trims the last token below this length. */
@@ -26,14 +27,27 @@ function isHousenumberPrefix(token: string): boolean {
 /** Columns with text from OSM; the `cell` column (grid cell) is not one of them. */
 const TEXT_COLUMNS = '{name street housenumber postcode city}';
 
-/** Restricts a query to the text columns so search words never hit grid cells. */
-export function inTextColumns(match: string): string {
-  return `${TEXT_COLUMNS} : (${match})`;
+/**
+ * Restricts a query to the text columns so search words never hit grid cells or result
+ * types. With `types`, the hit must also have one of these result types (column `kind`).
+ */
+export function inTextColumns(match: string, types?: readonly ResultType[]): string {
+  return `${TEXT_COLUMNS} : (${match})${kindFilter(types)}`;
 }
 
 /** Like `inTextColumns`; in addition, the hit must lie in one of the grid cells. */
-export function withinCells(match: string, cells: readonly string[]): string {
-  return `${inTextColumns(match)} AND cell : (${cells.map(quote).join(' OR ')})`;
+export function withinCells(
+  match: string,
+  cells: readonly string[],
+  types?: readonly ResultType[],
+): string {
+  return `${inTextColumns(match, types)} AND cell : (${cells.map(quote).join(' OR ')})`;
+}
+
+/** ` AND kind : (…)`; empty without types or with all of them. */
+function kindFilter(types: readonly ResultType[] | undefined): string {
+  if (!types || RESULT_TYPES.every((t) => types.includes(t))) return '';
+  return ` AND kind : (${types.map((t) => quote(kindToken(t))).join(' OR ')})`;
 }
 
 /**

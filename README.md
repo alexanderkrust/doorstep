@@ -15,6 +15,7 @@ Every API response contains this notice in the `attribution` field.
 - [Operations](#operations)
   - [Updates without downtime](#updates-without-downtime)
   - [Using a prebuilt index](#using-a-prebuilt-index)
+  - [Choosing what is searchable](#choosing-what-is-searchable)
   - [Rate limiting and API keys](#rate-limiting-and-api-keys)
   - [Cache](#cache)
   - [Logs](#logs)
@@ -179,6 +180,31 @@ docker run -p 2322:2322 -v "$PWD/index:/index:ro" \
 - Several containers can share one mounted index. Keep it on a local disk: SQLite on NFS/SMB is
   slow and unreliable.
 
+### Choosing what is searchable
+
+What can be found is set on two levels, both with the result types of the response (`type`):
+`address`, `street`, `poi`, `locality` (city, town, village), `sublocality` (district),
+`place` (other named places).
+
+- **`INDEX_TYPES` at import:** only these types end up in the index. For an API that only
+  suggests streets:
+
+  ```bash
+  docker run -p 2322:2322 -v data:/data -e INDEX_TYPES=street doorstep-api
+  ```
+
+  The index gets much smaller (most entries are addresses) and searches have fewer candidates.
+  The import still reads everything: streets take their city and postcode from the addresses
+  and boundaries before the addresses are dropped, so the import time barely changes. A change
+  of `INDEX_TYPES` applies with the next `import` or `update`; until then the container warns at
+  startup. `/health` shows the types of the active index in `types`. With
+  `INDEX_MODE=mounted`, the mounted index decides.
+
+- **`types` per request:** `/api?q=Kö&types=street,poi` and `/reverse?…&types=street` return only
+  these types, within what the index holds. The filter is part of the full-text query, so it
+  does not lose hits that more important ones would push out of the candidates. Unknown values
+  return `400`.
+
 ### Rate limiting and API keys
 
 - Without an API key: at most `RATE_LIMIT` requests per minute and IP on `/api` and `/reverse`.
@@ -237,7 +263,9 @@ proxy.
 `status`, `version`, `uptime`, `index` (usable index available), `importing` (import or update
 running), `importedAt` (build time of the active index), `source` (region or file the index was
 built from), `indexMode` (`build` or `mounted`), `schemaVersion` (schema this image reads),
-`indexSchemaVersion` (schema of the index file, also when it does not match) and `attribution`. The image uses this for
+`indexSchemaVersion` (schema of the index file, also when it does not match), `types` (result
+types in the index, see [Choosing what is searchable](#choosing-what-is-searchable)) and
+`attribution`. The image uses this for
 its `HEALTHCHECK`.
 
 ## Configuration (environment variables)
@@ -252,6 +280,7 @@ message at startup listing all affected variables.
 | `PORT`               | `2322`                                                        | Port of the API                                                         |
 | `DATA_DIR`           | `/data`                                                       | Directory for extract and index (absolute path)                         |
 | `INDEX_MODE`         | `build`                                                       | `build`: the container builds the index; `mounted`: prebuilt, see above |
+| `INDEX_TYPES`        | all                                                           | Result types the import puts into the index, e.g. `street`; see below   |
 | `INDEX_PATH`         | `$DATA_DIR/index.sqlite`                                      | Path of the index file (absolute path)                                  |
 | `DEFAULT_LANG`       | `de`                                                          | Default language (two-letter code)                                      |
 | `AUTO_IMPORT`        | `false` (`true` in the Docker image)                          | `serve` imports in the background if no index exists                    |
@@ -277,13 +306,14 @@ All responses are GeoJSON `FeatureCollection`s and contain the `attribution` fie
 
 ### `GET /api` – autosuggest
 
-| Parameter    | Required | Description                                            |
-| ------------ | -------- | ------------------------------------------------------ |
-| `q`          | yes      | Search text, at least 2 characters                     |
-| `limit`      | no       | 1–10, default 5                                        |
-| `lat`, `lon` | no       | Only together; nearby hits are boosted (location bias) |
-| `lang`       | no       | Two-letter language code, default `DEFAULT_LANG`       |
-| `api_key`    | no       | API key (alternatively the `X-API-Key` header)         |
+| Parameter    | Required | Description                                             |
+| ------------ | -------- | ------------------------------------------------------- |
+| `q`          | yes      | Search text, at least 2 characters                      |
+| `limit`      | no       | 1–10, default 5                                         |
+| `lat`, `lon` | no       | Only together; nearby hits are boosted (location bias)  |
+| `lang`       | no       | Two-letter language code, default `DEFAULT_LANG`        |
+| `types`      | no       | Only these result types, comma-separated (`street,poi`) |
+| `api_key`    | no       | API key (alternatively the `X-API-Key` header)          |
 
 The last word is searched as a prefix, all others exactly. If the query finds nothing, these are
 tried in order: without single letters (`Frankfurt a.M.`, `Mülheim a.d. Ruhr`), the street
@@ -410,11 +440,13 @@ curl 'http://localhost:2322/api?q=K%C3%B6nigsall&limit=3'
 | `limit`      | no       | 1–10, default 1                           |
 | `radius`     | no       | Search radius in km, > 0 to 10, default 1 |
 | `lang`       | no       | As for `/api`                             |
+| `types`      | no       | As for `/api`                             |
 
 Invalid parameters return `400` with a message like `q: must be at least 2 characters long`.
 As long as there is no index at `INDEX_PATH` (default `$DATA_DIR/index.sqlite`), both endpoints answer `503`. This also
-applies to an index with an old schema (currently version 8, since categories, more POI kinds and
-city/district/postcode from boundaries; version 7 brought split and joined street names, version
+applies to an index with an old schema (currently version 9, since the result type in the full-text index for
+`types` and `INDEX_TYPES`; version 8 brought categories, more POI kinds and
+city/district/postcode from boundaries, version 7 brought split and joined street names, version
 6 the word statistics for bm25, version 5 country and state from administrative boundaries): then
 please import again or wait for the next update.
 

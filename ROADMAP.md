@@ -228,3 +228,13 @@ Open questions:
 - Use the daily diffs, or also offer minutely/hourly ones from planet.openstreetmap.org? Those are not cut to the region and would make the extract grow beyond it; only daily Geofabrik diffs for now.
 
 **Done when:** a second `update` on the Germany extract downloads only the daily diffs instead of over 4 GB, the new index contains the changes, an `update` without new diffs skips the rebuild, and a missing diff leads to the full download instead of an error.
+
+## Searchable types (2026-11-06)
+
+**Goal:** Configure what the API can find, e.g. only streets. Configuration stays env-only (no config file); the vocabulary is the result types of the response (`address`, `street`, `poi`, `locality`, `sublocality`, `place`, `src/search/result-type.ts`).
+
+- [x] `INDEX_TYPES` (comma-separated, default all): the import keeps only these types. The filter runs after streets took city and postcode from the addresses; the remaining rows are numbered anew without gaps, so the ids stay sorted by importance (`findAddressStart` relies on it). Meta `types`, shown in `/health`; the container warns at startup when `INDEX_TYPES` differs from the index (not in `INDEX_MODE=mounted`).
+- [x] `types` parameter for `/api` and `/reverse`: only these types, within the index. For `/api` it is part of the FTS query via a new column `kind` with one token per row (`kindstreet`, …; schema 9), so more important hits of other types cannot push the wanted ones out of the 200 candidates. The tokens are left out of the word statistics; bm25 counts them for the document length like `cell`. Part of the cache key. `/reverse` filters in JS.
+- [x] Tests: config, result type mapping, filtered import (streets keep city/postcode, ids without gaps, word statistics only of the remaining rows), API (`types` with and without location, addresses behind more important hits, cache, 400, `/reverse`, `/health`), startup warning.
+- [ ] **Measure on Germany:** index size and import time with `INDEX_TYPES=street`; latency of `types=address`/`types=street` on frequent prefixes (FTS5 intersects with the large `kind` doclists, e.g. 20 million entries for `kindaddress`).
+- [ ] **Faster import for few types:** the import still filters and reads everything with osmium. With `INDEX_TYPES=street`, the POI tags (`shop`, `amenity`, …) could be left out of `TAG_FILTERS`; addresses are still needed for the city and postcode of streets.

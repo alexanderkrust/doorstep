@@ -56,6 +56,8 @@ export const healthRoutes: FastifyPluginAsync<HealthRoutesOptions> = async (
               indexSchemaVersion: { type: 'integer' },
               /** Region or file the index was built from. */
               source: { type: 'string' },
+              /** Result types in the index (INDEX_TYPES at import). */
+              types: { type: 'array', items: { type: 'string' } },
             },
           },
         },
@@ -79,6 +81,7 @@ export const healthRoutes: FastifyPluginAsync<HealthRoutesOptions> = async (
         schemaVersion: SCHEMA_VERSION,
         ...(state.schemaVersion === undefined ? {} : { indexSchemaVersion: state.schemaVersion }),
         ...(source ? { source } : {}),
+        ...(meta?.['types'] ? { types: meta['types'].split(',') } : {}),
       };
     },
   );

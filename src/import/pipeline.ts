@@ -2,6 +2,7 @@ import { createReadStream } from 'node:fs';
 import { mkdir, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { INDEX_FILE } from '../config/index.js';
+import type { ResultType } from '../search/result-type.js';
 import { downloadExtract, type DownloadProgress } from './download.js';
 import { IndexWriter } from './index-writer.js';
 import { acquireLock } from './lock.js';
@@ -52,6 +53,8 @@ interface WriteIndexOptions {
   progressIntervalMs?: number | undefined;
   /** Numbered steps; building the index starts a new one. */
   steps?: Steps | undefined;
+  /** Result types that end up in the index (INDEX_TYPES); default all. */
+  indexTypes?: readonly ResultType[] | undefined;
 }
 
 /** `/data/index.sqlite` → `/data/index.next.sqlite` */
@@ -81,6 +84,7 @@ async function writeIndex(
 
   const writer = new IndexWriter(tmp, {
     ...(boundaries ? { locate: (lat, lon) => boundaries.locate(lat, lon) } : {}),
+    ...(options.indexTypes ? { indexTypes: options.indexTypes } : {}),
     log,
     ...(options.progressIntervalMs !== undefined
       ? { progressIntervalMs: options.progressIntervalMs }
@@ -125,6 +129,8 @@ export interface GeoJsonSeqImportOptions {
   log?: Logger;
   /** Interval of the progress messages; 0 reports every step of progress (tests). */
   progressIntervalMs?: number;
+  /** Result types that end up in the index (INDEX_TYPES); default all. */
+  indexTypes?: readonly ResultType[] | undefined;
 }
 
 /** Imports a finished GeoJSON sequence (output of `osmium export`). */
@@ -174,6 +180,8 @@ export interface PbfImportOptions {
   log?: Logger;
   /** Step counter, if steps already ran before (download). */
   steps?: Steps;
+  /** Result types that end up in the index (INDEX_TYPES); default all. */
+  indexTypes?: readonly ResultType[] | undefined;
 }
 
 /** Steps of `importFromPbf`: boundaries, filtering, reading features, building the index. */
@@ -209,7 +217,7 @@ export async function importFromPbf(
       () => exportGeoJsonSeq(filtered),
       output,
       { source: options.source ?? input },
-      { boundaries, log, steps },
+      { boundaries, log, steps, indexTypes: options.indexTypes },
     );
     steps.done();
     const { inside, border, unknown } = boundaries.stats;
@@ -227,6 +235,8 @@ export interface RunImportOptions {
   dataDir: string;
   /** Where the index goes; default `dataDir/index.sqlite` (INDEX_PATH). */
   indexPath?: string;
+  /** Result types that end up in the index (INDEX_TYPES); default all. */
+  indexTypes?: readonly ResultType[] | undefined;
   regionUrl: string;
   /** Local PBF file instead of a download. */
   input?: string;
@@ -288,6 +298,7 @@ async function runLockedImport(options: RunImportOptions): Promise<ImportResult>
     log,
     steps,
     ...(source ? { source } : {}),
+    indexTypes: options.indexTypes,
   });
   log(`Created index ${output} with ${formatCount(result.places)} entries`);
   return result;

@@ -127,6 +127,7 @@ async function importCommand(command: 'import' | 'update', argv: string[]): Prom
   const result = await runImport({
     dataDir: config.dataDir,
     indexPath: config.indexPath,
+    indexTypes: config.indexTypes,
     regionUrl: args.regionUrl,
     ...(args.input ? { input: args.input } : {}),
     log: (message) => {

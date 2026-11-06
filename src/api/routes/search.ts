@@ -22,14 +22,21 @@ export const searchRoutes: FastifyPluginAsync<SearchRoutesOptions> = async (
   app.get('/api', (request, reply) => {
     const parsed = searchParams.safeParse(request.query);
     if (!parsed.success) return sendBadRequest(reply, parsed.error);
-    const { q, limit = DEFAULT_SEARCH_LIMIT, lat, lon, lang = defaultLang } = parsed.data;
+    const { q, limit = DEFAULT_SEARCH_LIMIT, lat, lon, lang = defaultLang, types } = parsed.data;
 
     const started = performance.now();
     let cacheKey: string | undefined;
     if (cache.maxSize > 0) {
       // All queries, not just short ones: on large indexes, long queries with a location are
       // the most expensive. Frequent short prefixes stay in the LRU because they recur often.
-      cacheKey = [normalizeTokens(q).join(' '), limit, lang, lat ?? '', lon ?? ''].join('|');
+      cacheKey = [
+        normalizeTokens(q).join(' '),
+        limit,
+        lang,
+        lat ?? '',
+        lon ?? '',
+        types?.join(',') ?? '',
+      ].join('|');
       const hit = cache.get(cacheKey);
       if (hit) {
         metrics.cacheHits++;
@@ -49,6 +56,7 @@ export const searchRoutes: FastifyPluginAsync<SearchRoutesOptions> = async (
         q,
         limit,
         ...(lat !== undefined && lon !== undefined ? { lat, lon } : {}),
+        ...(types ? { types } : {}),
       }),
     );
     if (rows === null) return reply;

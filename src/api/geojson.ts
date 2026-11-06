@@ -1,17 +1,9 @@
 import { distanceKm } from '../search/geo.js';
+import { resultType, type ResultType } from '../search/result-type.js';
 import type { PlaceRow } from '../search/search-index.js';
 import { ATTRIBUTION } from './attribution.js';
 
-/**
- * What a hit is, independent of OSM tagging:
- * - `address`: a house number without a name
- * - `street`: a street or square
- * - `poi`: a named place such as a shop, station or named building
- * - `locality`: a city, town, village or other settlement
- * - `sublocality`: a part of a city (district, quarter, neighbourhood)
- * - `place`: any other named place
- */
-export type ResultType = 'address' | 'street' | 'poi' | 'locality' | 'sublocality' | 'place';
+export type { ResultType } from '../search/result-type.js';
 
 export interface Address {
   street?: string;
@@ -59,33 +51,6 @@ export interface FeatureCollection {
 }
 
 const OSM_TYPE_NAMES = { N: 'node', W: 'way', R: 'relation' } as const;
-const LOCALITY_TYPES = new Set([
-  'city',
-  'town',
-  'village',
-  'hamlet',
-  'municipality',
-  'isolated_dwelling',
-  'farm',
-]);
-const SUBLOCALITY_TYPES = new Set([
-  'borough',
-  'suburb',
-  'quarter',
-  'neighbourhood',
-  'city_block',
-  'plot',
-]);
-
-function resultType(row: PlaceRow, name: string | null): ResultType {
-  if (row.type === 'house') return name ? 'poi' : 'address';
-  if (row.type === 'street' || row.type === 'square') return 'street';
-  if (row.type === 'poi') return 'poi';
-  if (LOCALITY_TYPES.has(row.type)) return 'locality';
-  if (SUBLOCALITY_TYPES.has(row.type)) return 'sublocality';
-  return 'place';
-}
-
 /** Name in the requested language; otherwise `name`, otherwise any available name. */
 export function displayName(row: PlaceRow, lang: string): string | null {
   const localized = lang === 'de' ? row.name_de : lang === 'en' ? row.name_en : null;
@@ -166,7 +131,7 @@ export function toFeature(
   origin?: { lat: number; lon: number },
 ): PointFeature {
   const name = displayName(row, lang);
-  const type = resultType(row, name);
+  const type = resultType(row.type, name !== null);
   const country = row.country ? countryName(row.country, lang) : null;
   const { main, secondary: raw } = texts(row, type, name, country);
   const secondary = join(without(main, raw.split(', ')));

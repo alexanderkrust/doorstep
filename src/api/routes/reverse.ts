@@ -23,9 +23,12 @@ export const reverseRoutes: FastifyPluginAsync<ReverseRoutesOptions> = async (
       limit = 1,
       radius = DEFAULT_REVERSE_RADIUS_KM,
       lang = defaultLang,
+      types,
     } = parsed.data;
 
-    const rows = queryIndex(reply, () => index.reverse({ lat, lon, limit, radiusKm: radius }));
+    const rows = queryIndex(reply, () =>
+      index.reverse({ lat, lon, limit, radiusKm: radius, ...(types ? { types } : {}) }),
+    );
     if (rows === null) return reply;
     return sendCached(reply, toFeatureCollection(rows, lang, { lat, lon }));
   });

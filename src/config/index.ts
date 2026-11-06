@@ -1,6 +1,12 @@
 import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import { CronError, nextRun, parseCron } from '../import/cron.js';
+import {
+  parseResultTypes,
+  RESULT_TYPE_LIST,
+  RESULT_TYPES,
+  type ResultType,
+} from '../search/result-type.js';
 
 /** Empty strings count as "not set" so that defaults apply. */
 const optional = <T extends z.ZodType>(schema: T) =>
@@ -70,6 +76,23 @@ const envSchema = z
         .pipe(z.enum(['build', 'mounted'], { error: 'must be build or mounted' }))
         .default('build'),
     ),
+    /** Result types the import puts into the index; empty = all. */
+    INDEX_TYPES: optional(
+      z
+        .string()
+        .transform((value, ctx) => {
+          const { types, unknown } = parseResultTypes(value);
+          if (unknown.length > 0) {
+            ctx.addIssue({
+              code: 'custom',
+              message: `unknown type ${unknown.join(', ')}; allowed: ${RESULT_TYPE_LIST}`,
+            });
+            return z.NEVER;
+          }
+          return types.length > 0 ? types : [...RESULT_TYPES];
+        })
+        .default([...RESULT_TYPES]),
+    ),
     /** Path of the index file; default `$DATA_DIR/index.sqlite`. */
     INDEX_PATH: optional(absolutePath.optional()),
     DEFAULT_LANG: optional(
@@ -135,6 +158,8 @@ export interface Config {
   indexMode: IndexMode;
   /** Absolute path of the index file. */
   indexPath: string;
+  /** Result types the import puts into the index (in `build` mode). */
+  indexTypes: ResultType[];
 }
 
 export class ConfigError extends Error {
@@ -169,5 +194,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     updateCron: e.UPDATE_CRON ?? null,
     indexMode: e.INDEX_MODE,
     indexPath: e.INDEX_PATH ?? join(e.DATA_DIR, INDEX_FILE),
+    indexTypes: e.INDEX_TYPES,
   };
 }

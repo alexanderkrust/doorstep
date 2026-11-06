@@ -27,7 +27,7 @@ export interface FtsColumns {
   city: readonly string[];
 }
 
-/** Column weights as formerly in `bm25(places_fts, 4, 2, 1, 1, 1, 0)`; `cell` does not count. */
+/** Column weights as formerly in `bm25(places_fts, 4, 2, 1, 1, 1, 0, 0)`; `cell` and `kind` do not count. */
 const WEIGHTS: Readonly<Record<keyof FtsColumns, number>> = {
   name: 4,
   street: 2,
@@ -36,8 +36,11 @@ const WEIGHTS: Readonly<Record<keyof FtsColumns, number>> = {
   city: 1,
 };
 const COLUMN_NAMES = Object.keys(WEIGHTS) as (keyof FtsColumns)[];
-/** The `cell` column always has exactly one word; it counts toward the document length. */
-const CELL_TOKENS = 1;
+/**
+ * The columns `cell` and `kind` always have exactly one word each; they count toward the
+ * document length.
+ */
+const EXTRA_TOKENS = 2;
 /** Parameters as in FTS5. */
 const K1 = 1.2;
 const B = 0.75;
@@ -87,7 +90,7 @@ export function bm25(
   columns: FtsColumns,
   avgTokens: number,
 ): number {
-  let length = CELL_TOKENS;
+  let length = EXTRA_TOKENS;
   for (const column of COLUMN_NAMES) length += columns[column].length;
   const norm = K1 * (1 - B + (B * length) / avgTokens);
 
