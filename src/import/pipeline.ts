@@ -15,6 +15,7 @@ import {
   exportRelationsOpl,
   filterBoundaries,
   filterExtract,
+  type ExportOptions,
 } from './osmium.js';
 import { featureToPlace, lineEnds, parseGeoJsonSeqLine } from './place.js';
 import {
@@ -176,18 +177,31 @@ export async function loadBoundaryFiles(geojsonseq: string, opl: string): Promis
 export async function loadBoundariesFromPbf(
   input: string,
   workDir: string,
+  nodeIndex: NodeIndex = 'memory',
 ): Promise<BoundaryIndex> {
   const filtered = join(workDir, 'boundaries.osm.pbf');
+  const exportOptions = nodeIndexOptions(workDir, nodeIndex);
   try {
     await filterBoundaries(input, filtered);
     return await BoundaryIndex.load(
-      () => exportBoundaryGeoJsonSeq(filtered),
+      () => exportBoundaryGeoJsonSeq(filtered, exportOptions),
       exportRelationsOpl(filtered),
       parseGeoJsonSeqLine,
     );
   } finally {
     await rm(filtered, { force: true });
+    if (exportOptions.nodeIndexFile) await rm(exportOptions.nodeIndexFile, { force: true });
   }
+}
+
+/** Where `osmium export` keeps the node locations (IMPORT_NODE_INDEX). */
+export type NodeIndex = 'memory' | 'file';
+
+/** File name of the node locations in the work directory with IMPORT_NODE_INDEX=file. */
+const NODE_INDEX_FILE = 'node-locations.idx';
+
+function nodeIndexOptions(workDir: string, nodeIndex: NodeIndex): ExportOptions {
+  return nodeIndex === 'file' ? { nodeIndexFile: join(workDir, NODE_INDEX_FILE) } : {};
 }
 
 export interface PbfImportOptions {
@@ -199,6 +213,8 @@ export interface PbfImportOptions {
   steps?: Steps;
   /** Result types that end up in the index (INDEX_TYPES); default all. */
   indexTypes?: readonly ResultType[] | undefined;
+  /** Node locations for `osmium export` in memory (default) or on disk (IMPORT_NODE_INDEX). */
+  nodeIndex?: NodeIndex;
 }
 
 /** Steps of `importFromPbf`: boundaries, filtering, reading features, building the index. */
@@ -215,10 +231,12 @@ export async function importFromPbf(
   await mkdir(workDir, { recursive: true });
   const filtered = join(workDir, 'filtered.osm.pbf');
   const steps = options.steps ?? new Steps(log, PBF_STEPS);
+  const nodeIndex = options.nodeIndex ?? 'memory';
+  const exportOptions = nodeIndexOptions(workDir, nodeIndex);
 
   try {
     steps.start('Loading boundaries (countries, states, municipalities, districts, postcodes)');
-    const boundaries = await loadBoundariesFromPbf(input, workDir);
+    const boundaries = await loadBoundariesFromPbf(input, workDir, nodeIndex);
     const { countries, states, borderSegments, municipalities, districts, postcodes } =
       boundaries.summary;
     log(
@@ -229,10 +247,12 @@ export async function importFromPbf(
     );
     steps.start(`Filtering the extract (osmium tags-filter ${input})`);
     await filterExtract(input, filtered);
-    steps.start('Reading features (osmium export)');
+    steps.start(
+      `Reading features (osmium export, node locations ${nodeIndex === 'file' ? 'on disk' : 'in memory'})`,
+    );
     const replication = await readReplicationHeader(input).catch(() => null);
     const result = await writeIndex(
-      () => exportGeoJsonSeq(filtered),
+      () => exportGeoJsonSeq(filtered, exportOptions),
       output,
       {
         source: options.source ?? input,
@@ -252,6 +272,7 @@ export async function importFromPbf(
     return result;
   } finally {
     await rm(filtered, { force: true });
+    if (exportOptions.nodeIndexFile) await rm(exportOptions.nodeIndexFile, { force: true });
   }
 }
 
@@ -274,6 +295,8 @@ export interface RunImportOptions {
   diffUpdates?: boolean;
   /** Abort a download after this long without a response or data (DOWNLOAD_TIMEOUT_MS). */
   downloadTimeoutMs?: number;
+  /** Node locations for `osmium export` in memory (default) or on disk (IMPORT_NODE_INDEX). */
+  nodeIndex?: NodeIndex;
 }
 
 /** How the extract was brought up to date. */
@@ -342,6 +365,7 @@ async function runLockedImport(options: RunImportOptions): Promise<RunImportResu
     steps,
     ...(source ? { source } : {}),
     indexTypes: options.indexTypes,
+    ...(options.nodeIndex ? { nodeIndex: options.nodeIndex } : {}),
   });
   log(`Created index ${output} with ${formatCount(result.places)} entries`);
   return { ...result, extract, rebuilt: true };

@@ -38,6 +38,7 @@ describe('loadConfig', () => {
       searchQueueLimit: 100,
       requestTimeoutMs: 10_000,
       shutdownTimeoutMs: 10_000,
+      importNodeIndex: 'memory',
     });
   });
 
@@ -89,6 +90,7 @@ describe('loadConfig', () => {
       searchQueueLimit: 100,
       requestTimeoutMs: 10_000,
       shutdownTimeoutMs: 10_000,
+      importNodeIndex: 'memory',
     });
   });
 
@@ -233,6 +235,13 @@ describe('loadConfig', () => {
         /REQUIRE_API_KEY: needs at least one key in API_KEYS/,
       );
     });
+  });
+
+  it('reads IMPORT_NODE_INDEX', () => {
+    expect(loadConfig({ IMPORT_NODE_INDEX: 'FILE' }).importNodeIndex).toBe('file');
+    expect(() => loadConfig({ IMPORT_NODE_INDEX: 'disk' })).toThrow(
+      /IMPORT_NODE_INDEX: must be memory or file/,
+    );
   });
 
   describe('timeouts', () => {

@@ -109,7 +109,7 @@ Guide values for the Germany extract. Only the Düsseldorf administrative region
 | ----------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Disk (volume)     | **at least 30 GB free**                | Extract about 4.9 GB, index about 10 GB. During an update, the filtered intermediate file, `index.next.sqlite` and its staging file are on the volume as well, and while diffs are applied a second extract |
 | RAM, API          | 1 GB for the process, **better 8 GB+** | The process itself needs little; SQLite reads the index from disk. For response times below 50 ms, the index should fit into the system's page cache                                                        |
-| RAM, import       | **4–8 GB**                             | `osmium export` keeps the node coordinates in memory; the import runs as a separate process next to the API                                                                                                 |
+| RAM, import       | **4–8 GB**                             | `osmium export` keeps the node coordinates in memory; the import runs as a separate process next to the API. With less, set `IMPORT_NODE_INDEX=file` (see [Import](#import))                                |
 | CPU               | 2 cores, more for more throughput      | Searches run in worker threads, one per core except the main thread's (`SEARCH_WORKERS`); import and update run as a separate process                                                                       |
 | First import time | about 15–30 min plus download          | Düsseldorf administrative region: 45 s for 1.4 million entries                                                                                                                                              |
 
@@ -330,38 +330,39 @@ its `HEALTHCHECK`.
 Configuration happens exclusively via environment variables. Invalid values lead to an error
 message at startup listing all affected variables.
 
-| Variable              | Default                                                       | Description                                                                             |
-| --------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `REGION_URL`          | `https://download.geofabrik.de/europe/germany-latest.osm.pbf` | Geofabrik extract for import and update (not needed when `mounted`)                     |
-| `HOST`                | `0.0.0.0`                                                     | Bind address of the API                                                                 |
-| `PORT`                | `2322`                                                        | Port of the API                                                                         |
-| `DATA_DIR`            | `/data`                                                       | Directory for extract and index (absolute path)                                         |
-| `INDEX_MODE`          | `build`                                                       | `build`: the container builds the index; `mounted`: prebuilt, see above                 |
-| `INDEX_TYPES`         | all                                                           | Result types the import puts into the index, e.g. `street`; see below                   |
-| `INDEX_PATH`          | `$DATA_DIR/index.sqlite`                                      | Path of the index file (absolute path)                                                  |
-| `DEFAULT_LANG`        | `de`                                                          | Default language (two-letter code)                                                      |
-| `DIFF_UPDATES`        | `true`                                                        | `update` applies the daily diffs instead of downloading the whole extract               |
-| `AUTO_IMPORT`         | `false` (`true` in the Docker image)                          | `serve` imports in the background if no index exists                                    |
-| `UPDATE_CRON`         | – (no updates)                                                | Schedule for automatic updates in cron format, e.g. `0 3 * * *`                         |
-| `RATE_LIMIT_ENABLED`  | `true`                                                        | Rate limiting on or off                                                                 |
-| `RATE_LIMIT`          | `60`                                                          | Requests per minute and IP, `0` = off                                                   |
-| `API_KEYS`            | –                                                             | Comma-separated API keys                                                                |
-| `REQUIRE_API_KEY`     | `false`                                                       | `/api` and `/reverse` answer `401` without a valid key (needs `API_KEYS`)               |
-| `API_KEY_IN_QUERY`    | `true`                                                        | Also accept the key as the `api_key` parameter, not only as the `X-API-Key` header      |
-| `RATE_LIMIT_API_KEY`  | `600`                                                         | Requests per minute and API key                                                         |
-| `TRUST_PROXY`         | `false`                                                       | Take the client IP from `X-Forwarded-For` (only behind a reverse proxy)                 |
-| `SEARCH_WORKERS`      | `auto`                                                        | Worker threads for `/api` and `/reverse`; `auto` = cores − 1 (max 8), `0` = main thread |
-| `SEARCH_TIMEOUT_MS`   | `2000`                                                        | `503` for a search in a worker that takes longer, `0` = no limit                        |
-| `SEARCH_QUEUE_LIMIT`  | `100`                                                         | Pending searches per worker; above that `503` right away, `0` = no limit                |
-| `REQUEST_TIMEOUT_MS`  | `10000`                                                       | Time a client may take to send its request                                              |
-| `SHUTDOWN_TIMEOUT_MS` | `10000`                                                       | Time open requests get after `SIGTERM`                                                  |
-| `DOWNLOAD_TIMEOUT_MS` | `60000`                                                       | Abort a download after this long without a response or data (at least 1000)             |
-| `CACHE_SIZE`          | `10000`                                                       | Entries in the cache for search requests, `0` = off                                     |
-| `CORS_ORIGINS`        | `*`                                                           | Comma-separated list of allowed origins                                                 |
-| `CACHE_MAX_AGE`       | `3600`                                                        | `Cache-Control: max-age` of `/api` and `/reverse` in seconds, `0` = none                |
-| `METRICS_TOKEN`       | – (open)                                                      | Bearer token that `/metrics` requires, at least 16 characters                           |
-| `LOG_LEVEL`           | `info`                                                        | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                            |
-| `TZ`                  | `UTC` (container)                                             | Time zone for `UPDATE_CRON`                                                             |
+| Variable              | Default                                                       | Description                                                                                     |
+| --------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `REGION_URL`          | `https://download.geofabrik.de/europe/germany-latest.osm.pbf` | Geofabrik extract for import and update (not needed when `mounted`)                             |
+| `HOST`                | `0.0.0.0`                                                     | Bind address of the API                                                                         |
+| `PORT`                | `2322`                                                        | Port of the API                                                                                 |
+| `DATA_DIR`            | `/data`                                                       | Directory for extract and index (absolute path)                                                 |
+| `INDEX_MODE`          | `build`                                                       | `build`: the container builds the index; `mounted`: prebuilt, see above                         |
+| `INDEX_TYPES`         | all                                                           | Result types the import puts into the index, e.g. `street`; see below                           |
+| `INDEX_PATH`          | `$DATA_DIR/index.sqlite`                                      | Path of the index file (absolute path)                                                          |
+| `DEFAULT_LANG`        | `de`                                                          | Default language (two-letter code)                                                              |
+| `DIFF_UPDATES`        | `true`                                                        | `update` applies the daily diffs instead of downloading the whole extract                       |
+| `AUTO_IMPORT`         | `false` (`true` in the Docker image)                          | `serve` imports in the background if no index exists                                            |
+| `UPDATE_CRON`         | – (no updates)                                                | Schedule for automatic updates in cron format, e.g. `0 3 * * *`                                 |
+| `RATE_LIMIT_ENABLED`  | `true`                                                        | Rate limiting on or off                                                                         |
+| `RATE_LIMIT`          | `60`                                                          | Requests per minute and IP, `0` = off                                                           |
+| `API_KEYS`            | –                                                             | Comma-separated API keys                                                                        |
+| `REQUIRE_API_KEY`     | `false`                                                       | `/api` and `/reverse` answer `401` without a valid key (needs `API_KEYS`)                       |
+| `API_KEY_IN_QUERY`    | `true`                                                        | Also accept the key as the `api_key` parameter, not only as the `X-API-Key` header              |
+| `RATE_LIMIT_API_KEY`  | `600`                                                         | Requests per minute and API key                                                                 |
+| `TRUST_PROXY`         | `false`                                                       | Take the client IP from `X-Forwarded-For` (only behind a reverse proxy)                         |
+| `SEARCH_WORKERS`      | `auto`                                                        | Worker threads for `/api` and `/reverse`; `auto` = cores − 1 (max 8), `0` = main thread         |
+| `SEARCH_TIMEOUT_MS`   | `2000`                                                        | `503` for a search in a worker that takes longer, `0` = no limit                                |
+| `SEARCH_QUEUE_LIMIT`  | `100`                                                         | Pending searches per worker; above that `503` right away, `0` = no limit                        |
+| `REQUEST_TIMEOUT_MS`  | `10000`                                                       | Time a client may take to send its request                                                      |
+| `SHUTDOWN_TIMEOUT_MS` | `10000`                                                       | Time open requests get after `SIGTERM`                                                          |
+| `IMPORT_NODE_INDEX`   | `memory`                                                      | Where `osmium export` keeps the node locations during the import: `memory` or `file` (less RAM) |
+| `DOWNLOAD_TIMEOUT_MS` | `60000`                                                       | Abort a download after this long without a response or data (at least 1000)                     |
+| `CACHE_SIZE`          | `10000`                                                       | Entries in the cache for search requests, `0` = off                                             |
+| `CORS_ORIGINS`        | `*`                                                           | Comma-separated list of allowed origins                                                         |
+| `CACHE_MAX_AGE`       | `3600`                                                        | `Cache-Control: max-age` of `/api` and `/reverse` in seconds, `0` = none                        |
+| `METRICS_TOKEN`       | – (open)                                                      | Bearer token that `/metrics` requires, at least 16 characters                                   |
+| `LOG_LEVEL`           | `info`                                                        | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                                    |
+| `TZ`                  | `UTC` (container)                                             | Time zone for `UPDATE_CRON`                                                                     |
 
 Flags (`AUTO_IMPORT`, `RATE_LIMIT_ENABLED`, `TRUST_PROXY`) accept `true`/`false`, `1`/`0` and
 `yes`/`no`.
@@ -781,6 +782,18 @@ Without `--region`, `REGION_URL` applies. Steps:
    for `index.sqlite`.
 
 Guide value: the Bremen extract (21 MB) yields about 177,000 entries in about 5 seconds.
+
+### Out of memory during the import
+
+`osmium export` keeps the locations of all nodes in memory while it builds the geometries; for
+Germany that is the largest part of the import's memory use. If the container or host runs out
+of memory, the kernel kills osmium, and the import fails with
+`osmium export was killed by SIGKILL: this usually means it ran out of memory`, typically during
+"Reading features" while osmium reads the nodes. Either give the container more memory (check
+for a `--memory` limit or the Docker Desktop VM size), or set `IMPORT_NODE_INDEX=file`: osmium
+then keeps the node locations in `$DATA_DIR/node-locations.idx` (deleted after the import), which
+needs far less memory and some more disk space and time. The file mode was only tested on the
+test extract, not measured on Germany.
 
 ## Data license
 

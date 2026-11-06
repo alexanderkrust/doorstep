@@ -28,5 +28,8 @@ First version. Index schema 11.
   200 characters, startup warnings for risky settings.
 - Timeouts and overload: `DOWNLOAD_TIMEOUT_MS`, `SEARCH_TIMEOUT_MS`, `SEARCH_QUEUE_LIMIT`,
   `REQUEST_TIMEOUT_MS`, `SHUTDOWN_TIMEOUT_MS`; metric `doorstep_search_rejected_total`.
+- `IMPORT_NODE_INDEX=file` keeps the node locations of `osmium export` on disk instead of in
+  memory, for imports on machines with little RAM. Errors of osmium name the signal that ended
+  it, with a hint to memory for `SIGKILL`.
 - CI on GitHub Actions (checks, Docker smoke test, vulnerability scan) and a release workflow
   that publishes signed images with SBOM and provenance to the GitHub Container Registry.

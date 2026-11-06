@@ -175,6 +175,18 @@ const envSchema = z
     SHUTDOWN_TIMEOUT_MS: millis(10_000, 100),
     /** A download that gets no response or no data for this long is aborted. */
     DOWNLOAD_TIMEOUT_MS: millis(60_000, 1000),
+    /**
+     * Where `osmium export` keeps the node locations during the import: `memory` (fast,
+     * needs several GB for Germany) or `file` (in DATA_DIR, needs far less memory).
+     */
+    IMPORT_NODE_INDEX: optional(
+      z
+        .string()
+        .trim()
+        .toLowerCase()
+        .pipe(z.enum(['memory', 'file'], { error: 'must be memory or file' }))
+        .default('memory'),
+    ),
     /** Schedule for automatic updates in cron format, e.g. "0 3 * * *". */
     UPDATE_CRON: optional(cronExpression.optional()),
     /** Comma-separated list of allowed origins, "*" = all. */
@@ -248,6 +260,8 @@ export interface Config {
   searchQueueLimit: number;
   requestTimeoutMs: number;
   shutdownTimeoutMs: number;
+  /** Node locations of `osmium export` in memory or on disk (IMPORT_NODE_INDEX). */
+  importNodeIndex: 'memory' | 'file';
 }
 
 export class ConfigError extends Error {
@@ -294,5 +308,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     searchQueueLimit: e.SEARCH_QUEUE_LIMIT,
     requestTimeoutMs: e.REQUEST_TIMEOUT_MS,
     shutdownTimeoutMs: e.SHUTDOWN_TIMEOUT_MS,
+    importNodeIndex: e.IMPORT_NODE_INDEX,
   };
 }

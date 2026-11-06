@@ -181,6 +181,19 @@ overload or hanging connections. Configuration stays env-only.
       until the query ends. Terminating it would also fail the other searches queued on it.
 - [ ] Rate limits and the queue limit are per process; several instances do not share them.
 
+## Import out of memory (2026-11-06)
+
+A Germany import failed with `osmium export failed (code null)` while osmium read the nodes. No
+exit code means a signal ended osmium; the error now names it, and for `SIGKILL` it points to
+the out-of-memory killer and the options below.
+
+- [x] Errors of osmium name the signal (`osmiumFailure` in `src/import/osmium.ts`); for `SIGKILL`
+      with a hint to more memory or `IMPORT_NODE_INDEX=file`.
+- [x] `IMPORT_NODE_INDEX=file`: `osmium export` (features and boundaries) keeps the node locations
+      in `sparse_file_array` in `DATA_DIR` instead of memory; the file is deleted afterwards.
+- [ ] Measure on Germany: peak memory and import time with `memory` and `file` (schema 11 was
+      never measured on Germany; the last measurement, schema 8, peaked at 3.3 GB).
+
 ## CI and releases (2026-11-06)
 
 - [x] GitHub Actions CI: `npm run ci` with osmium, `npm audit` of the production dependencies,

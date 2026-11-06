@@ -38,6 +38,45 @@ export class OsmiumError extends Error {
   override name = 'OsmiumError';
 }
 
+/**
+ * The error for an osmium run that did not end with code 0. Without a code, a signal ended
+ * it; SIGKILL usually comes from the out-of-memory killer, often while `osmium export` keeps
+ * the node locations in memory.
+ */
+export function osmiumFailure(
+  args: readonly string[],
+  code: number | null,
+  signal: NodeJS.Signals | null,
+  stderr: string,
+): OsmiumError {
+  const command = `osmium ${args[0] ?? ''}`;
+  const details = stderr.trim();
+  if (code === null && signal !== null) {
+    const hint =
+      signal === 'SIGKILL'
+        ? ': this usually means it ran out of memory. Give the container more memory ' +
+          '(the import needs 4–8 GB for Germany) or set IMPORT_NODE_INDEX=file to keep the ' +
+          'node locations on disk'
+        : '';
+    return new OsmiumError(
+      `${command} was killed by ${signal}${hint}${details ? ` (${details})` : ''}`,
+    );
+  }
+  return new OsmiumError(`${command} failed (code ${String(code)}): ${details}`);
+}
+
+/**
+ * Where `osmium export` keeps the node locations while it builds the geometries:
+ * `memory` (osmium's default) or a file, which needs far less memory and is somewhat slower.
+ */
+export interface ExportOptions {
+  /** Path of the index file; without it, the locations stay in memory. */
+  nodeIndexFile?: string;
+}
+
+const indexArgs = (options: ExportOptions) =>
+  options.nodeIndexFile ? [`--index-type=sparse_file_array,${options.nodeIndexFile}`] : [];
+
 export function isOsmiumAvailable(): boolean {
   const result = spawnSync(OSMIUM, ['--version'], { stdio: 'ignore' });
   return result.status === 0;
@@ -47,12 +86,8 @@ async function run(args: string[]): Promise<void> {
   const child = spawn(OSMIUM, args, { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
   child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
-  const [code] = (await once(child, 'close')) as [number | null];
-  if (code !== 0) {
-    throw new OsmiumError(
-      `osmium ${args[0] ?? ''} failed (code ${String(code)}): ${stderr.trim()}`,
-    );
-  }
+  const [code, signal] = (await once(child, 'close')) as [number | null, NodeJS.Signals | null];
+  if (code !== 0) throw osmiumFailure(args, code, signal, stderr);
 }
 
 /** Reduces the extract to objects relevant for addresses, places and streets. */
@@ -79,18 +114,25 @@ const GEOJSONSEQ_ARGS = [
  * Exports a PBF file as a GeoJSON sequence and yields it line by line, without
  * loading the whole file into memory.
  */
-export function exportGeoJsonSeq(input: string): AsyncGenerator<string> {
-  return stream(['export', input, ...GEOJSONSEQ_ARGS]);
+export function exportGeoJsonSeq(
+  input: string,
+  options: ExportOptions = {},
+): AsyncGenerator<string> {
+  return stream(['export', input, ...indexArgs(options), ...GEOJSONSEQ_ARGS]);
 }
 
 /**
  * Areas and lines of the filtered boundaries as a GeoJSON sequence. Includes ways without
  * tags, because some boundary ways only carry their tags via the relation.
  */
-export function exportBoundaryGeoJsonSeq(input: string): AsyncGenerator<string> {
+export function exportBoundaryGeoJsonSeq(
+  input: string,
+  options: ExportOptions = {},
+): AsyncGenerator<string> {
   return stream([
     'export',
     input,
+    ...indexArgs(options),
     '--geometry-types=polygon,linestring',
     '--keep-untagged',
     ...GEOJSONSEQ_ARGS,
@@ -107,7 +149,7 @@ async function* stream(args: string[]): AsyncGenerator<string> {
   const child = spawn(OSMIUM, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = '';
   child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
-  const closed = once(child, 'close') as Promise<[number | null]>;
+  const closed = once(child, 'close') as Promise<[number | null, NodeJS.Signals | null]>;
 
   let completed = false;
   try {
@@ -119,10 +161,6 @@ async function* stream(args: string[]): AsyncGenerator<string> {
     if (!completed && child.exitCode === null) child.kill();
   }
 
-  const [code] = await closed;
-  if (code !== 0) {
-    throw new OsmiumError(
-      `osmium ${args[0] ?? ''} failed (code ${String(code)}): ${stderr.trim()}`,
-    );
-  }
+  const [code, signal] = await closed;
+  if (code !== 0) throw osmiumFailure(args, code, signal, stderr);
 }

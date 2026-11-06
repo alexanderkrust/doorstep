@@ -144,6 +144,7 @@ async function importCommand(command: 'import' | 'update', argv: string[]): Prom
     mode: command,
     diffUpdates: config.diffUpdates,
     downloadTimeoutMs: config.downloadTimeoutMs,
+    nodeIndex: config.importNodeIndex,
     log: (message) => {
       log.info(message);
     },
